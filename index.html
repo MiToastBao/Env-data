@@ -106,7 +106,7 @@
 
   /* ---- Collapsible section ---- */
   .section{border:1px solid var(--line); border-radius:12px; margin-bottom:12px; overflow:hidden; background:var(--panel);}
-  .section-head{width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; padding:12px 13px; text-align:left;}
+  .section-head{width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; padding:15px 14px; text-align:left; min-height:52px;}
   .section-head .st{font-family:Georgia,serif; font-weight:700; font-size:17.5px;}
   .section-head .sc{color:var(--ink-dim); font-size:14px;}
   .section-body{padding:12px; background:var(--panel-alt); display:none;}
@@ -142,7 +142,7 @@
   .cat-block{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:9px;}
   .cat-head{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
   .cat-head .cn{font-weight:600; font-size:15.8px; flex:1; cursor:pointer;}
-  .cat-head button{background:none; border:none; color:var(--ink-dim); font-size:14px;}
+  .cat-head button{background:none; border:none; color:var(--ink-dim); font-size:14px; padding:8px 10px; min-height:38px;}
   .cat-head button.del{color:var(--danger);}
   .add-cat-btn{width:100%; background:none; border:1px dashed var(--line); color:var(--ink-dim); border-radius:9px; padding:9px; font-size:15.2px;}
 
@@ -203,8 +203,8 @@
   .ti-name{font-size:16.9px; font-weight:700;}
   .ti-bottom{display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;}
   .ti-badge{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:13.4px; padding:3px 8px; border-radius:10px;}
-  .ti-action{background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); font-size:13.4px; padding:3px 9px; border-radius:10px; font-weight:700;}
-  .ti-del{background:none; border:none; color:var(--danger); font-size:15px; padding:6px 8px; min-height:32px;}
+  .ti-action{background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); font-size:13.4px; padding:8px 13px; border-radius:10px; font-weight:700; min-height:38px;}
+  .ti-del{background:none; border:none; color:var(--danger); font-size:15px; padding:8px 12px; min-height:38px;}
   .cat-tabs{display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px;}
   .cat-tab{flex-shrink:0; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:14.6px; padding:10px 15px; border-radius:16px; white-space:nowrap; min-height:40px;}
   .cat-tab.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:700;}
@@ -265,7 +265,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.4.7';
+const APP_VERSION = '1.4.8';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -1348,7 +1348,7 @@ function catalogCardHTML(it, kind){
 let closedSubSections = new Set();
 function subSectionHTML(id, title, bodyHtml){
   const closed = closedSubSections.has(id);
-  return `<div class="section ${closed?'':'open'}" style="background:var(--panel-alt2);"><button class="section-head" data-subsec="${id}"><span class="st" style="font-size:13px;">${title}</span><span class="chev">▸</span></button><div class="section-body">${bodyHtml}</div></div>`;
+  return `<div class="section ${closed?'':'open'}" style="background:var(--panel-alt2);"><button class="section-head" data-subsec="${id}"><span class="st" style="font-size:14.5px;">${title}</span><span class="chev">▸</span></button><div class="section-body">${bodyHtml}</div></div>`;
 }
 function renderGmShopSection(){
   const levels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
@@ -1382,13 +1382,13 @@ function renderGmSchoolSection(kind){
     const levels = Array.from(new Set(catalog.filter(it=>(it.school||'未分類')===sch).map(it=>it.level||'未分級')));
     const lvHTML = levels.map(lv=>{
       const items = catalog.filter(it=>(it.school||'未分類')===sch && (it.level||'未分級')===lv);
-      return `<div style="margin-bottom:10px;"><div class="hint" style="font-weight:700; margin-bottom:6px;">${escapeHtml(lv)}（${items.length}）</div><div class="shop-grid">${items.map(it=>catalogCardHTML(it,kind)).join('')}</div></div>`;
+      return subSectionHTML(kind+'lv:'+sch+':'+lv, `${lv}（${items.length}）`, `<div class="shop-grid">${items.map(it=>catalogCardHTML(it,kind)).join('')}</div>`);
     }).join('');
     return `<div id="${anchorId(kind+'sch',sch)}" style="margin-bottom:16px; scroll-margin-top:64px;"><div class="hint" style="font-weight:700; color:var(--gm); margin-bottom:8px; font-size:15px;">${escapeHtml(sch)}</div>${lvHTML}</div>`;
   }).join('');
   return `
     <button class="btn primary" data-addcard="${kind}" style="width:100%; margin-bottom:10px;">＋ 新增${kind==='skill'?'技能卡':'手牌'}</button>
-    <div class="hint" style="margin:0 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。</div>
+    <div class="hint" style="margin:0 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。同流派/角色底下再依等級分組，各自可收合，跟商店卡牌管理一樣。</div>
     ${jumpChips}
     ${body || `<div class="hint">還沒有卡牌。</div>`}
   `;
