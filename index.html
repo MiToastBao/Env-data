@@ -16,6 +16,20 @@
     --safe-t: env(safe-area-inset-top, 0px);
     --safe-b: env(safe-area-inset-bottom, 0px);
   }
+  :root[data-theme="light"]{
+    --bg:#F3F0E8; --panel:#FFFFFF; --panel-alt:#F1EDE2; --panel-alt2:#E6E0D2;
+    --ink:#2B2A25; --ink-dim:#736F62;
+    --accent-soft:rgba(201,154,60,0.20);
+    --line:rgba(43,42,37,0.14);
+  }
+  body, .section, .player-card, .shop-card, .taglib-item{ transition: background-color .2s, color .2s, border-color .2s; }
+  .switch{position:relative; display:inline-block; width:46px; height:27px; flex-shrink:0;}
+  .switch input{opacity:0; width:0; height:0;}
+  .switch-slider{position:absolute; inset:0; cursor:pointer; background:var(--panel-alt2); border:1px solid var(--line); border-radius:27px; transition:.2s;}
+  .switch-slider:before{position:absolute; content:""; height:19px; width:19px; left:3px; top:3px; background:var(--ink-dim); border-radius:50%; transition:.2s;}
+  .switch input:checked + .switch-slider{background:var(--accent-soft); border-color:var(--accent);}
+  .switch input:checked + .switch-slider:before{transform:translateX(19px); background:var(--accent);}
+  .switch input:disabled + .switch-slider{opacity:.4;}
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{height:100%; margin:0; overscroll-behavior:none;}
   body{
@@ -52,6 +66,11 @@
   .tabpanel.active{display:block;}
 
   /* ---- Bottom nav ---- */
+  #gmFab{
+    display:none; position:fixed; right:16px; bottom:calc(78px + var(--safe-b)); z-index:30;
+    width:56px; height:56px; border-radius:50%; background:var(--gm); color:#171D18; border:none;
+    font-size:28px; line-height:1; box-shadow:0 6px 18px rgba(0,0,0,.45);
+  }
   #bottomnav{
     flex:0 0 auto; display:flex; overflow-x:auto; background:rgba(23,29,24,0.97);
     border-top:1px solid var(--line); padding-bottom:var(--safe-b); -webkit-overflow-scrolling:touch;
@@ -220,6 +239,8 @@
     <div class="tabpanel" id="panel-system"></div>
   </div>
 
+  <button id="gmFab" title="新增卡牌">＋</button>
+
   <nav id="bottomnav">
     <button data-tab="battlefield" class="active" style="--tabc:var(--map)"><span class="dot"></span>戰場</button>
     <button data-tab="players" style="--tabc:var(--equip)"><span class="dot"></span>玩家</button>
@@ -244,7 +265,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.3.2';
+const APP_VERSION = '1.4.1';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -330,18 +351,31 @@ async function safeGet(key){ try{ const r=await appStorage.get(key); return r?r.
 async function listIds(prefix){ try{ const r=await appStorage.list(prefix); const keys=(r&&r.keys)?r.keys:[]; return keys.map(k=>k.startsWith(prefix)?k.slice(prefix.length):k); }catch(e){ return []; } }
 
 /* ============ State ============ */
-function newEquipCat(name){ return {id: name==='其他' ? 'other' : uid(), name, tags:[]}; }
 function newPlayer(name){
-  return {id:uid(), name, photos:[], note:'', hand:{tags:[]}, discard:{tags:[]}, skill:{tags:[]}, equipCats:[newEquipCat('其他')], collapsed:false};
+  return {id:uid(), name, photos:[], note:'', hand:{tags:[]}, discard:{tags:[]}, skill:{tags:[]}, equipData:{}, collapsed:false, areaCollapsed:{}};
 }
-function newInvCat(name){ return {id: name==='其他' ? 'other' : uid(), name, tags:[]}; }
 function sortCatsOtherLast(cats){ return [...cats].sort((a,b)=> (a.id==='other'?1:0) - (b.id==='other'?1:0)); }
+function ensureCatData(map, catId){ if(!map[catId]) map[catId]={tags:[]}; return map[catId]; }
+function ensureRemovedCatData(catId){ if(!state.teamInventory.removedCatData[catId]) state.teamInventory.removedCatData[catId]={cards:[]}; return state.teamInventory.removedCatData[catId]; }
+function findMatchingCategory(categoryName){
+  if(categoryName){ const m = state.globalCategories.find(c=>c.name===categoryName); if(m) return m; }
+  return state.globalCategories.find(c=>c.id==='other') || state.globalCategories[0];
+}
+function addGlobalCategory(name){
+  if(!name) return null;
+  const existing = state.globalCategories.find(c=>c.name===name);
+  if(existing) return existing;
+  const cat = {id: name==='其他' ? 'other' : uid(), name};
+  state.globalCategories.push(cat);
+  return cat;
+}
 
 let state = {
   battlefield: { photos: [], note: '' },
   players: [],
   playerFilter: null,
-  teamInventory: { totalGold:0, playerGold:{}, cats:[newInvCat('其他')], note:'', removedCategories:[{id:'other', name:'其他', cards:[]}] },
+  globalCategories: [{id:'other', name:'其他'}],
+  teamInventory: { totalGold:0, playerGold:{}, catData:{}, note:'', removedCatData:{} },
   shopCatalog: [],
   shopUnlockedLevels: [],
   skillCatalog: [],
@@ -358,10 +392,47 @@ function markClean(){ state.exported=true; scheduleAutoSave(); updateGoldChip();
 function updateGoldChip(){ $('#goldChip').textContent = `💰 ${state.teamInventory.totalGold||0}`; }
 
 /* ============ Tag library core: cap, in-play counts, category routing ============ */
-function upsertTagLibrary(name, category, level, school, cap){
+function renameInArr(arr, oldName, newName){
+  if(!arr) return;
+  for(let i=0;i<arr.length;i++){ if(arr[i]===oldName) arr[i]=newName; }
+}
+function renameTagEverywhere(oldName, newName){
+  if(!newName || oldName===newName) return true;
+  const dupe = state.tagLibrary.find(t=>t.name===newName);
+  if(dupe){
+    if(!confirm(`已經有標籤叫「${newName}」了。要把「${oldName}」合併進去嗎？（原本「${oldName}」的分類/等級/上限設定會被捨棄，場上已放置的紀錄則會改用「${newName}」）`)) return false;
+  }
+  state.players.forEach(p=>{
+    renameInArr(p.hand.tags, oldName, newName);
+    renameInArr(p.discard.tags, oldName, newName);
+    renameInArr((p.skill&&p.skill.tags), oldName, newName);
+    Object.values(p.equipData||{}).forEach(c=> renameInArr(c.tags, oldName, newName));
+  });
+  Object.values(state.teamInventory.catData||{}).forEach(c=> renameInArr(c.tags, oldName, newName));
+  Object.values(state.teamInventory.removedCatData||{}).forEach(c=>{
+    (c.cards||[]).forEach(r=>{ if(r.name===oldName) r.name=newName; });
+  });
+  [state.shopCatalog, state.skillCatalog, state.handCatalog].forEach(arr=>{
+    arr.forEach(it=>{
+      if(it.name===oldName) it.name=newName;
+      if(it.linkedNames) it.linkedNames = it.linkedNames.map(n=> n===oldName?newName:n);
+    });
+  });
+  state.tagLibrary.forEach(t=>{
+    if(t.linkedNames) t.linkedNames = t.linkedNames.map(n=> n===oldName?newName:n);
+  });
+  const entry = state.tagLibrary.find(t=>t.name===oldName);
+  if(entry){
+    if(dupe){ state.tagLibrary = state.tagLibrary.filter(t=>t!==entry); }
+    else { entry.name = newName; }
+  }
+  showToast(`已把「${oldName}」改名為「${newName}」，並同步更新所有位置`);
+  return true;
+}
+function upsertTagLibrary(name, category, level, school, cap, linkedNames){
   let e = state.tagLibrary.find(t=>t.name===name);
-  if(e){ e.category=category; e.level=level||''; e.school=school||''; if(cap!==undefined) e.cap=cap; }
-  else { e = {id:uid(), name, category, level:level||'', school:school||'', cap: cap===undefined?null:cap}; state.tagLibrary.unshift(e); }
+  if(e){ e.category=category; e.level=level||''; e.school=school||''; if(cap!==undefined) e.cap=cap; if(linkedNames!==undefined) e.linkedNames=linkedNames; }
+  else { e = {id:uid(), name, category, level:level||'', school:school||'', cap: cap===undefined?null:cap, linkedNames: linkedNames||[]}; state.tagLibrary.unshift(e); }
   return e;
 }
 function countInPlay(name){
@@ -369,29 +440,23 @@ function countInPlay(name){
   state.players.forEach(p=>{
     n += (p.hand.tags||[]).filter(t=>t===name).length;
     n += (p.discard.tags||[]).filter(t=>t===name).length;
-    p.equipCats.forEach(c=> n += (c.tags||[]).filter(t=>t===name).length);
+    n += ((p.skill&&p.skill.tags)||[]).filter(t=>t===name).length;
+    Object.values(p.equipData||{}).forEach(c=> n += (c.tags||[]).filter(t=>t===name).length);
   });
-  state.teamInventory.cats.forEach(c=> n += (c.tags||[]).filter(t=>t===name).length);
+  Object.values(state.teamInventory.catData||{}).forEach(c=> n += (c.tags||[]).filter(t=>t===name).length);
   return n;
 }
 function countRemoved(name){
-  let n=0; state.teamInventory.removedCategories.forEach(c=> n += c.cards.filter(r=>r.name===name).length);
+  let n=0; Object.values(state.teamInventory.removedCatData).forEach(c=> n += c.cards.filter(r=>r.name===name).length);
   return n;
-}
-function ensureRemovedCategory(name){
-  if(!name) name = '其他';
-  let cat = state.teamInventory.removedCategories.find(c=>c.name===name);
-  if(!cat){ cat = {id: name==='其他' ? 'other' : uid(), name, cards:[]}; state.teamInventory.removedCategories.push(cat); }
-  return cat;
 }
 function inferCategoryForRemoval(tag, source){
   if(source && source.type==='player' && source.area!=='hand' && source.area!=='discard' && source.area!=='skill'){
-    const p = state.players.find(x=>x.id===source.playerId);
-    const c = p && p.equipCats.find(c=>c.id===source.area);
+    const c = state.globalCategories.find(c=>c.id===source.area);
     if(c) return c.name;
   }
   if(source && source.type==='team'){
-    const c = state.teamInventory.cats.find(c=>c.id===source.catId);
+    const c = state.globalCategories.find(c=>c.id===source.catId);
     if(c) return c.name;
   }
   const lib = state.tagLibrary.find(t=>t.name===tag);
@@ -420,14 +485,6 @@ function canPlace(name){
   const used = group.reduce((s,n)=> s + countInPlay(n) + countRemoved(n), 0);
   return used < cap;
 }
-function findMatchingEquipCat(player, category){
-  if(category){ const m=player.equipCats.find(c=>c.name===category); if(m) return m; }
-  return player.equipCats.find(c=>c.id==='other') || player.equipCats[0];
-}
-function findMatchingInvCat(category){
-  if(category){ const m=state.teamInventory.cats.find(c=>c.name===category); if(m) return m; }
-  return state.teamInventory.cats.find(c=>c.id==='other') || state.teamInventory.cats[0];
-}
 function placeTag(tag, dest){
   if(!canPlace(tag)){ showToast(`「${tag}」已達數量上限，無法再新增`); return false; }
   let arr;
@@ -436,9 +493,9 @@ function placeTag(tag, dest){
     if(dest.area==='hand') arr=p.hand.tags;
     else if(dest.area==='discard') arr=p.discard.tags;
     else if(dest.area==='skill') arr=p.skill.tags;
-    else { const c=p.equipCats.find(c=>c.id===dest.area); if(!c) return false; arr=c.tags; }
+    else arr = ensureCatData(p.equipData, dest.area).tags;
   } else {
-    const c = state.teamInventory.cats.find(c=>c.id===dest.catId); if(!c) return false; arr=c.tags;
+    arr = ensureCatData(state.teamInventory.catData, dest.catId).tags;
   }
   if(!arr.includes(tag)) arr.push(tag);
   return true;
@@ -451,9 +508,9 @@ function removeTagFromSource(source, tag){
     if(source.area==='hand') arr=p.hand.tags;
     else if(source.area==='discard') arr=p.discard.tags;
     else if(source.area==='skill') arr=p.skill.tags;
-    else { const c=p.equipCats.find(c=>c.id===source.area); if(!c) return; arr=c.tags; }
+    else arr = ensureCatData(p.equipData, source.area).tags;
   } else {
-    const c = state.teamInventory.cats.find(c=>c.id===source.catId); if(!c) return; arr=c.tags;
+    arr = ensureCatData(state.teamInventory.catData, source.catId).tags;
   }
   const idx = arr.indexOf(tag); if(idx>=0) arr.splice(idx,1);
 }
@@ -479,9 +536,14 @@ function setActiveTab(tab){
   $$('.tabpanel').forEach(p=> p.classList.toggle('active', p.id==='panel-'+tab));
   $('#tbTitle').textContent = TAB_LABEL[tab];
   document.documentElement.style.setProperty('--tabc', TAB_COLOR[tab]);
+  $('#gmFab').style.display = (tab==='gm') ? 'flex' : 'none';
+  $('#gmFab').style.alignItems = 'center';
+  $('#gmFab').style.justifyContent = 'center';
   if(RENDER_FN[tab]) RENDER_FN[tab]();
 }
 $$('#bottomnav button').forEach(b=> b.addEventListener('click', ()=> setActiveTab(b.dataset.tab)));
+let lastGmAddKind = 'shop';
+$('#gmFab').addEventListener('click', ()=> addBlankCatalogItem(lastGmAddKind));
 
 /* ============ Battlefield tab ============ */
 function renderBattlefield(){
@@ -544,9 +606,9 @@ function resolveArr(loc){
     if(parts[2]==='hand') return p.hand.tags;
     if(parts[2]==='discard') return p.discard.tags;
     if(parts[2]==='skill') return p.skill.tags;
-    if(parts[2]==='equip'){ const c=p.equipCats.find(c=>c.id===parts[3]); return c?c.tags:null; }
+    if(parts[2]==='equip'){ return ensureCatData(p.equipData, parts[3]).tags; }
   } else if(parts[0]==='team'){
-    const c = state.teamInventory.cats.find(c=>c.id===parts[1]); return c?c.tags:null;
+    return ensureCatData(state.teamInventory.catData, parts[1]).tags;
   }
   return null;
 }
@@ -575,14 +637,22 @@ function sectionHTML(id, title, bodyHtml){
 }
 
 /* ============ Players tab ============ */
+function subareaBlockHTML(p, key, label, innerHTML){
+  const collapsed = !!(p.areaCollapsed && p.areaCollapsed[key]);
+  return `
+  <div class="cat-block">
+    <div class="cat-head">
+      <span class="cn" style="cursor:default; flex:1;">${label}</span>
+      <button class="area-toggle" data-pid="${p.id}" data-area="${key}">${collapsed?'展開 ▸':'收合 ▾'}</button>
+    </div>
+    <div style="display:${collapsed?'none':'block'};">${innerHTML}</div>
+  </div>`;
+}
 function playerCardHTML(p){
-  const equipHTML = sortCatsOtherLast(p.equipCats).map(c=>`
-    <div class="cat-block">
-      <div class="cat-head">
-        <span class="cn cat-rename" data-pid="${p.id}" data-cid="${c.id}">${escapeHtml(c.name)} ✎</span>
-        <button class="del cat-del" data-pid="${p.id}" data-cid="${c.id}">刪除</button>
-      </div>
-      ${tagFieldHTML(`player:${p.id}:equip:${c.id}`, c.tags, c.name)}
+  const equipHTML = sortCatsOtherLast(state.globalCategories).map(c=>`
+    <div class="cat-block" style="background:var(--panel);">
+      <div class="cat-head"><span class="cn" style="cursor:default;">${escapeHtml(c.name)}</span></div>
+      ${tagFieldHTML(`player:${p.id}:equip:${c.id}`, ensureCatData(p.equipData, c.id).tags, c.name)}
     </div>`).join('');
   return `
   <div class="player-card ${p.collapsed?'':'open'}" data-pid="${p.id}" id="pcard-${p.id}" style="scroll-margin-top:64px;">
@@ -596,21 +666,10 @@ function playerCardHTML(p){
       ${p.photos.length<2 ? `<div class="photo-add-row"><label for="pPhotoFile-${p.id}">📷 新增照片</label></div><input type="file" id="pPhotoFile-${p.id}" class="p-photo-file" data-pid="${p.id}" accept="image/*">` : '<div class="hint" style="margin-bottom:8px;">已達 2 張上限。</div>'}
       <div class="field"><label>照片備註</label><textarea class="p-note" data-pid="${p.id}" placeholder="針對照片的說明…">${escapeHtml(p.note||'')}</textarea></div>
 
-      <div class="cat-block">
-        <div class="cat-head"><span class="cn" style="cursor:default;">手牌區</span></div>
-        ${tagFieldHTML(`player:${p.id}:hand`, p.hand.tags, '')}
-      </div>
-      <div class="cat-block">
-        <div class="cat-head"><span class="cn" style="cursor:default;">棄牌區</span></div>
-        ${tagFieldHTML(`player:${p.id}:discard`, p.discard.tags, '')}
-      </div>
-      <div class="cat-block">
-        <div class="cat-head"><span class="cn" style="cursor:default;">技能區</span></div>
-        ${tagFieldHTML(`player:${p.id}:skill`, p.skill.tags, '技能')}
-      </div>
-      <div class="hint" style="margin:10px 0 6px; font-weight:700; color:var(--equip);">裝備區</div>
-      ${equipHTML}
-      <button class="add-cat-btn" data-addcat-player="${p.id}">＋ 新增分類</button>
+      ${subareaBlockHTML(p, 'hand', '手牌區', tagFieldHTML(`player:${p.id}:hand`, p.hand.tags, ''))}
+      ${subareaBlockHTML(p, 'discard', '棄牌區', tagFieldHTML(`player:${p.id}:discard`, p.discard.tags, ''))}
+      ${subareaBlockHTML(p, 'skill', '技能區', tagFieldHTML(`player:${p.id}:skill`, p.skill.tags, '技能'))}
+      ${subareaBlockHTML(p, 'equip', '裝備區', equipHTML)}
 
       <div class="row" style="margin-top:14px;">
         <button class="btn ghost" data-dup="${p.id}" style="flex:1;">複製為新玩家</button>
@@ -655,27 +714,24 @@ RENDER_FN.players = renderPlayers;
 function renderInventory(){
   const wrap = $('#panel-inventory');
   const ti = state.teamInventory;
-  const catsHTML = sortCatsOtherLast(ti.cats).map(c=>`
+  const catsHTML = sortCatsOtherLast(state.globalCategories).map(c=>`
     <div class="cat-block">
-      <div class="cat-head">
-        <span class="cn inv-cat-rename" data-cid="${c.id}">${escapeHtml(c.name)} ✎</span>
-        <button class="del inv-cat-del" data-cid="${c.id}">刪除</button>
-      </div>
-      ${tagFieldHTML(`team:${c.id}`, c.tags, c.name)}
+      <div class="cat-head"><span class="cn" style="cursor:default;">${escapeHtml(c.name)}</span></div>
+      ${tagFieldHTML(`team:${c.id}`, ensureCatData(ti.catData, c.id).tags, c.name)}
     </div>`).join('');
-  const removedCount = ti.removedCategories.reduce((s,c)=>s+c.cards.length,0);
-  const removedHTML = sortCatsOtherLast(ti.removedCategories).map(c=>`
+  const removedCount = Object.values(ti.removedCatData).reduce((s,c)=>s+c.cards.length,0);
+  const removedHTML = sortCatsOtherLast(state.globalCategories).map(c=>{
+    const rc = ensureRemovedCatData(c.id);
+    return `
     <div class="cat-block">
-      <div class="cat-head">
-        <span class="cn rc-cat-rename" data-cid="${c.id}">${escapeHtml(c.name)} ✎</span>
-        <button class="del rc-cat-del" data-cid="${c.id}">刪除</button>
-      </div>
-      ${c.cards.length ? c.cards.map(r=>`
+      <div class="cat-head"><span class="cn" style="cursor:default;">${escapeHtml(c.name)}</span></div>
+      ${rc.cards.length ? rc.cards.map(r=>`
         <div class="taglib-item">
           <div class="ti-top"><span class="ti-name">${escapeHtml(r.name)}</span><button class="ti-del rc-del" data-cid="${c.id}" data-id="${r.id}">刪除</button></div>
           <div class="ti-bottom"><span class="ti-badge">${fmtTime(r.removedAt)}</span><button class="ti-action rc-restore" data-cid="${c.id}" data-id="${r.id}">移回並指定位置 ↩</button></div>
         </div>`).join('') : `<div class="hint" style="padding:4px 2px;">這個分類目前沒有移除的卡牌。</div>`}
-    </div>`).join('');
+    </div>`;
+  }).join('');
 
   wrap.innerHTML = `
     <div class="section open"><div class="section-body" style="display:block;">
@@ -704,14 +760,11 @@ function renderInventory(){
 
     ${sectionHTML('inv:cats', `📦 分類`, `
       ${catsHTML}
-      <button class="add-cat-btn" data-addcat-team="1">＋ 新增分類</button>
+      <div class="hint" style="margin-top:6px;">分類清單統一在「GM區 → 裝備分類區」新增/改名/刪除，這裡會自動同步。</div>
       <div class="field" style="margin-top:12px;"><label>備註</label><textarea id="invNote" placeholder="現況、進度說明…">${escapeHtml(ti.note||'')}</textarea></div>
     `)}
 
-    ${sectionHTML('inv:removed', `🗑 卡牌移除區（${removedCount}）`, `
-      ${removedHTML}
-      <button class="add-cat-btn" data-addcat-removed="1">＋ 新增分類</button>
-    `)}
+    ${sectionHTML('inv:removed', `🗑 卡牌移除區（${removedCount}）`, removedHTML)}
   `;
   $('#invNote').addEventListener('input', e=>{ ti.note=e.target.value; markDirty(); });
 }
@@ -760,17 +813,12 @@ $('#main').addEventListener('click', (ev)=>{
     if(confirm('確定要刪除這張照片嗎？')){ p.photos=p.photos.filter(ph=>ph.id!==pPhotoDel.dataset.phid); markDirty(); rerenderActiveTab(); }
     return;
   }
-  const catRename = ev.target.closest('.cat-rename');
-  if(catRename){ const p=state.players.find(x=>x.id===catRename.dataset.pid); const c=p.equipCats.find(c=>c.id===catRename.dataset.cid); const name=prompt('分類名稱：', c.name); if(name&&name.trim()){ c.name=name.trim(); markDirty(); rerenderActiveTab(); } return; }
-  const catDel = ev.target.closest('.cat-del');
-  if(catDel){
-    const p=state.players.find(x=>x.id===catDel.dataset.pid);
-    if(p.equipCats.length<=1){ showToast('至少要保留一個分類'); return; }
-    if(confirm('確定要刪除這個分類嗎？裡面的標籤也會一併移除。')){ p.equipCats=p.equipCats.filter(c=>c.id!==catDel.dataset.cid); markDirty(); rerenderActiveTab(); }
+  const areaToggle = ev.target.closest('.area-toggle');
+  if(areaToggle){
+    const p = state.players.find(x=>x.id===areaToggle.dataset.pid);
+    if(p){ if(!p.areaCollapsed) p.areaCollapsed={}; p.areaCollapsed[areaToggle.dataset.area] = !p.areaCollapsed[areaToggle.dataset.area]; markDirty(); rerenderActiveTab(); }
     return;
   }
-  const addCatP = ev.target.closest('[data-addcat-player]');
-  if(addCatP){ const p=state.players.find(x=>x.id===addCatP.dataset.addcatPlayer); const name=prompt('新分類名稱，例如：武器、護甲…'); if(name&&name.trim()){ p.equipCats.push(newEquipCat(name.trim())); ensureRemovedCategory(name.trim()); markDirty(); rerenderActiveTab(); } return; }
   const dup = ev.target.closest('[data-dup]');
   if(dup){
     const p=state.players.find(x=>x.id===dup.dataset.dup);
@@ -782,40 +830,19 @@ $('#main').addEventListener('click', (ev)=>{
   const delP = ev.target.closest('[data-delplayer]');
   if(delP){ const p=state.players.find(x=>x.id===delP.dataset.delplayer); if(confirm(`確定要刪除玩家「${p.name}」與其所有紀錄嗎？`)){ state.players=state.players.filter(x=>x.id!==p.id); delete state.teamInventory.playerGold[p.id]; if(state.playerFilter===p.id) state.playerFilter=null; markDirty(); rerenderActiveTab(); } return; }
 
-  const invCatRename = ev.target.closest('.inv-cat-rename');
-  if(invCatRename){ const c=state.teamInventory.cats.find(c=>c.id===invCatRename.dataset.cid); const name=prompt('分類名稱：', c.name); if(name&&name.trim()){ c.name=name.trim(); markDirty(); rerenderActiveTab(); } return; }
-  const invCatDel = ev.target.closest('.inv-cat-del');
-  if(invCatDel){
-    if(state.teamInventory.cats.length<=1){ showToast('至少要保留一個分類'); return; }
-    if(confirm('確定要刪除這個分類嗎？')){ state.teamInventory.cats=state.teamInventory.cats.filter(c=>c.id!==invCatDel.dataset.cid); markDirty(); rerenderActiveTab(); }
-    return;
-  }
-  const addCatT = ev.target.closest('[data-addcat-team]');
-  if(addCatT){ const name=prompt('新分類名稱，例如：武器、護甲…（建議跟玩家裝備區一致，商店購買才能自動歸位）'); if(name&&name.trim()){ state.teamInventory.cats.push(newInvCat(name.trim())); ensureRemovedCategory(name.trim()); markDirty(); rerenderActiveTab(); } return; }
-
-  const addCatRemoved = ev.target.closest('[data-addcat-removed]');
-  if(addCatRemoved){ const name=prompt('新分類名稱：'); if(name&&name.trim()){ ensureRemovedCategory(name.trim()); markDirty(); rerenderActiveTab(); } return; }
-  const rcCatRename = ev.target.closest('.rc-cat-rename');
-  if(rcCatRename){ const c=state.teamInventory.removedCategories.find(c=>c.id===rcCatRename.dataset.cid); const name=prompt('分類名稱：', c.name); if(name&&name.trim()){ c.name=name.trim(); markDirty(); rerenderActiveTab(); } return; }
-  const rcCatDel = ev.target.closest('.rc-cat-del');
-  if(rcCatDel){
-    if(state.teamInventory.removedCategories.length<=1){ showToast('至少要保留一個分類'); return; }
-    if(confirm('確定要刪除這個分類嗎？裡面的移除紀錄也會一併刪除。')){ state.teamInventory.removedCategories=state.teamInventory.removedCategories.filter(c=>c.id!==rcCatDel.dataset.cid); markDirty(); rerenderActiveTab(); }
-    return;
-  }
   const rcDel = ev.target.closest('.rc-del');
   if(rcDel){
     if(confirm('確定要永久刪除這筆紀錄嗎？')){
-      const c = state.teamInventory.removedCategories.find(c=>c.id===rcDel.dataset.cid);
-      if(c) c.cards = c.cards.filter(r=>r.id!==rcDel.dataset.id);
+      const c = ensureRemovedCatData(rcDel.dataset.cid);
+      c.cards = c.cards.filter(r=>r.id!==rcDel.dataset.id);
       markDirty(); rerenderActiveTab();
     }
     return;
   }
   const rcRestore = ev.target.closest('.rc-restore');
   if(rcRestore){
-    const c = state.teamInventory.removedCategories.find(c=>c.id===rcRestore.dataset.cid);
-    const r = c && c.cards.find(x=>x.id===rcRestore.dataset.id);
+    const c = ensureRemovedCatData(rcRestore.dataset.cid);
+    const r = c.cards.find(x=>x.id===rcRestore.dataset.id);
     if(r){
       c.cards = c.cards.filter(x=>x.id!==r.id);
       markDirty(); showToast(`已把「${r.name}」移回，請選擇要放到哪裡`);
@@ -878,6 +905,7 @@ function openBuyPicker(item){ picker={active:true,mode:'buy',tag:item.name,sourc
 function closePicker(){ $('#taglibOverlay').classList.remove('show'); picker.active=false; }
 function finishPicker(){ if(picker.mode==='assign'){ picker.active=false; taglibMode='list'; renderTaglibOverlay(); } else { closePicker(); } }
 
+function tagCategoryOf(tag){ const e = state.tagLibrary.find(t=>t.name===tag); return e ? e.category : ''; }
 function renderPicker(){
   const body = $('#taglibBody');
   if(picker.step==='dest'){
@@ -886,12 +914,13 @@ function renderPicker(){
       <button class="picker-btn" data-destsell="1">🏪 賣到商店（換錢）</button>
       <button class="picker-btn" data-destdelete="1">🗑 刪除（不計價，回收上架）</button>
       <button class="picker-btn" data-destremove="1">❌ 移出遊戲（上限-1）</button>
+      <button class="picker-btn" data-destgm="1">↩️ 歸還GM</button>
     ` : '';
     body.innerHTML = `
       <h3>${picker.mode==='buy'?'購買':(picker.mode==='move'?'處理':'指定')}「${escapeHtml(picker.tag)}」</h3>
       <div class="hint" style="margin-bottom:12px;">選擇要做什麼：</div>
       <div class="picker-list">
-        <button class="picker-btn" data-destteam="1">🎒 團隊背包</button>
+        <button class="picker-btn" data-destteam="1">🎒 團隊背包（自動歸類）</button>
         ${moveExtras}
         ${playerBtns}
       </div>
@@ -904,32 +933,55 @@ function renderPicker(){
       `<button class="picker-btn" data-area="hand">手牌區</button>`,
       `<button class="picker-btn" data-area="discard">棄牌區</button>`,
       `<button class="picker-btn" data-area="skill">技能區</button>`,
-      ...sortCatsOtherLast(p.equipCats).map(c=>`<button class="picker-btn" data-area="${c.id}">${escapeHtml(c.name)}</button>`),
+      `<button class="picker-btn" data-area="equip">裝備區（自動依分類歸位）</button>`,
     ].join('');
     body.innerHTML = `<h3>放到 ${escapeHtml(p.name)} 的哪裡？</h3><div class="picker-list">${areaBtns}</div><div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerBack">‹ 上一步</button></div>`;
-  } else if(picker.step==='teamcat'){
-    const catBtns = sortCatsOtherLast(state.teamInventory.cats).map(c=>`<button class="picker-btn" data-teamcat="${c.id}">${escapeHtml(c.name)}</button>`).join('');
-    body.innerHTML = `<h3>放到團隊背包的哪個分類？</h3><div class="picker-list">${catBtns}</div><div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerBack">‹ 上一步</button></div>`;
+  } else if(picker.step==='gmReturn'){
+    body.innerHTML = `
+      <h3>歸還「${escapeHtml(picker.tag)}」給 GM</h3>
+      <div class="hint" style="margin-bottom:12px;">這次歸還要不要換錢？</div>
+      <div class="picker-list">
+        <button class="picker-btn" data-gmpay="1">💰 是，換一筆錢</button>
+        <button class="picker-btn" data-gmpay="0">🚫 不用，單純刪除卡牌</button>
+      </div>
+      <div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerBack">‹ 上一步</button></div>
+    `;
   }
 }
-function doPlaceAtTeamCat(catId){
-  const ok = placeTag(picker.tag, {type:'team', catId}); if(!ok) return;
+function doPlaceAtTeam(){
+  const cat = findMatchingCategory(tagCategoryOf(picker.tag));
+  const ok = placeTag(picker.tag, {type:'team', catId:cat.id}); if(!ok) return;
   if(picker.mode==='move' && picker.source) removeTagFromSource(picker.source, picker.tag);
-  markDirty(); showToast(`已把「${picker.tag}」放進團隊背包`); rerenderActiveTab(); finishPicker();
+  markDirty(); showToast(`已把「${picker.tag}」放進團隊背包「${cat.name}」分類`); rerenderActiveTab(); finishPicker();
 }
 function doPlaceAtPlayerArea(area){
-  const dest = {type:'player', playerId:picker.playerId, area};
+  let realArea = area;
+  if(area==='equip'){ realArea = findMatchingCategory(tagCategoryOf(picker.tag)).id; }
+  const dest = {type:'player', playerId:picker.playerId, area:realArea};
   const ok = placeTag(picker.tag, dest); if(!ok) return;
   if(picker.mode==='move' && picker.source) removeTagFromSource(picker.source, picker.tag);
   markDirty();
   const p = state.players.find(x=>x.id===picker.playerId);
   showToast(`已把「${picker.tag}」加到 ${p.name}`); rerenderActiveTab(); finishPicker();
 }
+function doGmReturn(giveGold){
+  if(giveGold){
+    const val = prompt(`「${picker.tag}」歸還後要給多少金幣？`, 0); if(val===null) return;
+    const gold = parseInt(val,10); if(isNaN(gold)||gold<0){ showToast('請輸入有效金額'); return; }
+    if(picker.source) removeTagFromSource(picker.source, picker.tag);
+    state.teamInventory.totalGold += gold;
+    markDirty(); showToast(`已歸還「${picker.tag}」給 GM，團隊金庫 +${gold}`);
+  } else {
+    if(picker.source) removeTagFromSource(picker.source, picker.tag);
+    markDirty(); showToast(`已歸還「${picker.tag}」給 GM（純刪除，未上架商店）`);
+  }
+  rerenderActiveTab(); closePicker();
+}
 function doBuyToTeam(){
   const item = picker.shopItem;
   if(state.teamInventory.totalGold < (item.price||0)){ showToast('團隊金庫不足，無法購買'); return; }
   if(!canPlace(item.name)){ showToast(`「${item.name}」已達數量上限`); return; }
-  const c = findMatchingInvCat(item.category);
+  const c = findMatchingCategory(item.category);
   const ok = placeTag(item.name, {type:'team', catId:c.id}); if(!ok) return;
   state.teamInventory.totalGold -= (item.price||0);
   markDirty(); showToast(`已購買「${item.name}」`); rerenderActiveTab(); closePicker();
@@ -939,7 +991,7 @@ function doBuyToPlayer(playerId){
   if(state.teamInventory.totalGold < (item.price||0)){ showToast('團隊金庫不足，無法購買'); return; }
   if(!canPlace(item.name)){ showToast(`「${item.name}」已達數量上限`); return; }
   const p = state.players.find(x=>x.id===playerId);
-  const c = findMatchingEquipCat(p, item.category);
+  const c = findMatchingCategory(item.category);
   const ok = placeTag(item.name, {type:'player', playerId:p.id, area:c.id}); if(!ok) return;
   state.teamInventory.totalGold -= (item.price||0);
   markDirty(); showToast(`已購買「${item.name}」給 ${p.name}`); rerenderActiveTab(); closePicker();
@@ -972,15 +1024,17 @@ function removeAndShelve(tag, source){
 function removeToDiscardPile(tag, source){
   const categoryName = inferCategoryForRemoval(tag, source);
   if(source) removeTagFromSource(source, tag);
-  const cat = ensureRemovedCategory(categoryName);
+  const gcat = findMatchingCategory(categoryName);
+  const cat = ensureRemovedCatData(gcat.id);
   cat.cards.push({id:uid(), name:tag, removedAt:Date.now()});
   markDirty();
-  showToast(`已把「${tag}」移出遊戲（歸檔到「${cat.name}」）`);
+  showToast(`已把「${tag}」移出遊戲（歸檔到「${gcat.name}」）`);
   rerenderActiveTab(); closePicker();
 }
 
 /* ============ Shop tab ============ */
 let shopCatFilter = '';
+let shopLevelFilter = '';
 function visibleShopItems(){ return state.shopCatalog.filter(it => !it.level || state.shopUnlockedLevels.includes(it.level)); }
 function shopCardHTML(it){
   const cap = getCap(it.name);
@@ -1000,24 +1054,36 @@ function shopCardHTML(it){
 function renderShop(){
   const wrap = $('#panel-shop');
   const items = visibleShopItems();
-  const cats = Array.from(new Set(items.map(it=>it.category||'未分類')));
-  const filtered = shopCatFilter ? items.filter(it=>(it.category||'未分類')===shopCatFilter) : items;
+  const levels = Array.from(new Set(items.map(it=>it.level||'（無等級）')));
+  let filtered = items;
+  if(shopLevelFilter) filtered = filtered.filter(it=>(it.level||'（無等級）')===shopLevelFilter);
+  const catsInLevel = Array.from(new Set(filtered.map(it=>it.category||'未分類')));
+  if(shopCatFilter) filtered = filtered.filter(it=>(it.category||'未分類')===shopCatFilter);
   const groups = Array.from(new Set(filtered.map(it=>it.category||'未分類')));
   const body = groups.length ? groups.map(cat=>{
     const catItems = filtered.filter(it=>(it.category||'未分類')===cat);
-    return sectionHTML('shop:'+cat, `${cat}（${catItems.length}）`, `<div class="shop-grid">${catItems.map(shopCardHTML).join('')}</div>`);
+    return sectionHTML('shop:'+(shopLevelFilter||'all')+':'+cat, `${cat}（${catItems.length}）`, `<div class="shop-grid">${catItems.map(shopCardHTML).join('')}</div>`);
   }).join('') : `<div class="empty"><div class="glyph">◌</div><p>${state.shopCatalog.length?'目前沒有已開放等級的商品，請到 GM 區勾選要開放的等級。':'還沒有商品，請到 GM 區的商店卡牌管理新增。'}</p></div>`;
 
   wrap.innerHTML = `
+    ${levels.length>1 ? `
+    <div class="hint" style="margin-bottom:4px; font-weight:700;">依等級篩選</div>
     <div class="cat-tabs">
-      <button class="cat-tab ${!shopCatFilter?'active':''}" data-shopcat="">全部</button>
-      ${cats.map(c=>`<button class="cat-tab ${shopCatFilter===c?'active':''}" data-shopcat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')}
+      <button class="cat-tab ${!shopLevelFilter?'active':''}" data-shoplvl="">全部等級</button>
+      ${levels.map(lv=>`<button class="cat-tab ${shopLevelFilter===lv?'active':''}" data-shoplvl="${escapeHtml(lv)}">${escapeHtml(lv)}</button>`).join('')}
+    </div>` : ''}
+    <div class="hint" style="margin:8px 0 4px; font-weight:700;">依分類篩選</div>
+    <div class="cat-tabs">
+      <button class="cat-tab ${!shopCatFilter?'active':''}" data-shopcat="">全部分類</button>
+      ${catsInLevel.map(c=>`<button class="cat-tab ${shopCatFilter===c?'active':''}" data-shopcat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')}
     </div>
     ${body}
   `;
 }
 RENDER_FN.shop = renderShop;
 $('#panel-shop').addEventListener('click', ev=>{
+  const lvlTab = ev.target.closest('[data-shoplvl]');
+  if(lvlTab){ shopLevelFilter = lvlTab.dataset.shoplvl; shopCatFilter=''; renderShop(); return; }
   const catTab = ev.target.closest('[data-shopcat]');
   if(catTab){ shopCatFilter = catTab.dataset.shopcat; renderShop(); return; }
   const photo = ev.target.closest('.shop-photo');
@@ -1098,6 +1164,8 @@ function renderCategoryPanel(){
   const groupUsed = group.reduce((s,n)=> s + countInPlay(n) + countRemoved(n), 0);
   $('#taglibBody').innerHTML = `
     <h3>編輯「${escapeHtml(t.name)}」</h3>
+    <div class="field"><label>標籤名稱</label><input type="text" id="editName" value="${escapeHtml(t.name)}"></div>
+    <div class="hint" style="margin-top:-8px; margin-bottom:12px;">改名稱會自動更新所有已經放在玩家/團隊背包/商店/移除區裡的這個標籤。</div>
     <div class="field"><label>分類</label><input type="text" id="editCat" value="${escapeHtml(t.category||'')}" placeholder="例如：武器、技能、手牌"></div>
     <div class="field"><label>等級</label><input type="text" id="editLevel" value="${escapeHtml(t.level||'')}" placeholder="例如 1 或 Lv2"></div>
     <div class="field"><label>流派 / 角色（技能、手牌用）</label><input type="text" id="editSchool" value="${escapeHtml(t.school||'')}"></div>
@@ -1124,23 +1192,32 @@ $('#taglibBody').addEventListener('click', (ev)=>{
   if(taglibMode==='picker'){
     if(ev.target.closest('#pickerCancel')){ closePicker(); return; }
     if(ev.target.closest('#pickerBack')){ picker.step='dest'; renderPicker(); return; }
-    if(ev.target.closest('[data-destteam]')){ if(picker.mode==='buy'){ doBuyToTeam(); } else { picker.step='teamcat'; renderPicker(); } return; }
+    if(ev.target.closest('[data-destteam]')){ if(picker.mode==='buy'){ doBuyToTeam(); } else { doPlaceAtTeam(); } return; }
     if(ev.target.closest('[data-destsell]')){ sellTagFlow(picker.tag, picker.source); return; }
     if(ev.target.closest('[data-destdelete]')){ removeAndShelve(picker.tag, picker.source); return; }
     if(ev.target.closest('[data-destremove]')){ removeToDiscardPile(picker.tag, picker.source); return; }
+    if(ev.target.closest('[data-destgm]')){ picker.step='gmReturn'; renderPicker(); return; }
+    const gmPay = ev.target.closest('[data-gmpay]');
+    if(gmPay){ doGmReturn(gmPay.dataset.gmpay==='1'); return; }
     const destPlayer = ev.target.closest('[data-destplayer]');
     if(destPlayer){ picker.playerId=destPlayer.dataset.destplayer; if(picker.mode==='buy'){ doBuyToPlayer(picker.playerId); } else { picker.step='playerarea'; renderPicker(); } return; }
     const areaBtn = ev.target.closest('[data-area]');
     if(areaBtn){ doPlaceAtPlayerArea(areaBtn.dataset.area); return; }
-    const teamcatBtn = ev.target.closest('[data-teamcat]');
-    if(teamcatBtn){ doPlaceAtTeamCat(teamcatBtn.dataset.teamcat); return; }
     return;
   }
   if(ev.target.closest('#btnCloseTaglib')){ $('#taglibOverlay').classList.remove('show'); return; }
   if(taglibMode==='category'){
     if(ev.target.closest('#btnCatBack')){ taglibMode='list'; renderTaglibOverlay(); return; }
     if(ev.target.closest('#btnCatSave')){
-      const t = state.tagLibrary.find(x=>x.name===taglibTargetTag);
+      let t = state.tagLibrary.find(x=>x.name===taglibTargetTag);
+      const newName = $('#editName').value.trim();
+      if(newName && newName!==t.name){
+        const ok = renameTagEverywhere(t.name, newName);
+        if(ok===false) return;
+        taglibTargetTag = newName;
+        t = state.tagLibrary.find(x=>x.name===newName);
+      }
+      if(!t){ taglibMode='list'; renderTaglibOverlay(); return; }
       t.category = $('#editCat').value.trim();
       t.level = $('#editLevel').value.trim();
       t.school = $('#editSchool').value.trim();
@@ -1172,9 +1249,10 @@ $('#taglibBody').addEventListener('click', (ev)=>{
   const tlGm = ev.target.closest('.tl-gm');
   if(tlGm){
     if(confirm(`確定要把「${tlGm.dataset.tag}」標記為移出遊戲嗎？（上限視同-1）`)){
-      const cat = ensureRemovedCategory(inferCategoryForRemoval(tlGm.dataset.tag, null));
+      const gcat = findMatchingCategory(inferCategoryForRemoval(tlGm.dataset.tag, null));
+      const cat = ensureRemovedCatData(gcat.id);
       cat.cards.push({id:uid(), name:tlGm.dataset.tag, removedAt:Date.now()});
-      markDirty(); updateTaglibListBody(); showToast(`已標記移出遊戲（歸檔到「${cat.name}」）`);
+      markDirty(); updateTaglibListBody(); showToast(`已標記移出遊戲（歸檔到「${gcat.name}」）`);
     }
     return;
   }
@@ -1188,7 +1266,27 @@ function getCatalogArr(kind){ return kind==='shop'?state.shopCatalog:(kind==='sk
 function syncCatalogItemToLibrary(kind, item){
   if(!item.name) return;
   const category = kind==='shop' ? (item.category||'') : (kind==='skill'?'技能':'手牌');
-  upsertTagLibrary(item.name, category, item.level||'', kind==='shop'?'':(item.school||''), item.cap);
+  upsertTagLibrary(item.name, category, item.level||'', kind==='shop'?'':(item.school||''), item.cap, item.linkedNames||[]);
+}
+function syncLinkedCounterpart(kind, item){
+  const backName = (item.backName||'').trim();
+  if(!backName || backName===item.name) return null;
+  const arr = getCatalogArr(kind);
+  let counterpart = arr.find(x=>x.name===backName);
+  if(!counterpart){
+    if(kind==='shop') counterpart = {id:uid(), name:backName, category:(item.backCategory||'').trim(), level:item.level||'', price:null, cap:null, linkedNames:[item.name]};
+    else counterpart = {id:uid(), name:backName, school:item.school||'', level:item.level||'', cap:null, linkedNames:[item.name]};
+    arr.push(counterpart);
+  } else {
+    if(kind==='shop' && (item.backCategory||'').trim()) counterpart.category = item.backCategory.trim();
+    if(!counterpart.linkedNames) counterpart.linkedNames=[];
+    if(!counterpart.linkedNames.includes(item.name)) counterpart.linkedNames.push(item.name);
+  }
+  if(!item.linkedNames) item.linkedNames=[];
+  if(!item.linkedNames.includes(backName)) item.linkedNames.push(backName);
+  syncCatalogItemToLibrary(kind, item);
+  syncCatalogItemToLibrary(kind, counterpart);
+  return counterpart;
 }
 function anchorId(prefix, key){ return 'anchor-'+prefix+'-'+encodeURIComponent(String(key)).replace(/[%.]/g,'_'); }
 function catalogCardHTML(it, kind){
@@ -1201,28 +1299,48 @@ function catalogCardHTML(it, kind){
       <input type="text" class="gm-f gm-regroup" data-f="level" data-id="${it.id}" data-kind="shop" placeholder="等級" value="${escapeHtml(it.level||'')}">
       <input type="number" class="gm-f" data-f="price" data-id="${it.id}" data-kind="shop" placeholder="本格輸入售價" value="${it.price==null?'':it.price}" min="0">
       <div class="hint" style="margin:-4px 0 5px;">↑ 商品售價</div>
-      <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="shop" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">`;
+      <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="shop" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">
+      <div class="hint" style="margin:8px 0 4px; font-weight:700; color:var(--danger);">🔗 雙面卡（選填，正反面共用同一份庫存上限）</div>
+      <input type="text" class="gm-f gm-link" data-f="backName" data-id="${it.id}" data-kind="shop" placeholder="背面名稱，例如 神奇護甲" value="${escapeHtml(it.backName||'')}">
+      <input type="text" class="gm-f gm-link" data-f="backCategory" data-id="${it.id}" data-kind="shop" placeholder="背面分類，例如 護甲" value="${escapeHtml(it.backCategory||'')}">
+      ${(it.linkedNames&&it.linkedNames.length) ? `<div class="hint" style="color:var(--danger);">已連動：${it.linkedNames.map(escapeHtml).join('、')}</div>` : ''}`;
   } else {
     fields = `
       <input type="text" class="gm-f" data-f="name" data-id="${it.id}" data-kind="${kind}" placeholder="卡牌名稱" value="${escapeHtml(it.name)}">
       <input type="text" class="gm-f gm-regroup" data-f="school" data-id="${it.id}" data-kind="${kind}" placeholder="${kind==='skill'?'流派':'角色/總名稱'}" value="${escapeHtml(it.school||'')}">
       <input type="text" class="gm-f gm-regroup" data-f="level" data-id="${it.id}" data-kind="${kind}" placeholder="等級" value="${escapeHtml(it.level||'')}">
-      <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="${kind}" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">`;
+      <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="${kind}" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">
+      <div class="hint" style="margin:8px 0 4px; font-weight:700; color:var(--danger);">🔗 雙面卡（選填，共用同一份庫存上限）</div>
+      <input type="text" class="gm-f gm-link" data-f="backName" data-id="${it.id}" data-kind="${kind}" placeholder="另一面名稱" value="${escapeHtml(it.backName||'')}">
+      ${(it.linkedNames&&it.linkedNames.length) ? `<div class="hint" style="color:var(--danger);">已連動：${it.linkedNames.map(escapeHtml).join('、')}</div>` : ''}`;
   }
   return `<div class="shop-card" id="cardrow-${it.id}" style="scroll-margin-top:64px;"><div class="gm-inputs">${fields}</div>${del}</div>`;
+}
+let closedSubSections = new Set();
+function subSectionHTML(id, title, bodyHtml){
+  const closed = closedSubSections.has(id);
+  return `<div class="section ${closed?'':'open'}" style="background:var(--panel-alt2);"><button class="section-head" data-subsec="${id}"><span class="st" style="font-size:13px;">${title}</span><span class="chev">▸</span></button><div class="section-body">${bodyHtml}</div></div>`;
 }
 function renderGmShopSection(){
   const levels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
   const jumpChips = levels.length>3 ? `<div class="cat-tabs">${levels.map(lv=>`<button class="cat-tab" data-scrollto="${anchorId('shoplvl',lv)}">${escapeHtml(lv)}</button>`).join('')}</div>` : '';
   const body = levels.map(lv=>{
-    const items = state.shopCatalog.filter(it=>(it.level||'未分級')===lv);
+    const itemsInLevel = state.shopCatalog.filter(it=>(it.level||'未分級')===lv);
     const isNone = lv==='未分級';
     const unlocked = isNone ? true : state.shopUnlockedLevels.includes(lv);
-    return `<div id="${anchorId('shoplvl',lv)}" style="margin-bottom:16px; scroll-margin-top:64px;"><div class="level-check"><input type="checkbox" class="lvl-check" data-lvl="${escapeHtml(lv)}" ${unlocked?'checked':''} ${isNone?'disabled':''}><span>${escapeHtml(lv)}${isNone?'（永遠開放）':''}（${items.length}）</span></div><div class="shop-grid">${items.map(it=>catalogCardHTML(it,'shop')).join('')}</div></div>`;
+    const cats = Array.from(new Set(itemsInLevel.map(it=>it.category||'未分類')));
+    const catBody = cats.map(cat=>{
+      const items = itemsInLevel.filter(it=>(it.category||'未分類')===cat);
+      return subSectionHTML('gmshop:'+lv+':'+cat, `${cat}（${items.length}）`, `<div class="shop-grid">${items.map(it=>catalogCardHTML(it,'shop')).join('')}</div>`);
+    }).join('');
+    return `<div id="${anchorId('shoplvl',lv)}" style="margin-bottom:16px; scroll-margin-top:64px;">
+      <div class="level-check"><input type="checkbox" class="lvl-check" data-lvl="${escapeHtml(lv)}" ${unlocked?'checked':''} ${isNone?'disabled':''}><span>${escapeHtml(lv)}${isNone?'（永遠開放）':''}（${itemsInLevel.length}）</span></div>
+      ${catBody}
+    </div>`;
   }).join('');
   return `
     <button class="btn primary" data-addcard="shop" style="width:100%; margin-bottom:10px; position:sticky; top:0; z-index:5;">＋ 新增商品</button>
-    <div class="hint" style="margin:0 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。</div>
+    <div class="hint" style="margin:0 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。同等級底下再依分類分組，各自可收合。</div>
     ${jumpChips}
     ${body || `<div class="hint">還沒有商品。</div>`}
   `;
@@ -1247,9 +1365,10 @@ function renderGmSchoolSection(kind){
   `;
 }
 function addBlankCatalogItem(kind){
+  lastGmAddKind = kind;
   let item;
-  if(kind==='shop') item = {id:uid(), name:'', category:'', level:'', price:null, cap:null};
-  else item = {id:uid(), name:'', school:'', level:'', cap:null};
+  if(kind==='shop') item = {id:uid(), name:'', category:'', level:'', price:null, cap:null, linkedNames:[]};
+  else item = {id:uid(), name:'', school:'', level:'', cap:null, linkedNames:[]};
   getCatalogArr(kind).push(item);
   markDirty(); renderGM();
   requestAnimationFrame(()=>{
@@ -1261,14 +1380,30 @@ function addBlankCatalogItem(kind){
     }
   });
 }
+function renderGmCategorySection(){
+  const rows = sortCatsOtherLast(state.globalCategories).map(c=>`
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="cn gcat-rename" data-cid="${c.id}">${escapeHtml(c.name)} ✎</span>
+        <button class="del gcat-del" data-cid="${c.id}">刪除</button>
+      </div>
+    </div>`).join('');
+  return `
+    <button class="btn primary" data-addgcat="1" style="width:100%; margin-bottom:10px; position:sticky; top:0; z-index:5;">＋ 新增分類</button>
+    <div class="hint" style="margin:0 0 12px;">這裡建立的分類，會自動套用到所有玩家的裝備區、團隊背包、卡牌移除區。物品移動到玩家/團隊背包時，只要分類名稱相符，就會自動歸位；找不到相符分類則歸到「其他」。</div>
+    ${rows}
+  `;
+}
 function renderGM(){
   const wrap = $('#panel-gm');
   wrap.innerHTML = `
     <div class="row" style="margin-bottom:12px;">
+      <button class="btn ghost sm grow" data-jump="gm:cats">📦 裝備分類</button>
       <button class="btn ghost sm grow" data-jump="gm:shop">🏪 商店卡牌</button>
       <button class="btn ghost sm grow" data-jump="gm:skill">✨ 技能卡牌</button>
       <button class="btn ghost sm grow" data-jump="gm:hand">🃏 手牌</button>
     </div>
+    ${sectionHTML('gm:cats', `📦 裝備分類區（${state.globalCategories.length}）`, renderGmCategorySection())}
     ${sectionHTML('gm:shop', `🏪 商店卡牌管理（${state.shopCatalog.length}）`, renderGmShopSection())}
     ${sectionHTML('gm:skill', `✨ 技能卡牌管理（${state.skillCatalog.length}）`, renderGmSchoolSection('skill'))}
     ${sectionHTML('gm:hand', `🃏 手牌管理（${state.handCatalog.length}）`, renderGmSchoolSection('hand'))}
@@ -1276,6 +1411,21 @@ function renderGM(){
 }
 RENDER_FN.gm = renderGM;
 $('#panel-gm').addEventListener('click', ev=>{
+  const subSec = ev.target.closest('.section-head[data-subsec]');
+  if(subSec){ const id=subSec.dataset.subsec; if(closedSubSections.has(id)) closedSubSections.delete(id); else closedSubSections.add(id); renderGM(); return; }
+  const addGcat = ev.target.closest('[data-addgcat]');
+  if(addGcat){ const name=prompt('新分類名稱，例如：武器、護甲…'); if(name&&name.trim()){ addGlobalCategory(name.trim()); markDirty(); renderGM(); } return; }
+  const gcatRename = ev.target.closest('.gcat-rename');
+  if(gcatRename){ const c=state.globalCategories.find(c=>c.id===gcatRename.dataset.cid); const name=prompt('分類名稱：', c.name); if(name&&name.trim()){ c.name=name.trim(); markDirty(); rerenderActiveTab(); if(activeTab!=='gm') renderGM(); } return; }
+  const gcatDel = ev.target.closest('.gcat-del');
+  if(gcatDel){
+    if(state.globalCategories.length<=1){ showToast('至少要保留一個分類'); return; }
+    if(confirm('確定要刪除這個分類嗎？裡面的標籤/紀錄仍會保留在資料裡，只是不會再顯示；如果之後想找回，需要重建同名分類。')){
+      state.globalCategories = state.globalCategories.filter(c=>c.id!==gcatDel.dataset.cid);
+      markDirty(); renderGM();
+    }
+    return;
+  }
   const jump = ev.target.closest('[data-jump]');
   if(jump){
     openSections.add(jump.dataset.jump); renderGM();
@@ -1308,9 +1458,27 @@ $('#panel-gm').addEventListener('input', ev=>{
 });
 $('#panel-gm').addEventListener('change', ev=>{
   if(ev.target.classList.contains('gm-f')){
-    const {id, kind} = ev.target.dataset;
+    const {id, kind, f} = ev.target.dataset;
     const item = getCatalogArr(kind).find(x=>x.id===id);
-    if(item) syncCatalogItemToLibrary(kind, item);
+    if(item){
+      if(f==='name'){
+        const dupe = getCatalogArr(kind).find(x=>x.id!==item.id && x.name===item.name.trim() && item.name.trim());
+        if(dupe) showToast(`⚠️ 已經有一張同名的「${item.name.trim()}」了，請確認是否重複建立`);
+      }
+      syncCatalogItemToLibrary(kind, item);
+      if(f==='backName' || f==='backCategory'){
+        const counterpart = syncLinkedCounterpart(kind, item);
+        if(counterpart){
+          markDirty();
+          showToast(`已建立/更新連動卡「${counterpart.name}」`);
+          renderGM();
+          requestAnimationFrame(()=>{
+            const el = document.getElementById('cardrow-'+counterpart.id);
+            if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
+          });
+        }
+      }
+    }
   }
   if(ev.target.classList.contains('lvl-check')){
     const lv = ev.target.dataset.lvl;
@@ -1371,6 +1539,36 @@ function renderSystem(){
       <div class="hint" id="statusHint" style="margin-top:10px;"></div>
       <div class="hint" style="margin-top:6px;">已自動保存在此裝置，關閉/重開程式資料不會消失（除非手動清除瀏覽器的網站資料）。不同遊戲存檔之間互不佔用彼此的圖片空間。離線時也能正常使用。</div>
     </div></div>
+    ${sectionHTML('sys:excel', '📊 Excel 批次匯入卡牌（GM區）', `
+      <div class="hint" style="margin-bottom:10px;">一次匯入商店卡、技能卡、手牌，欄位如下（第一列要是標題）：<br>
+      <span class="mono" style="font-size:11px;">類型｜名稱｜分類｜流派角色｜等級｜價格｜數量上限｜連動另一面名稱</span><br><br>
+      「類型」填「商店」「技能」或「手牌」；「分類」只有商店卡需要（例如武器）；「流派角色」只有技能/手牌需要（技能填流派、手牌填角色/總名稱）；「連動另一面名稱」選填，填另一張卡的名稱就會自動建立雙面卡連動。匯入後會自動同步進標籤庫。</div>
+      <div class="row">
+        <button class="btn ghost grow" id="btnExcelTemplate">⬇️ 下載範例試算表</button>
+        <button class="btn primary grow" id="btnExcelImport">📥 選擇檔案匯入</button>
+      </div>
+      <input type="file" id="excelInput" accept=".xlsx,.xls,.csv" style="display:none;">
+      <div class="hint" id="excelStatus" style="margin-top:8px;"></div>
+    `)}
+    ${sectionHTML('sys:display', '🖥 顯示設定', `
+      <div class="field">
+        <label>畫面主題</label>
+        <div class="row">
+          <button class="btn ${getStoredTheme()==='dark'?'primary':'ghost'} grow" data-theme-choice="dark">🌙 暗色</button>
+          <button class="btn ${getStoredTheme()==='light'?'primary':'ghost'} grow" data-theme-choice="light">☀️ 亮色</button>
+        </div>
+      </div>
+      <div class="field" style="margin-top:14px;">
+        <div class="gold-row" style="border:none; padding:4px 2px;">
+          <span>螢幕保持喚醒（不會自動變暗鎖屏）</span>
+          <label class="switch">
+            <input type="checkbox" id="wakeLockToggle" ${wakeLockEnabled?'checked':''} ${!('wakeLock' in navigator)?'disabled':''}>
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+        ${!('wakeLock' in navigator) ? `<div class="hint" style="color:var(--danger); margin-top:6px;">這個瀏覽器不支援保持喚醒功能。</div>` : `<div class="hint" style="margin-top:6px;">切到其他App或手動鎖螢幕後會自動失效，回來時會自動嘗試重新啟用。</div>`}
+      </div>
+    `)}
     ${sectionHTML('sys:storage', `📊 佔用空間（${formatBytes(total)}）`, `
       ${quota}
       ${rows.map(r=>`<div class="storage-row"><span class="lbl">${r.label}</span><span class="sz">${formatBytes(r.size)}</span><button class="btn danger sm" data-clearkey="${r.key}">清除</button></div>`).join('')}
@@ -1383,21 +1581,56 @@ function renderSystem(){
   $('#btnForceUpdate').addEventListener('click', ()=>{
     if(confirm('確定要更新嗎？更新過程會重新整理頁面（不會影響你已經自動保存的存檔資料）。')) forceUpdateNow();
   });
+  $('#btnExcelTemplate').addEventListener('click', downloadExcelTemplate);
+  $('#btnExcelImport').addEventListener('click', ()=> $('#excelInput').click());
+  $('#excelInput').addEventListener('change', e=>{ if(e.target.files[0]) handleExcelImport(e.target.files[0]); e.target.value=''; });
   updateStatusHint();
   updateSystemVersionUI();
 }
 RENDER_FN.system = renderSystem;
 $('#panel-system').addEventListener('click', ev=>{
   const clearBtn = ev.target.closest('[data-clearkey]');
-  if(clearBtn) clearStorageCategory(clearBtn.dataset.clearkey);
+  if(clearBtn){ clearStorageCategory(clearBtn.dataset.clearkey); return; }
+  const themeBtn = ev.target.closest('[data-theme-choice]');
+  if(themeBtn){ applyTheme(themeBtn.dataset.themeChoice); renderSystem(); return; }
 });
+$('#panel-system').addEventListener('change', ev=>{
+  if(ev.target.id==='wakeLockToggle'){ setWakeLockEnabled(ev.target.checked); }
+});
+
+/* ---- Theme (light/dark) ---- */
+function getStoredTheme(){ try{ return localStorage.getItem('ttrpg-theme') || 'dark'; }catch(e){ return 'dark'; } }
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  try{ localStorage.setItem('ttrpg-theme', theme); }catch(e){}
+}
+applyTheme(getStoredTheme());
+
+/* ---- Wake lock (keep screen on) ---- */
+let wakeLock = null;
+let wakeLockEnabled = (function(){ try{ return localStorage.getItem('ttrpg-wakelock')==='1'; }catch(e){ return false; } })();
+async function requestWakeLock(){
+  try{ if('wakeLock' in navigator){ wakeLock = await navigator.wakeLock.request('screen'); } }
+  catch(e){ console.error('wake lock failed', e); }
+}
+function releaseWakeLock(){ if(wakeLock){ wakeLock.release().catch(()=>{}); wakeLock=null; } }
+async function setWakeLockEnabled(on){
+  wakeLockEnabled = on;
+  try{ localStorage.setItem('ttrpg-wakelock', on?'1':'0'); }catch(e){}
+  if(on) await requestWakeLock(); else releaseWakeLock();
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState==='visible' && wakeLockEnabled) requestWakeLock();
+});
+if(wakeLockEnabled) requestWakeLock();
+
 function clearStorageCategory(key){
   const labels={battlefield:'戰場',players:'玩家',inventory:'團隊背包',shop:'商店卡牌',skill:'技能卡牌',hand:'手牌',taglib:'標籤庫'};
   if(!confirm(`確定要清除「${labels[key]}」的資料嗎？此動作無法復原（除非你有備份存檔）。`)) return;
   switch(key){
     case 'battlefield': state.battlefield={photos:[],note:''}; break;
     case 'players': state.players=[]; state.playerFilter=null; state.teamInventory.playerGold={}; break;
-    case 'inventory': state.teamInventory={totalGold:0,playerGold:{},cats:[newInvCat('其他')],note:'',removedCategories:[{id:'other',name:'其他',cards:[]}]}; break;
+    case 'inventory': state.teamInventory={totalGold:0,playerGold:{},catData:{},note:'',removedCatData:{}}; break;
     case 'shop': state.shopCatalog=[]; state.shopUnlockedLevels=[]; break;
     case 'skill': state.skillCatalog=[]; break;
     case 'hand': state.handCatalog=[]; break;
@@ -1410,27 +1643,70 @@ function clearStorageCategory(key){
 function captureSnapshot(){
   return JSON.parse(JSON.stringify({
     battlefield: state.battlefield, players: state.players, playerFilter: state.playerFilter,
+    globalCategories: state.globalCategories,
     teamInventory: state.teamInventory, shopCatalog: state.shopCatalog, shopUnlockedLevels: state.shopUnlockedLevels,
     skillCatalog: state.skillCatalog, handCatalog: state.handCatalog, tagLibrary: state.tagLibrary,
   }));
 }
 function applySnapshot(snap){
   state.battlefield = snap.battlefield || {photos:[],note:''};
-  state.players = snap.players || [];
-  state.players.forEach(p=>{
-    if(!p.skill) p.skill = {tags:[]};
-    (p.equipCats||[]).forEach(c=>{ if(c.name==='其他分類') c.name='其他'; });
-  });
   state.playerFilter = snap.playerFilter || null;
-  state.teamInventory = snap.teamInventory || {totalGold:0,playerGold:{},cats:[newInvCat('其他')],note:'',removedCategories:[{id:'other',name:'其他',cards:[]}]};
-  (state.teamInventory.cats||[]).forEach(c=>{ if(c.name==='其他分類') c.name='其他'; });
-  if(!state.teamInventory.removedCategories){
-    // migrate from old flat removedCards[] shape if present
-    const flat = state.teamInventory.removedCards || [];
-    const other = {id:'other', name:'其他', cards:flat};
-    state.teamInventory.removedCategories = [other];
+
+  // ---- build/merge the global category list ----
+  const nameToId = new Map();
+  function regName(name){
+    if(!name) name='其他';
+    if(name==='其他分類') name='其他';
+    if(!nameToId.has(name)) nameToId.set(name, name==='其他' ? 'other' : uid());
+    return nameToId.get(name);
   }
-  delete state.teamInventory.removedCards;
+  regName('其他');
+  (snap.globalCategories||[]).forEach(c=>regName(c.name));
+  (snap.players||[]).forEach(p=> (p.equipCats||[]).forEach(c=>regName(c.name)) );
+  const oldTi = snap.teamInventory || {};
+  (oldTi.cats||[]).forEach(c=>regName(c.name));
+  (oldTi.removedCategories||[]).forEach(c=>regName(c.name));
+  state.globalCategories = Array.from(nameToId.entries()).map(([name,id])=>({id,name}));
+
+  // ---- players: migrate equipCats[] -> equipData{} keyed by global cat id ----
+  state.players = (snap.players || []).map(p=>{
+    const equipData = {};
+    if(p.equipData){
+      Object.keys(p.equipData).forEach(catId=>{ equipData[catId] = p.equipData[catId]; });
+    }
+    (p.equipCats||[]).forEach(c=>{
+      const gid = regName(c.name);
+      if(!equipData[gid]) equipData[gid] = {tags:[]};
+      equipData[gid].tags = Array.from(new Set([...(equipData[gid].tags||[]), ...(c.tags||[])]));
+    });
+    return {
+      id:p.id, name:p.name, photos:p.photos||[], note:p.note||'',
+      hand: p.hand||{tags:[]}, discard: p.discard||{tags:[]}, skill: p.skill||{tags:[]},
+      equipData, collapsed: !!p.collapsed, areaCollapsed: p.areaCollapsed||{},
+    };
+  });
+
+  // ---- team inventory: migrate cats[]/removedCategories[] -> catData{}/removedCatData{} ----
+  const catData = {};
+  if(oldTi.catData) Object.assign(catData, oldTi.catData);
+  (oldTi.cats||[]).forEach(c=>{
+    const gid = regName(c.name);
+    if(!catData[gid]) catData[gid] = {tags:[]};
+    catData[gid].tags = Array.from(new Set([...(catData[gid].tags||[]), ...(c.tags||[])]));
+  });
+  const removedCatData = {};
+  if(oldTi.removedCatData) Object.assign(removedCatData, oldTi.removedCatData);
+  (oldTi.removedCategories||[]).forEach(c=>{
+    const gid = regName(c.name);
+    if(!removedCatData[gid]) removedCatData[gid] = {cards:[]};
+    removedCatData[gid].cards = [...(removedCatData[gid].cards||[]), ...(c.cards||[])];
+  });
+  if(oldTi.removedCards && oldTi.removedCards.length){ // very old flat shape
+    if(!removedCatData['other']) removedCatData['other'] = {cards:[]};
+    removedCatData['other'].cards = [...removedCatData['other'].cards, ...oldTi.removedCards];
+  }
+  state.teamInventory = { totalGold: oldTi.totalGold||0, playerGold: oldTi.playerGold||{}, note: oldTi.note||'', catData, removedCatData };
+
   state.shopCatalog = snap.shopCatalog || [];
   state.shopUnlockedLevels = snap.shopUnlockedLevels || [];
   state.skillCatalog = snap.skillCatalog || [];
@@ -1438,6 +1714,105 @@ function applySnapshot(snap){
   state.tagLibrary = snap.tagLibrary || [];
   rerenderActiveTab(); updateGoldChip();
 }
+/* ---------------- Excel bulk import (GM cards) ---------------- */
+function downloadExcelTemplate(){
+  const rows = [
+    ['類型','名稱','分類','流派角色','等級','價格','數量上限','連動另一面名稱'],
+    ['商店','飛彈魔杖','武器','','日常等級','50','1','神奇護甲'],
+    ['商店','神奇護甲','護甲','','日常等級','','',''],
+    ['技能','火球術','','火系流派','1','','3',''],
+    ['手牌','揮劍攻擊','','戰士','1','','2',''],
+  ];
+  const csv = rows.map(r=>r.map(cell=>{
+    const s = String(cell);
+    return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+  }).join(',')).join('\r\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download='卡牌匯入範例.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  showToast('已下載範例，可用 Excel 打開編輯後另存為 .xlsx 再匯入');
+}
+function ensureXLSXLoaded(){
+  if(window.XLSX) return Promise.resolve(true);
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = ()=> resolve(true);
+    s.onerror = ()=> reject(new Error('load failed'));
+    document.head.appendChild(s);
+  });
+}
+function parseExcelRows(rows){
+  const added = {shop:0, skill:0, hand:0};
+  const linkPending = [];
+  rows.forEach(row=>{
+    const type = String(row['類型']||'').trim();
+    const name = String(row['名稱']||'').trim();
+    if(!name) return;
+    const level = String(row['等級']||'').trim();
+    const capRaw = row['數量上限'];
+    const cap = (capRaw===undefined || capRaw==='' || capRaw===null) ? null : Math.max(0, parseInt(capRaw,10)||0);
+    const backName = String(row['連動另一面名稱']||'').trim();
+    let kind;
+    if(type==='商店') kind='shop';
+    else if(type==='技能') kind='skill';
+    else if(type==='手牌') kind='hand';
+    else return;
+
+    const arr = getCatalogArr(kind);
+    let item = arr.find(x=>x.name===name);
+    if(kind==='shop'){
+      const category = String(row['分類']||'').trim();
+      const priceRaw = row['價格'];
+      const price = (priceRaw===undefined || priceRaw==='' || priceRaw===null) ? null : Math.max(0, parseInt(priceRaw,10)||0);
+      if(!item){ item = {id:uid(), name, category, level, price, cap, linkedNames:[]}; arr.push(item); added.shop++; }
+      else { item.category = category||item.category; item.level = level||item.level; if(price!=null) item.price=price; if(cap!=null) item.cap=cap; }
+    } else {
+      const school = String(row['流派角色']||'').trim();
+      if(!item){ item = {id:uid(), name, school, level, cap, linkedNames:[]}; arr.push(item); added[kind]++; }
+      else { item.school = school||item.school; item.level = level||item.level; if(cap!=null) item.cap=cap; }
+    }
+    syncCatalogItemToLibrary(kind, item);
+    if(backName) linkPending.push({kind, name, backName});
+  });
+  linkPending.forEach(({kind,name,backName})=>{
+    const arr = getCatalogArr(kind);
+    const a = arr.find(x=>x.name===name);
+    const b = arr.find(x=>x.name===backName);
+    if(a && b){
+      if(!a.linkedNames) a.linkedNames=[]; if(!a.linkedNames.includes(backName)) a.linkedNames.push(backName);
+      if(!b.linkedNames) b.linkedNames=[]; if(!b.linkedNames.includes(name)) b.linkedNames.push(name);
+      syncCatalogItemToLibrary(kind, a); syncCatalogItemToLibrary(kind, b);
+    }
+  });
+  return added;
+}
+async function handleExcelImport(file){
+  const statusEl = $('#excelStatus');
+  if(statusEl) statusEl.textContent = '讀取中…';
+  try{
+    await ensureXLSXLoaded();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, {type:'array'});
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, {defval:''});
+    const added = parseExcelRows(rows);
+    markDirty();
+    if(activeTab==='gm') renderGM();
+    const msg = `匯入完成：商店 +${added.shop}、技能 +${added.skill}、手牌 +${added.hand}`;
+    if(statusEl) statusEl.textContent = msg;
+    showToast(msg);
+  }catch(e){
+    console.error(e);
+    const msg = '匯入失敗，請確認檔案格式是否正確，或檢查網路連線（第一次匯入需要下載 Excel 解析套件）';
+    if(statusEl) statusEl.textContent = msg;
+    showToast(msg);
+  }
+}
+
 function doExport(){
   const payload = { type:'ttrpg-tracker-save', version:1, savedAt:Date.now(), ...captureSnapshot() };
   const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
