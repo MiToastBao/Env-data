@@ -244,7 +244,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -1221,7 +1221,7 @@ function renderGmShopSection(){
     return `<div id="${anchorId('shoplvl',lv)}" style="margin-bottom:16px; scroll-margin-top:64px;"><div class="level-check"><input type="checkbox" class="lvl-check" data-lvl="${escapeHtml(lv)}" ${unlocked?'checked':''} ${isNone?'disabled':''}><span>${escapeHtml(lv)}${isNone?'（永遠開放）':''}（${items.length}）</span></div><div class="shop-grid">${items.map(it=>catalogCardHTML(it,'shop')).join('')}</div></div>`;
   }).join('');
   return `
-    <button class="btn primary" data-addcard="shop" style="width:100%; margin-bottom:10px;">＋ 新增商品</button>
+    <button class="btn primary" data-addcard="shop" style="width:100%; margin-bottom:10px; position:sticky; top:0; z-index:5;">＋ 新增商品</button>
     <div class="hint" style="margin:0 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。</div>
     ${jumpChips}
     ${body || `<div class="hint">還沒有商品。</div>`}
@@ -1240,7 +1240,7 @@ function renderGmSchoolSection(kind){
     return `<div id="${anchorId(kind+'sch',sch)}" style="margin-bottom:16px; scroll-margin-top:64px;"><div class="hint" style="font-weight:700; color:var(--gm); margin-bottom:8px; font-size:15px;">${escapeHtml(sch)}</div>${lvHTML}</div>`;
   }).join('');
   return `
-    <button class="btn primary" data-addcard="${kind}" style="width:100%; margin-bottom:10px;">＋ 新增${kind==='skill'?'技能卡':'手牌'}</button>
+    <button class="btn primary" data-addcard="${kind}" style="width:100%; margin-bottom:10px; position:sticky; top:0; z-index:5;">＋ 新增${kind==='skill'?'技能卡':'手牌'}</button>
     <div class="hint" style="margin:0 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。</div>
     ${jumpChips}
     ${body || `<div class="hint">還沒有卡牌。</div>`}
