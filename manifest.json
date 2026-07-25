@@ -1,0 +1,9 @@
+{
+  "name": "桌遊管理工具",
+  "short_name": "桌遊工具",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#171D18",
+  "theme_color": "#171D18",
+  "orientation": "any"
+}

@@ -3,2559 +3,1339 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>桌遊存檔工具</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Bitter:wght@600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>桌遊管理工具</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#171D18">
 <style>
   :root{
-    --bg:#171D18;
-    --panel:#212A22;
-    --panel-alt:#2A342B;
-    --panel-alt2:#333F35;
-    --ink:#EDE6D6;
-    --ink-dim:#9FB0A2;
-    --accent:#C99A3C;
-    --accent-soft:rgba(201,154,60,0.16);
-    --danger:#B5533C;
-    --line:rgba(237,230,214,0.12);
-    --map:#6E9BB0;
-    --equip:#C99A3C;
-    --inv:#7C9473;
-    --shop:#B5533C;
-    --gm:#8B7BA8;
-    --cards:#5E8AA8;
+    --bg:#171D18; --panel:#212A22; --panel-alt:#2A342B; --panel-alt2:#333F35;
+    --ink:#EDE6D6; --ink-dim:#9FB0A2;
+    --accent:#C99A3C; --accent-soft:rgba(201,154,60,0.16);
+    --danger:#B5533C; --line:rgba(237,230,214,0.12);
+    --map:#6E9BB0; --equip:#C99A3C; --inv:#7C9473; --shop:#B5533C; --gm:#8B7BA8;
+    --safe-t: env(safe-area-inset-top, 0px);
     --safe-b: env(safe-area-inset-bottom, 0px);
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
-  html,body{margin:0;padding:0;}
+  html,body{height:100%; margin:0; overscroll-behavior:none;}
   body{
-    background:
-      radial-gradient(ellipse 900px 500px at 50% -10%, rgba(201,154,60,0.06), transparent 60%),
-      var(--bg);
-    color:var(--ink);
-    font-family:'Inter',sans-serif;
-    min-height:100vh;
-    padding-bottom:calc(84px + var(--safe-b));
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Microsoft JhengHei',sans-serif;
   }
-  .mono{font-family:'JetBrains Mono',monospace;}
-  .display{font-family:'Bitter',serif;}
-  button{font-family:'Inter',sans-serif; cursor:pointer;}
+  .serif{font-family:Georgia,'Noto Serif TC',serif;}
+  .mono{font-family:'SFMono-Regular',Consolas,'Courier New',monospace;}
+  button{font-family:inherit; cursor:pointer;}
+  input,textarea{font-family:inherit;}
+
+  #app{display:flex; flex-direction:column; height:100vh; height:100dvh; overflow:hidden;}
 
   /* ---- Top bar ---- */
-  header{
-    position:sticky; top:0; z-index:20;
-    background:rgba(23,29,24,0.92);
-    backdrop-filter:blur(8px);
-    border-bottom:1px solid var(--line);
-    padding:14px 16px 12px;
+  #topbar{
+    flex:0 0 auto; display:flex; align-items:center; gap:8px;
+    padding:calc(8px + var(--safe-t)) 10px 8px; background:rgba(23,29,24,0.96);
+    border-bottom:1px solid var(--line); backdrop-filter:blur(8px); z-index:20;
   }
-  .session-row{display:flex; align-items:center; gap:10px;}
-  .session-row .eyebrow{
-    font-family:'JetBrains Mono',monospace;
-    font-size:11px; letter-spacing:0.08em; color:var(--accent); text-transform:uppercase;
+  #topbar .tb-btn{
+    flex:0 0 auto; background:var(--panel-alt); border:1px solid var(--line); color:var(--ink);
+    border-radius:9px; padding:8px 11px; font-size:14px; display:flex; align-items:center; gap:4px;
   }
-  #sessionName{
-    width:100%;
-    background:transparent; border:none; outline:none;
-    color:var(--ink); font-family:'Bitter',serif; font-weight:700;
-    font-size:20px; padding:2px 0;
-    border-bottom:1px solid transparent;
-  }
-  #sessionName:focus{border-bottom:1px solid var(--accent);}
-  .io-row{display:flex; gap:8px; margin-top:10px;}
-  .io-btn{
-    flex:1; display:flex; align-items:center; justify-content:center; gap:6px;
-    background:var(--panel-alt); color:var(--ink); border:1px solid var(--line);
-    border-radius:10px; padding:9px 8px; font-size:13px; font-weight:600;
-  }
-  .io-btn.primary{background:var(--accent-soft); border-color:var(--accent); color:var(--accent);}
-  .io-btn:disabled{opacity:0.35;}
-  .io-btn svg{width:15px;height:15px;flex-shrink:0;}
-  #importInput{display:none;}
-  .hint{font-size:11.5px; color:var(--ink-dim); margin-top:8px; line-height:1.5;}
-
-  /* ---- Tabs ---- */
-  nav.tabs{
-    position:fixed; left:0; right:0; bottom:0; z-index:30;
-    display:flex;
-    background:rgba(23,29,24,0.97);
-    backdrop-filter:blur(10px);
-    border-top:1px solid var(--line);
-    padding-bottom:var(--safe-b);
-  }
-  nav.tabs button{
-    flex:1; background:none; border:none; color:var(--ink-dim);
-    display:flex; flex-direction:column; align-items:center; gap:4px;
-    padding:10px 4px 8px; font-size:11px; font-weight:600;
-    position:relative;
-  }
-  nav.tabs button .dot{width:6px;height:6px;border-radius:50%; background:currentColor; opacity:0.35;}
-  nav.tabs button.active{color:var(--tab-color, var(--accent));}
-  nav.tabs button.active .dot{opacity:1; background:var(--tab-color, var(--accent)); box-shadow:0 0 8px var(--tab-color, var(--accent));}
-  nav.tabs button.active::before{
-    content:""; position:absolute; top:0; left:20%; right:20%; height:2px;
-    background:var(--tab-color, var(--accent));
+  #topbar .tb-btn:disabled{opacity:0.35;}
+  #topbar .tb-title{flex:1; font-family:Georgia,serif; font-weight:700; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-dim);}
+  #goldChip{
+    flex:0 0 auto; background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent);
+    border-radius:20px; padding:7px 12px; font-weight:700; font-size:13px; font-family:monospace;
   }
 
-  /* ---- Content ---- */
-  main{padding:16px; max-width:640px; margin:0 auto;}
-  .section-title{
-    display:flex; align-items:baseline; justify-content:space-between; margin-bottom:12px;
-  }
-  .section-title h2{
-    font-family:'Bitter',serif; font-size:18px; margin:0; font-weight:700;
-    color:var(--tab-color, var(--ink));
-  }
-  .section-title .count{font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--ink-dim);}
+  /* ---- Main ---- */
+  #main{flex:1 1 auto; min-height:0; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch; padding:14px 14px 24px;}
+  .tabpanel{display:none;}
+  .tabpanel.active{display:block;}
 
-  .empty{
-    text-align:center; padding:56px 20px; color:var(--ink-dim);
+  /* ---- Bottom nav ---- */
+  #bottomnav{
+    flex:0 0 auto; display:flex; overflow-x:auto; background:rgba(23,29,24,0.97);
+    border-top:1px solid var(--line); padding-bottom:var(--safe-b); -webkit-overflow-scrolling:touch;
   }
-  .empty .glyph{font-size:28px; margin-bottom:10px; opacity:0.6;}
-  .empty p{font-size:13.5px; line-height:1.6; margin:0;}
+  #bottomnav button{
+    flex:1 1 0; min-width:56px; background:none; border:none; color:var(--ink-dim);
+    display:flex; flex-direction:column; align-items:center; gap:3px; padding:9px 2px 7px;
+    font-size:10.5px; position:relative; white-space:nowrap;
+  }
+  #bottomnav button .dot{width:5px;height:5px;border-radius:50%; background:currentColor; opacity:0.3;}
+  #bottomnav button.active{color:var(--tabc, var(--accent));}
+  #bottomnav button.active .dot{opacity:1; background:var(--tabc, var(--accent)); box-shadow:0 0 6px var(--tabc, var(--accent));}
+  #bottomnav button.active::before{content:""; position:absolute; top:0; left:22%; right:22%; height:2px; background:var(--tabc, var(--accent));}
 
-  .card{
-    background:var(--panel);
-    border:1px solid var(--line);
-    border-left:3px solid var(--tab-color, var(--accent));
-    border-radius:12px;
-    padding:12px;
-    margin-bottom:12px;
-    display:flex; gap:12px;
+  /* ---- Generic bits ---- */
+  .hint{font-size:11.5px; color:var(--ink-dim); line-height:1.5;}
+  .empty{text-align:center; padding:40px 16px; color:var(--ink-dim);}
+  .empty .glyph{font-size:26px; margin-bottom:8px; opacity:.6;}
+  .field{margin-bottom:12px;}
+  .field label{display:block; font-size:11px; color:var(--ink-dim); margin-bottom:5px; font-weight:600;}
+  .field input[type=text], .field input[type=number], .field textarea, .field select{
+    width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px;
+    padding:9px 10px; color:var(--ink); font-size:13.5px; outline:none;
   }
-  .card img{
-    width:76px; height:76px; object-fit:cover; border-radius:8px;
-    background:var(--panel-alt); flex-shrink:0;
-  }
-  .card .no-photo{
-    width:76px; height:76px; border-radius:8px; background:var(--panel-alt);
-    display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-size:10px; flex-shrink:0;
-  }
-  .card-body{flex:1; min-width:0;}
-  .card-top{display:flex; align-items:center; gap:8px; margin-bottom:4px; flex-wrap:wrap;}
-  .timestamp{font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--ink-dim); margin-left:auto;}
-  .note{font-size:13.5px; line-height:1.5; color:var(--ink); white-space:pre-wrap; word-break:break-word;}
-  .note.empty-note{color:var(--ink-dim); font-style:italic;}
-  .card-actions{display:flex; gap:14px; margin-top:8px;}
-  .card-actions button{
-    background:none; border:none; color:var(--ink-dim); font-size:11.5px;
-    display:flex; align-items:center; gap:4px; padding:2px 0;
-  }
-  .card-actions button.del{color:var(--danger);}
-  .card-actions svg{width:13px;height:13px;}
+  .field textarea{min-height:64px; resize:vertical; line-height:1.5;}
+  .btn{border:none; border-radius:9px; padding:10px; font-size:13px; font-weight:600;}
+  .btn.primary{background:var(--accent); color:#171D18;}
+  .btn.ghost{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink);}
+  .btn.danger{background:none; border:1px solid var(--danger); color:var(--danger);}
+  .btn.sm{padding:7px 10px; font-size:11.5px;}
+  .row{display:flex; gap:8px; flex-wrap:wrap;}
+  .grow{flex:1;}
 
-  /* ---- FAB ---- */
-  .fab{
-    position:fixed; right:18px; bottom:calc(78px + var(--safe-b)); z-index:25;
-    width:56px; height:56px; border-radius:50%;
-    background:var(--tab-color, var(--accent)); color:#171D18;
-    border:none; display:flex; align-items:center; justify-content:center;
-    box-shadow:0 6px 18px rgba(0,0,0,0.4);
-  }
-  .fab svg{width:26px;height:26px;}
+  /* ---- Collapsible section ---- */
+  .section{border:1px solid var(--line); border-radius:12px; margin-bottom:12px; overflow:hidden; background:var(--panel);}
+  .section-head{width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; padding:12px 13px; text-align:left;}
+  .section-head .st{font-family:Georgia,serif; font-weight:700; font-size:14px;}
+  .section-head .sc{color:var(--ink-dim); font-size:11px;}
+  .section-body{padding:12px; background:var(--panel-alt); display:none;}
+  .section.open .section-body{display:block;}
+  .section.open .chev{transform:rotate(90deg);}
+  .chev{transition:transform .15s; color:var(--ink-dim); font-size:11px;}
 
-  /* ---- Modal / sheet ---- */
-  .overlay{
-    position:fixed; inset:0; background:rgba(10,13,10,0.72); z-index:50;
-    display:none; align-items:flex-end; justify-content:center;
+  /* ---- Photo grid (battlefield / player / catalog thumbs) ---- */
+  .photo-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; margin-bottom:10px;}
+  .photo-item{position:relative; border-radius:9px; overflow:hidden; background:var(--panel-alt2); border:1px solid var(--line);}
+  .photo-item img{width:100%; aspect-ratio:4/3; object-fit:cover; display:block; cursor:pointer;}
+  .photo-item .pi-del{position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; background:rgba(10,13,10,0.75); border:none; color:var(--ink); font-size:11px;}
+  .photo-add-row{display:flex; gap:8px; margin-bottom:10px;}
+  .photo-add-row label{
+    flex:1; text-align:center; background:var(--panel-alt2); border:1px dashed var(--line); color:var(--ink-dim);
+    border-radius:9px; padding:10px; font-size:12px;
   }
+
+  /* ---- Tag chips / fields ---- */
+  .tagfield{margin-bottom:6px;}
+  .tag-chips{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:7px;}
+  .tag-chip{display:inline-flex; align-items:center; gap:5px; background:var(--accent-soft); border:1px solid rgba(201,154,60,.4); color:var(--accent); font-size:12px; padding:5px 5px 5px 10px; border-radius:16px;}
+  .tag-chip .tcn{cursor:pointer;}
+  .tag-chip .tcx{background:none; border:none; color:var(--accent); opacity:.7; font-size:12px; padding:0 3px;}
+  .tag-empty{font-size:11.5px; color:var(--ink-dim); font-style:italic;}
+  .tag-add-row{display:flex; gap:6px;}
+  .tag-add-row input{flex:1; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px; padding:7px 9px; color:var(--ink); font-size:12.5px; outline:none;}
+  .tag-add-row button{background:var(--accent); color:#171D18; border:none; border-radius:7px; padding:0 12px; font-size:12px; font-weight:700;}
+  .tag-suggest{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;}
+  .tag-suggest span{background:var(--panel); border:1px dashed var(--line); color:var(--ink-dim); font-size:11px; padding:3px 9px; border-radius:14px;}
+  .cat-block{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:9px;}
+  .cat-head{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
+  .cat-head .cn{font-weight:600; font-size:12.5px; flex:1; cursor:pointer;}
+  .cat-head button{background:none; border:none; color:var(--ink-dim); font-size:11px;}
+  .cat-head button.del{color:var(--danger);}
+  .add-cat-btn{width:100%; background:none; border:1px dashed var(--line); color:var(--ink-dim); border-radius:9px; padding:9px; font-size:12px;}
+
+  /* ---- Player card ---- */
+  .player-card{border:1px solid var(--line); border-left:3px solid var(--equip); border-radius:12px; margin-bottom:12px; overflow:hidden; background:var(--panel);}
+  .player-head{width:100%; display:flex; align-items:center; gap:8px; background:none; border:none; padding:12px; text-align:left;}
+  .player-head .pn{font-family:Georgia,serif; font-weight:700; font-size:14.5px; flex:1;}
+  .player-body{display:none; padding:12px; background:var(--panel-alt);}
+  .player-card.open .player-body{display:block;}
+  .player-card.open .chev{transform:rotate(90deg);}
+  .gold-row{display:flex; align-items:center; justify-content:space-between; padding:8px 2px; border-bottom:1px solid var(--line);}
+  .gold-row:last-child{border-bottom:none;}
+  .gold-stepper{display:flex; align-items:center; gap:5px;}
+  .gold-btn{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); border-radius:7px; padding:5px 8px; font-size:11px; font-family:monospace;}
+  .gold-num{font-family:monospace; font-size:14px; min-width:38px; text-align:center; font-weight:700; color:var(--inv); cursor:pointer;}
+
+  /* ---- Shop / catalog cards ---- */
+  .shop-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px;}
+  .shop-card{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--shop); border-radius:11px; padding:9px; display:flex; flex-direction:column; gap:7px;}
+  .shop-card-photo{position:relative; width:100%; aspect-ratio:3/4; border-radius:8px; overflow:hidden; background:var(--panel-alt2);}
+  .shop-card-photo img{width:100%; height:100%; object-fit:cover; cursor:pointer;}
+  .shop-no-photo{width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-size:10px;}
+  .shop-name{font-size:12px; font-weight:700; text-align:center;}
+  .shop-badge{align-self:center; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:10px; padding:2px 8px; border-radius:10px;}
+  .shop-actions{display:flex; gap:6px;}
+  .shop-actions button{flex:1; border-radius:7px; padding:8px; font-size:11.5px; font-weight:700; border:none;}
+  .shop-buy{background:var(--shop); color:#171D18;}
+  .shop-buy:disabled{background:var(--panel-alt2); color:var(--ink-dim); font-weight:500;}
+  .gm-inputs input, .gm-inputs select{width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px; padding:6px 8px; color:var(--ink); font-size:11.5px; outline:none; margin-bottom:5px;}
+  .gm-del{position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; background:rgba(10,13,10,0.75); border:none; color:var(--ink); font-size:11px;}
+  .level-check{display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; margin-bottom:8px;}
+  .level-check input{width:16px; height:16px; accent-color:var(--shop);}
+
+  /* ---- Overlay / sheet ---- */
+  .overlay{position:fixed; inset:0; background:rgba(10,13,10,.72); z-index:60; display:none; align-items:flex-end; justify-content:center;}
   .overlay.show{display:flex;}
-  .sheet{
-    background:var(--panel); width:100%; max-width:640px;
-    border-radius:18px 18px 0 0; padding:18px 18px calc(18px + var(--safe-b));
-    max-height:90vh; overflow-y:auto;
-    border-top:1px solid var(--line);
-    animation:slideUp 0.22s ease;
-  }
-  @keyframes slideUp{from{transform:translateY(24px); opacity:0;} to{transform:translateY(0); opacity:1;}}
-  .sheet h3{font-family:'Bitter',serif; margin:0 0 14px; font-size:17px; color:var(--tab-color,var(--accent));}
-  .field{margin-bottom:14px;}
-  .field label{display:block; font-size:11.5px; color:var(--ink-dim); margin-bottom:6px; font-weight:600; letter-spacing:0.02em;}
-  .field input[type=text], .field textarea, .field select{
-    width:100%; background:var(--panel-alt); border:1px solid var(--line); border-radius:9px;
-    padding:10px 11px; color:var(--ink); font-family:'Inter',sans-serif; font-size:14px; outline:none;
-  }
-  .field input[type=text]:focus, .field textarea:focus{border-color:var(--tab-color,var(--accent));}
-  .field textarea{resize:vertical; min-height:70px; line-height:1.5;}
+  .sheet{background:var(--panel); width:100%; max-width:640px; border-radius:18px 18px 0 0; padding:16px 16px calc(16px + var(--safe-b)); max-height:88vh; overflow-y:auto;}
+  .sheet h3{font-family:Georgia,serif; margin:0 0 12px;}
+  .picker-list{display:flex; flex-wrap:wrap; gap:8px;}
+  .picker-btn{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); font-size:13px; padding:9px 14px; border-radius:10px;}
 
-  .photo-input-row{display:flex; gap:8px;}
-  .photo-btn{
-    flex:1; background:var(--panel-alt); border:1px dashed var(--line); border-radius:10px;
-    padding:14px 8px; text-align:center; color:var(--ink-dim); font-size:12px;
-  }
-  .photo-btn svg{width:20px;height:20px; display:block; margin:0 auto 4px;}
-  .photo-preview-wrap{position:relative; margin-top:10px; display:none;}
-  .photo-preview-wrap img{width:100%; max-height:220px; object-fit:cover; border-radius:10px;}
-  .photo-preview-wrap .remove-photo{
-    position:absolute; top:8px; right:8px; background:rgba(10,13,10,0.75);
-    border:none; color:var(--ink); width:28px; height:28px; border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-  }
-  input[type=file]{display:none;}
-
-  .sheet-actions{display:flex; gap:10px; margin-top:6px;}
-  .btn{
-    flex:1; border:none; border-radius:10px; padding:12px; font-size:14px; font-weight:600;
-  }
-  .btn.cancel{background:var(--panel-alt); color:var(--ink-dim);}
-  .btn.save{background:var(--tab-color,var(--accent)); color:#171D18;}
-  .btn.ghost{background:none; border:1px solid var(--line); color:var(--ink-dim); flex:none; padding:8px 12px; font-size:12.5px; border-radius:8px;}
-  .btn.danger-ghost{background:none; border:1px solid var(--danger); color:var(--danger); flex:none; padding:8px 12px; font-size:12.5px; border-radius:8px;}
-
-  /* lightbox */
-  #lightbox{
-    position:fixed; inset:0; background:rgba(6,8,6,0.92); z-index:60; display:none;
-    align-items:center; justify-content:center; padding:20px;
-  }
+  #lightbox{position:fixed; inset:0; background:rgba(6,8,6,.92); z-index:80; display:none; align-items:center; justify-content:center; padding:20px;}
   #lightbox.show{display:flex;}
   #lightbox img{max-width:100%; max-height:100%; border-radius:8px;}
 
-  .toast{
-    position:fixed; bottom:calc(90px + var(--safe-b)); left:50%; transform:translateX(-50%);
-    background:var(--panel-alt); border:1px solid var(--accent); color:var(--ink);
-    padding:9px 16px; border-radius:20px; font-size:12.5px; z-index:70;
-    opacity:0; pointer-events:none; transition:opacity 0.25s;
-  }
+  .toast{position:fixed; bottom:calc(72px + var(--safe-b)); left:50%; transform:translateX(-50%); background:var(--panel-alt2); border:1px solid var(--accent); color:var(--ink); padding:9px 16px; border-radius:20px; font-size:12.5px; z-index:90; opacity:0; pointer-events:none; transition:opacity .25s; max-width:88vw; text-align:center;}
   .toast.show{opacity:1;}
 
-  /* ---- Equip tab: player list ---- */
-  .equip-toolbar{display:flex; justify-content:flex-end; margin-bottom:12px;}
-  .player-card{
-    background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--equip);
-    border-radius:12px; padding:12px; margin-bottom:10px; display:flex; align-items:center; gap:12px;
-  }
-  .player-card img{width:48px;height:48px;border-radius:8px;object-fit:cover;background:var(--panel-alt);flex-shrink:0;}
-  .player-card .avatar-fallback{
-    width:48px;height:48px;border-radius:8px;background:var(--panel-alt);flex-shrink:0;
-    display:flex;align-items:center;justify-content:center;color:var(--ink-dim); font-family:'Bitter',serif; font-weight:700; font-size:18px;
-  }
-  .player-card .pname{font-family:'Bitter',serif; font-weight:700; font-size:15.5px;}
-  .player-card .psub{font-size:11.5px; color:var(--ink-dim); margin-top:2px;}
-  .player-card .chevron{margin-left:auto; color:var(--ink-dim);}
-
-  /* ---- Player detail sheet ---- */
-  .pd-photo-row{display:flex; gap:12px; align-items:center; margin-bottom:16px;}
-  .pd-photo{width:64px;height:64px;border-radius:10px;object-fit:cover; background:var(--panel-alt); flex-shrink:0;}
-  .pd-photo-empty{width:64px;height:64px;border-radius:10px;background:var(--panel-alt); flex-shrink:0; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-size:10px; text-align:center;}
-  .pd-name-input{
-    flex:1; background:var(--panel-alt); border:1px solid var(--line); border-radius:9px;
-    padding:10px 11px; color:var(--ink); font-family:'Bitter',serif; font-weight:700; font-size:16px; outline:none;
-  }
-  .pd-photo-btns{display:flex; flex-direction:column; gap:6px;}
-  .pd-photo-btns label{
-    font-size:10.5px; background:var(--panel-alt); border:1px solid var(--line); color:var(--ink-dim);
-    padding:4px 8px; border-radius:6px; text-align:center;
-  }
-
-  .subarea{background:var(--panel-alt); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:12px;}
-  .subarea-head{display:flex; align-items:center; gap:8px; margin-bottom:10px;}
-  .subarea-head .sa-name{font-family:'Bitter',serif; font-weight:700; font-size:14.5px; color:var(--equip); flex:1;}
-  .subarea-head button{background:none; border:none; color:var(--ink-dim); font-size:13px; padding:2px 4px;}
-  .subarea-head button.subarea-delete{color:var(--danger);}
-
-  .tagfield{margin-bottom:8px;}
-  .tag-chips{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;}
-  .tag-chip{
-    display:inline-flex; align-items:center; gap:5px;
-    background:var(--accent-soft); color:var(--accent); border:1px solid rgba(201,154,60,0.4);
-    font-size:12.5px; padding:5px 6px 5px 10px; border-radius:20px;
-  }
-  .tag-chip .tag-x{background:none; border:none; color:var(--accent); opacity:0.7; font-size:13px; line-height:1; padding:0 2px;}
-  .tag-chip .tag-chip-name{cursor:pointer;}
-  .tag-chip .tag-chip-name:active{opacity:0.7;}
-  .tag-empty{font-size:12px; color:var(--ink-dim); font-style:italic;}
-  .tag-add-row{display:flex; gap:6px;}
-  .tag-add-row .tag-input{
-    flex:1; background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px;
-    padding:8px 10px; color:var(--ink); font-size:13px; outline:none;
-  }
-  .tag-add-row .tag-input:focus{border-color:var(--equip);}
-  .tag-add-row .tag-add-btn{background:var(--equip); color:#171D18; border:none; border-radius:8px; padding:0 14px; font-size:12.5px; font-weight:600;}
-  .tag-suggest{display:flex; flex-wrap:wrap; gap:6px; margin-top:7px;}
-  .tag-suggest .sugg{
-    background:var(--panel); border:1px dashed var(--line); color:var(--ink-dim);
-    font-size:12px; padding:4px 10px; border-radius:16px;
-  }
-  .tag-suggest .sugg small{opacity:0.65; font-size:10.5px;}
-  .area-note{
-    width:100%; margin-top:8px; background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px;
-    padding:8px 10px; color:var(--ink); font-size:12.5px; min-height:44px; resize:vertical; outline:none; font-family:'Inter',sans-serif;
-  }
-  .area-note:focus{border-color:var(--equip);}
-
-  .slot-row{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:8px;}
-  .slot-row-head{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
-  .slot-row-head .slot-name{font-size:13px; font-weight:600; color:var(--ink); flex:1;}
-  .slot-row-head button{background:none; border:none; color:var(--ink-dim); font-size:12px; padding:2px 4px;}
-  .slot-row-head button.slot-delete{color:var(--danger);}
-
-  .add-slot-btn, .add-subarea-btn{
-    width:100%; background:none; border:1px dashed var(--line); color:var(--ink-dim);
-    border-radius:9px; padding:10px; font-size:12.5px; margin-top:2px;
-  }
-
-  .cat-tabs{display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:10px; -webkit-overflow-scrolling:touch;}
-  .cat-tabs::-webkit-scrollbar{display:none;}
-  .cat-tab{
-    flex-shrink:0; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim);
-    font-size:12px; padding:6px 12px; border-radius:16px; white-space:nowrap;
-  }
-  .cat-tab.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:600;}
+  #loadingCover{position:fixed; inset:0; background:var(--bg); z-index:999; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-family:monospace; font-size:13px;}
 
   .taglib-item{padding:10px 4px; border-bottom:1px solid var(--line);}
   .ti-top{display:flex; align-items:center; justify-content:space-between; gap:8px;}
-  .taglib-item .taglib-name{font-size:14px; font-weight:600;}
-  .taglib-item .taglib-del{background:none; border:none; color:var(--danger); font-size:12px; flex-shrink:0;}
-  .ti-bottom{display:flex; gap:8px; margin-top:6px; flex-wrap:wrap;}
-  .taglib-item .taglib-cat{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:11.5px; padding:4px 10px; border-radius:12px;}
-  .taglib-item .taglib-assign{background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); font-size:11.5px; padding:4px 10px; border-radius:12px; font-weight:600;}
-  .taglib-empty{color:var(--ink-dim); font-size:13px; text-align:center; padding:30px 10px;}
+  .ti-name{font-size:13.5px; font-weight:700;}
+  .ti-bottom{display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;}
+  .ti-badge{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:10.5px; padding:3px 8px; border-radius:10px;}
+  .ti-action{background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); font-size:10.5px; padding:3px 9px; border-radius:10px; font-weight:700;}
+  .ti-del{background:none; border:none; color:var(--danger); font-size:11px;}
+  .cat-tabs{display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px;}
+  .cat-tab{flex-shrink:0; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:11.5px; padding:6px 11px; border-radius:14px; white-space:nowrap;}
+  .cat-tab.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:700;}
 
-  .picker-list{display:flex; flex-wrap:wrap; gap:8px;}
-  .picker-btn{
-    background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink);
-    font-size:13.5px; padding:9px 14px; border-radius:10px; font-weight:500;
-  }
-
-  /* ---- Shop tab ---- */
-  .shop-grid{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px;}
-  .shop-card{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--shop); border-radius:12px; padding:10px; display:flex; flex-direction:column; gap:8px;}
-  .shop-card-photo{position:relative; width:100%; aspect-ratio:3/4; border-radius:8px; overflow:hidden; background:var(--panel-alt);}
-  .shop-card-photo img{width:100%; height:100%; object-fit:cover; display:block;}
-  .shop-no-photo{width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-size:11px;}
-  .shop-card-del{position:absolute; top:5px; right:5px; width:24px; height:24px; border-radius:50%; background:rgba(10,13,10,0.75); border:none; color:var(--ink); font-size:12px; display:flex; align-items:center; justify-content:center;}
-  .shop-name-input{width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px; padding:7px 9px; color:var(--ink); font-size:12.5px; outline:none; font-family:'Inter',sans-serif;}
-  .shop-name-input:focus{border-color:var(--shop);}
-  .shop-qty-row{display:flex; align-items:center; justify-content:center; gap:10px;}
-  .qty-btn{width:30px; height:30px; border-radius:8px; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); font-size:16px; line-height:1; display:flex; align-items:center; justify-content:center;}
-  .qty-num{font-family:'JetBrains Mono',monospace; font-size:14px; min-width:22px; text-align:center;}
-  .shop-buy-btn{background:var(--shop); color:#171D18; border:none; border-radius:8px; padding:9px; font-size:12px; font-weight:700;}
-  .shop-buy-btn:disabled{background:var(--panel-alt2); color:var(--ink-dim); font-weight:500;}
-  .shop-actions{display:flex; gap:6px;}
-  .shop-actions .shop-buy-btn{flex:1;}
-  .shop-sell-btn{flex:1; background:none; border:1px solid var(--shop); color:var(--shop); border-radius:8px; padding:9px; font-size:12px; font-weight:700;}
-  .shop-price-row{display:flex; align-items:center; gap:6px;}
-  .shop-price-label{font-size:11px; color:var(--ink-dim); flex-shrink:0;}
-  .shop-price-input{
-    width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px;
-    padding:7px 9px; color:var(--ink); font-size:12.5px; outline:none; font-family:'JetBrains Mono',monospace;
-  }
-  .shop-price-input:focus{border-color:var(--shop);}
-  .shop-name-display{font-size:12.5px; font-weight:700; color:var(--ink); text-align:center;}
-  .shop-tier-badge{align-self:center; background:var(--panel-alt2); border:1px solid var(--line); color:var(--gm); font-size:10.5px; padding:2px 9px; border-radius:10px;}
-
-  /* ---- Team gold ---- */
-  .gold-row{display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 4px; border-bottom:1px solid var(--line);}
-  .gold-row:last-child{border-bottom:none;}
-  .gold-label{font-size:13px; font-weight:600; color:var(--ink);}
-  .gold-stepper{display:flex; align-items:center; gap:5px;}
-  .gold-btn{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); border-radius:7px; padding:5px 8px; font-size:11px; font-family:'JetBrains Mono',monospace;}
-  .gold-num{font-family:'JetBrains Mono',monospace; font-size:14px; min-width:36px; text-align:center; font-weight:700; color:var(--inv);}
-
-  /* ---- GM area ---- */
-  .taglib-item .taglib-gm{background:rgba(139,123,168,0.15); border:1px solid rgba(139,123,168,0.5); color:var(--gm); font-size:11.5px; padding:4px 10px; border-radius:12px; font-weight:600;}
-  .gm-del{background:none; border:none; color:var(--danger); font-size:12px;}
-  .gm-restore{background:none; border:none; color:var(--gm); font-size:11.5px; font-weight:600;}
-  .tier-group{margin-bottom:20px;}
-  .tier-head{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
-  .tier-toggle{display:flex; align-items:center; gap:7px; font-weight:700; font-family:'Bitter',serif; color:var(--gm); font-size:14px;}
-  .tier-toggle input{width:17px; height:17px; accent-color:var(--gm);}
-  .tier-count{font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--ink-dim);}
-  .cat-name-input, .cat-tier-input, .cat-price-input, .cat-qty-input{
-    width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px;
-    padding:7px 9px; color:var(--ink); font-size:12.5px; outline:none; font-family:'Inter',sans-serif;
-  }
-  .cat-name-input:focus, .cat-tier-input:focus, .cat-price-input:focus, .cat-qty-input:focus{border-color:var(--gm);}
-  .gm-section{margin-bottom:14px; border:1px solid var(--line); border-radius:12px; overflow:hidden;}
-  .gm-section-head{
-    width:100%; display:flex; align-items:center; justify-content:space-between;
-    background:var(--panel); border:none; padding:13px 14px; text-align:left;
-  }
-  .gm-section-title{font-family:'Bitter',serif; font-weight:700; font-size:14.5px;}
-  .gm-section-chevron{color:var(--ink-dim); font-size:12px;}
-  .gm-section-body{padding:14px; background:var(--panel-alt);}
-  .school-group{margin-bottom:18px; padding-bottom:4px; border-bottom:1px dashed var(--line);}
-  .school-head{font-family:'Bitter',serif; font-weight:700; font-size:13.5px; color:var(--cards); margin-bottom:10px;}
-  .skill-name-input, .skill-school-input, .skill-level-input, .skill-cap-input,
-  .hand-name-input, .hand-school-input, .hand-level-input, .hand-cap-input{
-    width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px;
-    padding:7px 9px; color:var(--ink); font-size:12.5px; outline:none; font-family:'Inter',sans-serif;
-  }
-  .skill-name-input:focus, .skill-school-input:focus, .skill-level-input:focus, .skill-cap-input:focus,
-  .hand-name-input:focus, .hand-school-input:focus, .hand-level-input:focus, .hand-cap-input:focus{border-color:var(--cards);}
-
-  /* ---- Cards overview tab ---- */
-  .cards-level-group{margin-bottom:10px;}
-  .cards-level-head{
-    width:100%; display:flex; align-items:center; justify-content:space-between;
-    background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:9px 12px;
-    font-size:12.5px; font-weight:600; color:var(--ink); margin-bottom:8px;
-  }
-  .cards-level-body{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:6px;}
-  .overview-card{background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:6px; text-align:center;}
-  .overview-card img{width:100%; aspect-ratio:3/4; object-fit:cover; border-radius:6px; display:block;}
-  .overview-card-name{font-size:10.5px; margin-top:5px; color:var(--ink); line-height:1.3; word-break:break-word;}
-
-  /* ---- Storage panel ---- */
-  .storage-total{font-family:'JetBrains Mono',monospace; font-size:22px; font-weight:700; color:var(--accent); margin-bottom:14px;}
-  .storage-row{display:flex; align-items:center; gap:10px; padding:10px 4px; border-bottom:1px solid var(--line);}
-  .storage-row .sr-label{flex:1; font-size:13px;}
-  .storage-row .sr-size{font-family:'JetBrains Mono',monospace; font-size:11.5px; color:var(--ink-dim);}
-  .storage-row .sr-clear{background:none; border:1px solid var(--danger); color:var(--danger); font-size:11px; padding:5px 9px; border-radius:8px; flex-shrink:0;}
-  .quota-block{margin-bottom:14px;}
-  .quota-row{display:flex; justify-content:space-between; align-items:center; font-size:12px; margin-bottom:6px; gap:8px;}
-  .quota-bar{height:8px; border-radius:5px; background:var(--panel-alt2); overflow:hidden;}
-  .quota-bar-fill{height:100%; border-radius:5px; transition:width .3s;}
+  .quota-row{display:flex; justify-content:space-between; align-items:center; font-size:11.5px; margin-bottom:5px; gap:8px;}
+  .quota-bar{height:7px; border-radius:4px; background:var(--panel-alt2); overflow:hidden;}
+  .quota-bar-fill{height:100%; border-radius:4px; transition:width .3s;}
+  .storage-row{display:flex; align-items:center; gap:8px; padding:8px 2px; border-bottom:1px solid var(--line);}
+  .storage-row .lbl{flex:1; font-size:12.5px;}
+  .storage-row .sz{font-family:monospace; font-size:11px; color:var(--ink-dim);}
 </style>
 </head>
 <body>
 
-<div id="loadingCover" style="position:fixed; inset:0; background:var(--bg); z-index:9999; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-family:'JetBrains Mono',monospace; font-size:13px; letter-spacing:0.05em;">載入存檔中…</div>
+<div id="loadingCover">載入存檔中…</div>
 
-<header>
-  <div class="session-row">
-    <div style="flex:1">
-      <div class="eyebrow">場次紀錄 · SESSION LOG</div>
-      <input id="sessionName" type="text" placeholder="幫這場遊戲取個名字…" value="未命名場次">
-    </div>
-  </div>
-  <div class="io-row">
-    <button class="io-btn primary" id="btnExport">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>
-      匯出存檔
-    </button>
-    <button class="io-btn" id="btnImport">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 15V3m0 12l-4-4m4 4l4-4M4 17v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>
-      匯入讀檔
-    </button>
-    <button class="io-btn" id="btnStorage" style="flex:none; padding:9px 12px;">📊</button>
-    <button class="io-btn" id="btnUndo" style="flex:none; padding:9px 12px;" disabled>↶</button>
-    <button class="io-btn" id="btnRedo" style="flex:none; padding:9px 12px;" disabled>↷</button>
-    <input type="file" id="importInput" accept="application/json">
-  </div>
-  <div class="hint" id="statusHint">目前紀錄尚未匯出 · 結束前記得按「匯出存檔」避免遺失</div>
-</header>
-
-<main>
-  <div class="section-title">
-    <h2 id="sectionTitle">地圖現況</h2>
-    <span class="count" id="sectionCount">0 筆</span>
+<div id="app">
+  <div id="topbar">
+    <button class="tb-btn" id="btnUndo" title="上一步" disabled>↶</button>
+    <button class="tb-btn" id="btnRedo" title="下一步" disabled>↷</button>
+    <button class="tb-btn" id="btnTagLib">🏷</button>
+    <span class="tb-title" id="tbTitle">戰場</span>
+    <span id="goldChip">💰 0</span>
   </div>
 
-  <div id="list"></div>
-
-  <div id="equipView" style="display:none;">
-    <div class="equip-toolbar">
-      <button class="btn ghost" id="btnTagLib">🏷 標籤庫</button>
-    </div>
-    <div id="playerCards"></div>
+  <div id="main">
+    <div class="tabpanel active" id="panel-battlefield"></div>
+    <div class="tabpanel" id="panel-players"></div>
+    <div class="tabpanel" id="panel-inventory"></div>
+    <div class="tabpanel" id="panel-shop"></div>
+    <div class="tabpanel" id="panel-gm"></div>
+    <div class="tabpanel" id="panel-system"></div>
   </div>
 
-  <div id="invView" style="display:none;"></div>
-
-  <div id="shopView" style="display:none;"></div>
-
-  <div id="cardsView" style="display:none;"></div>
-
-  <div id="gmView" style="display:none;"></div>
-</main>
-
-<button class="fab" id="fabAdd">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
-</button>
-
-<nav class="tabs">
-  <button data-cat="map" class="active"><span class="dot"></span>地圖現況</button>
-  <button data-cat="equip"><span class="dot"></span>玩家裝備</button>
-  <button data-cat="inv"><span class="dot"></span>團隊背包</button>
-  <button data-cat="shop"><span class="dot"></span>商店區</button>
-  <button data-cat="cards"><span class="dot"></span>遊戲卡牌</button>
-  <button data-cat="gm"><span class="dot"></span>GM區</button>
-</nav>
-
-<!-- Add/edit sheet for map / inv / shop -->
-<div class="overlay" id="overlay">
-  <div class="sheet">
-    <h3 id="sheetTitle">新增紀錄</h3>
-    <div class="field">
-      <label>照片</label>
-      <div class="photo-input-row">
-        <label class="photo-btn" for="photoCamera">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 8a2 2 0 012-2h1l1-2h8l1 2h1a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V8z"/><circle cx="12" cy="13" r="3.5"/></svg>
-          拍照
-        </label>
-        <label class="photo-btn" for="photoFile">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-          從相簿選
-        </label>
-        <input type="file" id="photoCamera" accept="image/*" capture="environment">
-        <input type="file" id="photoFile" accept="image/*">
-      </div>
-      <div id="photoPreviewWrap" class="photo-preview-wrap">
-        <img id="photoPreview" alt="預覽">
-        <button class="remove-photo" id="removePhoto" type="button">✕</button>
-      </div>
-    </div>
-    <div class="field">
-      <label>文字說明</label>
-      <textarea id="noteInput" placeholder="記錄現況、數量、位置…"></textarea>
-    </div>
-    <div class="sheet-actions">
-      <button class="btn cancel" id="btnCancel">取消</button>
-      <button class="btn save" id="btnSave">儲存紀錄</button>
-    </div>
-  </div>
+  <nav id="bottomnav">
+    <button data-tab="battlefield" class="active" style="--tabc:var(--map)"><span class="dot"></span>戰場</button>
+    <button data-tab="players" style="--tabc:var(--equip)"><span class="dot"></span>玩家</button>
+    <button data-tab="inventory" style="--tabc:var(--inv)"><span class="dot"></span>團隊背包</button>
+    <button data-tab="shop" style="--tabc:var(--shop)"><span class="dot"></span>商店系統</button>
+    <button data-tab="gm" style="--tabc:var(--gm)"><span class="dot"></span>GM區</button>
+    <button data-tab="system" style="--tabc:var(--accent)"><span class="dot"></span>系統</button>
+  </nav>
 </div>
 
-<!-- Player detail sheet -->
-<div class="overlay" id="playerOverlay">
-  <div class="sheet" id="playerSheetBody"></div>
-</div>
-
-<!-- Tag library sheet -->
-<div class="overlay" id="taglibOverlay">
-  <div class="sheet">
-    <div id="taglibBody"></div>
-  </div>
-</div>
-
-<!-- Storage usage sheet -->
-<div class="overlay" id="storageOverlay">
-  <div class="sheet">
-    <div id="storageBody"></div>
-  </div>
-</div>
+<!-- Tag library overlay -->
+<div class="overlay" id="taglibOverlay"><div class="sheet" id="taglibBody"></div></div>
 
 <div id="lightbox"><img id="lightboxImg" alt=""></div>
 <div class="toast" id="toast"></div>
 
 <script>
-const CATS = {
-  map:  {label:'地圖現況',   color:'#6E9BB0', empty:'還沒有地圖紀錄。拍下棋盤或地圖現況，方便下次接續遊戲。'},
-  equip:{label:'玩家裝備',   color:'#C99A3C', empty:''},
-  inv:  {label:'團隊背包',   color:'#7C9473', empty:'還沒有背包紀錄。記下團隊共用資源、道具與數量。'},
-  shop: {label:'商店區',     color:'#B5533C', empty:'還沒有商店紀錄。記下目前上架品項、價格或庫存。'},
-  cards:{label:'遊戲卡牌',   color:'#5E8AA8', empty:''},
-  gm:   {label:'GM區',      color:'#8B7BA8', empty:''},
-};
-
-let state = {
-  entries: [],          // map / inv / shop entries: {id, cat, note, photo, ts}
-  equipPlayers: [],      // {id, name, photo}
-  subareaDefs: [
-    {id:'hand',     name:'手牌區', type:'simple'},
-    {id:'discard',  name:'棄牌區', type:'simple'},
-    {id:'equipment',name:'裝備區', type:'slots', slots:[]},
-    {id:'threat',   name:'威脅區', type:'simple'},
-    {id:'other',    name:'其他區', type:'simple'},
-  ],
-  tagLibrary: [],         // {name, category}[]
-  playerAreaData: {},     // { [playerId]: { [subareaId]: {note,tags} | {slots:{[slotId]:{note,tags}}} } }
-  teamInventory: {
-    photo: null,
-    note: '',
-    slots: [],             // {id, name} e.g. 武器 / 防具 / 消耗品
-    slotData: {},          // { [slotId]: {note, tags} }
-    totalGold: 0,           // 團隊金庫
-    playerGold: {},         // { [playerId]: number } 個人金額
-  },
-  shopCatalog: [],         // {id, photo, name, category, tier, price, qty, basePrice, baseQty, ts}
-  unlockedTiers: [],       // string[]：目前開放給商店的等級
-  skillCatalog: [],        // {id, photo, name, school, level, cap, ts}
-  skillUnlocked: [],       // string[]："school|level" 開放給技能總攬區
-  handCatalog: [],         // {id, photo, name, school, level, cap, ts}
-  handUnlocked: [],        // string[]："school|level" 開放給手牌總攬區
-  removedTags: [],         // GM 區：已移出遊戲的標籤 {id, name, category, removedAt}
-  exported: true,
-};
-let activeCat = 'map';
-let editingId = null;
-let pendingPhoto = null;
-let openPlayerId = null;
-
-const $ = (sel) => document.querySelector(sel);
-const listEl = $('#list');
-const overlay = $('#overlay');
-
-function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
-function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-}
-function fmtTime(ts){
-  const d = new Date(ts);
-  const pad = n => String(n).padStart(2,'0');
-  return `${pad(d.getMonth()+1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-function markDirty(){
-  state.exported = false;
-  $('#statusHint').textContent = '已自動保存在此裝置 · 尚未匯出備份檔案，建議定期匯出保存';
-  $('#statusHint').style.color = 'var(--danger)';
-  scheduleAutoSave();
-  scheduleHistoryPush();
-}
-function markClean(){
-  state.exported = true;
-  $('#statusHint').textContent = '已自動保存在此裝置 · 也已匯出備份檔案';
-  $('#statusHint').style.color = '';
-  scheduleAutoSave();
-}
+/* ============ Utilities ============ */
+const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
+function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fmtTime(ts){ const d=new Date(ts); const p=n=>String(n).padStart(2,'0'); return `${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
 let toastTimer;
-function showToast(msg){
-  const t = $('#toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=> t.classList.remove('show'), 2200);
-}
-function compressImage(file, cb, maxW=1000, quality=0.72){
+function showToast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2400); }
+function compressImage(file, cb, maxW=1000, quality=0.75){
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = (e)=>{
+  reader.onload = e=>{
     const img = new Image();
     img.onload = ()=>{
-      const scale = Math.min(1, maxW / img.width);
+      const scale = Math.min(1, maxW/img.width);
       const canvas = document.createElement('canvas');
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.width = img.width*scale; canvas.height = img.height*scale;
+      canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
       cb(canvas.toDataURL('image/jpeg', quality));
     };
     img.src = e.target.result;
   };
   reader.readAsDataURL(file);
 }
+function openLightbox(src){ $('#lightboxImg').src=src; $('#lightbox').classList.add('show'); }
+$('#lightbox').addEventListener('click', ()=> $('#lightbox').classList.remove('show'));
 
-/* ---------------- Tab switching ---------------- */
-function setActiveCat(cat){
-  activeCat = cat;
-  document.querySelectorAll('nav.tabs button').forEach(b=>{
-    const on = b.dataset.cat === cat;
-    b.classList.toggle('active', on);
-    b.style.setProperty('--tab-color', on ? CATS[cat].color : '');
-  });
-  document.documentElement.style.setProperty('--tab-color', CATS[cat].color);
-  $('#sectionTitle').textContent = CATS[cat].label;
-  $('#sectionTitle').style.color = CATS[cat].color;
-  $('#fabAdd').style.background = CATS[cat].color;
-  $('#fabAdd').style.display = (cat === 'inv' || cat === 'shop' || cat === 'gm' || cat === 'cards') ? 'none' : 'flex';
-  listEl.style.display = (cat === 'equip' || cat === 'inv' || cat === 'shop' || cat === 'gm' || cat === 'cards') ? 'none' : 'block';
-  $('#equipView').style.display = cat === 'equip' ? 'block' : 'none';
-  $('#invView').style.display = cat === 'inv' ? 'block' : 'none';
-  $('#shopView').style.display = cat === 'shop' ? 'block' : 'none';
-  $('#cardsView').style.display = cat === 'cards' ? 'block' : 'none';
-  $('#gmView').style.display = cat === 'gm' ? 'block' : 'none';
-  $('#sectionCount').style.display = (cat === 'equip' || cat === 'inv' || cat === 'shop' || cat === 'gm' || cat === 'cards') ? 'none' : 'inline';
-  if(cat === 'equip') renderPlayerList();
-  else if(cat === 'inv') renderInvView();
-  else if(cat === 'shop') renderShopView();
-  else if(cat === 'cards') renderCardsView();
-  else if(cat === 'gm') renderGMView();
-  else render();
+/* ============ Storage backend: native window.storage (Claude) or localStorage (standalone) ============ */
+const STORE_PREFIX = 'ttool-v1:';
+const hasNativeStorage = (typeof window.storage !== 'undefined') && window.storage && typeof window.storage.get === 'function';
+const appStorage = hasNativeStorage ? window.storage : {
+  async get(key){ const raw=localStorage.getItem(STORE_PREFIX+key); if(raw===null) throw new Error('not found'); return {key,value:raw}; },
+  async set(key,value){ localStorage.setItem(STORE_PREFIX+key,value); return {key,value}; },
+  async delete(key){ localStorage.removeItem(STORE_PREFIX+key); return {key,deleted:true}; },
+  async list(prefix){
+    const ids=[]; const full=STORE_PREFIX+(prefix||'');
+    for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith(full)) ids.push(k.slice(full.length)); }
+    return {keys:ids};
+  },
+};
+async function safeGet(key){ try{ const r=await appStorage.get(key); return r?r.value:null; }catch(e){ return null; } }
+async function listIds(prefix){ try{ const r=await appStorage.list(prefix); const keys=(r&&r.keys)?r.keys:[]; return keys.map(k=>k.startsWith(prefix)?k.slice(prefix.length):k); }catch(e){ return []; } }
+
+/* ============ State ============ */
+function newEquipCat(name){ return {id: name==='其他分類' ? 'other' : uid(), name, tags:[]}; }
+function newPlayer(name){
+  return {id:uid(), name, photos:[], note:'', hand:{tags:[]}, discard:{tags:[]}, equipCats:[newEquipCat('其他分類')], collapsed:false};
 }
-document.querySelectorAll('nav.tabs button').forEach(b=>{
-  b.addEventListener('click', ()=> setActiveCat(b.dataset.cat));
-});
+function newInvCat(name){ return {id: name==='其他分類' ? 'other' : uid(), name, tags:[]}; }
 
-/* ---------------- map / inv / shop list (unchanged model) ---------------- */
-function render(){
-  const items = state.entries.filter(e => e.cat === activeCat).sort((a,b)=>b.ts-a.ts);
-  $('#sectionCount').textContent = items.length + ' 筆';
-  if(items.length === 0){
-    listEl.innerHTML = `<div class="empty"><div class="glyph">◌</div><p>${CATS[activeCat].empty}</p></div>`;
-    return;
+let state = {
+  battlefield: { photos: [], note: '' },
+  players: [],
+  playerFilter: null,
+  teamInventory: { totalGold:0, playerGold:{}, cats:[newInvCat('其他分類')], note:'', removedCards:[] },
+  shopCatalog: [],
+  shopUnlockedLevels: [],
+  skillCatalog: [],
+  handCatalog: [],
+  tagLibrary: [],
+  exported: true,
+};
+let activeTab = 'battlefield';
+const TAB_LABEL = {battlefield:'戰場', players:'玩家', inventory:'團隊背包', shop:'商店系統', gm:'GM區', system:'系統'};
+const TAB_COLOR = {battlefield:'var(--map)', players:'var(--equip)', inventory:'var(--inv)', shop:'var(--shop)', gm:'var(--gm)', system:'var(--accent)'};
+
+function markDirty(){ state.exported=false; scheduleAutoSave(); scheduleHistoryPush(); updateGoldChip(); }
+function markClean(){ state.exported=true; scheduleAutoSave(); updateGoldChip(); }
+function updateGoldChip(){ $('#goldChip').textContent = `💰 ${state.teamInventory.totalGold||0}`; }
+
+/* ============ Tag library core: cap, in-play counts, category routing ============ */
+function upsertTagLibrary(name, category, level, school, cap){
+  let e = state.tagLibrary.find(t=>t.name===name);
+  if(e){ e.category=category; e.level=level||''; e.school=school||''; if(cap!==undefined) e.cap=cap; }
+  else { e = {id:uid(), name, category, level:level||'', school:school||'', cap: cap===undefined?null:cap}; state.tagLibrary.unshift(e); }
+  return e;
+}
+function countInPlay(name){
+  let n=0;
+  state.players.forEach(p=>{
+    n += (p.hand.tags||[]).filter(t=>t===name).length;
+    n += (p.discard.tags||[]).filter(t=>t===name).length;
+    p.equipCats.forEach(c=> n += (c.tags||[]).filter(t=>t===name).length);
+  });
+  state.teamInventory.cats.forEach(c=> n += (c.tags||[]).filter(t=>t===name).length);
+  return n;
+}
+function countRemoved(name){ return state.teamInventory.removedCards.filter(r=>r.name===name).length; }
+function getCap(name){ const e=state.tagLibrary.find(t=>t.name===name); return (e && e.cap!=null) ? e.cap : null; }
+function canPlace(name){ const cap=getCap(name); if(cap==null) return true; return (countInPlay(name)+countRemoved(name)) < cap; }
+function findMatchingEquipCat(player, category){
+  if(category){ const m=player.equipCats.find(c=>c.name===category); if(m) return m; }
+  return player.equipCats.find(c=>c.id==='other') || player.equipCats[0];
+}
+function findMatchingInvCat(category){
+  if(category){ const m=state.teamInventory.cats.find(c=>c.name===category); if(m) return m; }
+  return state.teamInventory.cats.find(c=>c.id==='other') || state.teamInventory.cats[0];
+}
+function placeTag(tag, dest){
+  if(!canPlace(tag)){ showToast(`「${tag}」已達數量上限，無法再新增`); return false; }
+  let arr;
+  if(dest.type==='player'){
+    const p = state.players.find(x=>x.id===dest.playerId); if(!p) return false;
+    if(dest.area==='hand') arr=p.hand.tags;
+    else if(dest.area==='discard') arr=p.discard.tags;
+    else { const c=p.equipCats.find(c=>c.id===dest.area); if(!c) return false; arr=c.tags; }
+  } else {
+    const c = state.teamInventory.cats.find(c=>c.id===dest.catId); if(!c) return false; arr=c.tags;
   }
-  listEl.innerHTML = items.map(e => `
-    <div class="card" style="--tab-color:${CATS[e.cat].color}" data-id="${e.id}">
-      ${e.photo ? `<img src="${e.photo}" class="entry-photo" alt="紀錄照片">` : `<div class="no-photo">無照片</div>`}
-      <div class="card-body">
-        <div class="card-top"><span class="timestamp">${fmtTime(e.ts)}</span></div>
-        <div class="note ${e.note ? '' : 'empty-note'}">${e.note ? escapeHtml(e.note) : '（無文字說明）'}</div>
-        <div class="card-actions">
-          <button class="edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>編輯</button>
-          <button class="del"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a1 1 0 011-1h6a1 1 0 011 1v2m2 0v14a1 1 0 01-1 1H7a1 1 0 01-1-1V6h12z"/></svg>刪除</button>
+  if(!arr.includes(tag)) arr.push(tag);
+  return true;
+}
+function removeTagFromSource(source, tag){
+  if(!source) return;
+  let arr;
+  if(source.type==='player'){
+    const p = state.players.find(x=>x.id===source.playerId); if(!p) return;
+    if(source.area==='hand') arr=p.hand.tags;
+    else if(source.area==='discard') arr=p.discard.tags;
+    else { const c=p.equipCats.find(c=>c.id===source.area); if(!c) return; arr=c.tags; }
+  } else {
+    const c = state.teamInventory.cats.find(c=>c.id===source.catId); if(!c) return; arr=c.tags;
+  }
+  const idx = arr.indexOf(tag); if(idx>=0) arr.splice(idx,1);
+}
+function levelSortKey(lv){
+  if(!lv) return [0,0,''];
+  const m = String(lv).match(/\d+/);
+  return [1, m?parseInt(m[0],10):999999, String(lv)];
+}
+function compareTagEntries(a,b){
+  const la=levelSortKey(a.level), lb=levelSortKey(b.level);
+  if(la[0]!==lb[0]) return la[0]-lb[0];
+  if(la[1]!==lb[1]) return la[1]-lb[1];
+  if(la[2]!==lb[2]) return la[2].localeCompare(lb[2]);
+  if(a.name.length!==b.name.length) return a.name.length-b.name.length;
+  return a.name.localeCompare(b.name,'zh-Hant');
+}
+
+/* ============ Tab switching ============ */
+const RENDER_FN = {};
+function setActiveTab(tab){
+  activeTab = tab;
+  $$('#bottomnav button').forEach(b=> b.classList.toggle('active', b.dataset.tab===tab));
+  $$('.tabpanel').forEach(p=> p.classList.toggle('active', p.id==='panel-'+tab));
+  $('#tbTitle').textContent = TAB_LABEL[tab];
+  document.documentElement.style.setProperty('--tabc', TAB_COLOR[tab]);
+  if(RENDER_FN[tab]) RENDER_FN[tab]();
+}
+$$('#bottomnav button').forEach(b=> b.addEventListener('click', ()=> setActiveTab(b.dataset.tab)));
+
+/* ============ Battlefield tab ============ */
+function renderBattlefield(){
+  const wrap = $('#panel-battlefield');
+  const bf = state.battlefield;
+  wrap.innerHTML = `
+    <div class="section open">
+      <div class="section-body" style="display:block;">
+        ${bf.photos.length ? `<div class="photo-grid">${bf.photos.map(ph=>`
+          <div class="photo-item">
+            <img src="${ph.photo}" data-id="${ph.id}" class="bf-photo">
+            <button class="pi-del" data-id="${ph.id}">✕</button>
+          </div>`).join('')}</div>` : `<div class="empty"><div class="glyph">◌</div><p>還沒有戰場照片。</p></div>`}
+        ${bf.photos.length < 5 ? `
+        <div class="photo-add-row">
+          <label for="bfCamera">📷 拍照</label>
+          <label for="bfFile">🖼 選圖</label>
+        </div>
+        <input type="file" id="bfCamera" accept="image/*" capture="environment">
+        <input type="file" id="bfFile" accept="image/*">` : `<div class="hint">已達 5 張上限，刪除舊照片才能再新增。</div>`}
+        <div class="field" style="margin-top:10px;">
+          <label>備註</label>
+          <textarea id="bfNote" placeholder="戰場現況文字說明…">${escapeHtml(bf.note||'')}</textarea>
         </div>
       </div>
     </div>
-  `).join('');
-}
-listEl.addEventListener('click', (ev)=>{
-  const card = ev.target.closest('.card');
-  if(!card) return;
-  const id = card.dataset.id;
-  if(ev.target.closest('.del')){
-    if(confirm('確定要刪除這筆紀錄嗎？')){
-      state.entries = state.entries.filter(e=>e.id!==id);
-      markDirty(); render();
+  `;
+  const addPhoto = file => compressImage(file, url=>{
+    bf.photos.push({id:uid(), photo:url, ts:Date.now()});
+    markDirty(); renderBattlefield();
+  }, 1400, 0.8);
+  $('#bfCamera') && $('#bfCamera').addEventListener('change', e=> addPhoto(e.target.files[0]));
+  $('#bfFile') && $('#bfFile').addEventListener('change', e=> addPhoto(e.target.files[0]));
+  $('#bfNote').addEventListener('input', e=>{ bf.note=e.target.value; markDirty(); });
+  wrap.querySelectorAll('.bf-photo').forEach(img=> img.addEventListener('click', ()=> openLightbox(img.src)));
+  wrap.querySelectorAll('.pi-del').forEach(btn=> btn.addEventListener('click', ()=>{
+    if(confirm('確定要刪除這張照片嗎？')){
+      bf.photos = bf.photos.filter(p=>p.id!==btn.dataset.id);
+      markDirty(); renderBattlefield();
     }
-    return;
-  }
-  if(ev.target.closest('.edit')){ openSheet(state.entries.find(e=>e.id===id)); return; }
-  if(ev.target.closest('.entry-photo')){
-    const e = state.entries.find(x=>x.id===id);
-    $('#lightboxImg').src = e.photo;
-    $('#lightbox').classList.add('show');
-  }
-});
-$('#lightbox').addEventListener('click', ()=> $('#lightbox').classList.remove('show'));
-
-function openSheet(entry){
-  editingId = entry ? entry.id : null;
-  pendingPhoto = entry ? entry.photo : null;
-  $('#sheetTitle').textContent = (entry ? '編輯' : '新增') + '・' + CATS[activeCat].label;
-  document.documentElement.style.setProperty('--tab-color', CATS[activeCat].color);
-  $('#noteInput').value = entry ? (entry.note || '') : '';
-  updatePhotoPreview();
-  overlay.classList.add('show');
+  }));
 }
-function closeSheet(){ overlay.classList.remove('show'); editingId = null; pendingPhoto = null; }
-$('#btnCancel').addEventListener('click', closeSheet);
+RENDER_FN.battlefield = renderBattlefield;
 
-function updatePhotoPreview(){
-  const wrap = $('#photoPreviewWrap');
-  if(pendingPhoto){ wrap.style.display='block'; $('#photoPreview').src = pendingPhoto; }
-  else { wrap.style.display='none'; }
-}
-$('#removePhoto').addEventListener('click', ()=>{ pendingPhoto = null; updatePhotoPreview(); });
-$('#photoCamera').addEventListener('change', e => compressImage(e.target.files[0], (url)=>{pendingPhoto=url; updatePhotoPreview();}));
-$('#photoFile').addEventListener('change', e => compressImage(e.target.files[0], (url)=>{pendingPhoto=url; updatePhotoPreview();}));
-
-$('#btnSave').addEventListener('click', ()=>{
-  const note = $('#noteInput').value.trim();
-  if(!note && !pendingPhoto){ showToast('請至少填寫文字說明或上傳照片'); return; }
-  if(editingId){
-    const e = state.entries.find(x=>x.id===editingId);
-    e.note = note; e.photo = pendingPhoto; e.ts = Date.now();
-  } else {
-    state.entries.push({ id: uid(), cat: activeCat, note, photo: pendingPhoto, ts: Date.now() });
-  }
-  markDirty(); closeSheet(); render();
-});
-
-$('#fabAdd').addEventListener('click', ()=>{
-  if(activeCat === 'equip'){ addPlayer(); } else { openSheet(null); }
-});
-
-/* ---------------- Equip tab: players ---------------- */
-function ensurePlayerData(playerId){
-  if(!state.playerAreaData[playerId]) state.playerAreaData[playerId] = {};
-  const pd = state.playerAreaData[playerId];
-  state.subareaDefs.forEach(sa=>{
-    if(sa.type === 'simple'){
-      if(!pd[sa.id]) pd[sa.id] = {note:'', tags:[]};
-    } else {
-      if(!pd[sa.id]) pd[sa.id] = {slots:{}};
-      sa.slots.forEach(slot=>{
-        if(!pd[sa.id].slots[slot.id]) pd[sa.id].slots[slot.id] = {note:'', tags:[]};
-      });
-    }
-  });
-  return pd;
-}
-
-function addPlayer(){
-  const name = prompt('玩家 / 角色名稱：');
-  if(!name || !name.trim()) return;
-  const p = {id: uid(), name: name.trim(), photo: null};
-  state.equipPlayers.push(p);
-  ensurePlayerData(p.id);
-  markDirty();
-  renderPlayerList();
-  openPlayer(p.id);
-}
-
-function renderPlayerList(){
-  const wrap = $('#playerCards');
-  if(!state.equipPlayers.length){
-    wrap.innerHTML = `<div class="empty"><div class="glyph">◌</div><p>還沒有玩家。點右下角「＋」新增玩家，開始記錄手牌、裝備、威脅等狀態。</p></div>`;
-    return;
-  }
-  wrap.innerHTML = state.equipPlayers.map(p=>{
-    const tagCount = countPlayerTags(p.id);
-    return `
-    <div class="player-card" data-id="${p.id}">
-      ${p.photo ? `<img src="${p.photo}" alt="">` : `<div class="avatar-fallback">${escapeHtml((p.name||'?').slice(0,1))}</div>`}
-      <div>
-        <div class="pname">${escapeHtml(p.name)}</div>
-        <div class="psub">${tagCount} 個標籤紀錄</div>
-      </div>
-      <span class="chevron">›</span>
-    </div>`;
-  }).join('');
-}
-function countPlayerTags(playerId){
-  const pd = state.playerAreaData[playerId]; if(!pd) return 0;
-  let n = 0;
-  state.subareaDefs.forEach(sa=>{
-    if(sa.type==='simple'){ n += (pd[sa.id]?.tags?.length || 0); }
-    else { sa.slots.forEach(slot=>{ n += (pd[sa.id]?.slots?.[slot.id]?.tags?.length || 0); }); }
-  });
-  return n;
-}
-$('#playerCards').addEventListener('click', (ev)=>{
-  const card = ev.target.closest('.player-card');
-  if(card) openPlayer(card.dataset.id);
-});
-
-/* ---------------- Player detail sheet ---------------- */
-function openPlayer(playerId){
-  openPlayerId = playerId;
-  ensurePlayerData(playerId);
-  renderPlayerDetail();
-  $('#playerOverlay').classList.add('show');
-}
-function closePlayerDetail(){
-  $('#playerOverlay').classList.remove('show');
-  openPlayerId = null;
-  renderPlayerList();
-}
-
-function getSimpleArea(playerId, subareaId){
-  return ensurePlayerData(playerId)[subareaId];
-}
-function getSlotArea(playerId, subareaId, slotId){
-  if(playerId === '__team__'){
-    if(!state.teamInventory.slotData[slotId]) state.teamInventory.slotData[slotId] = {note:'', tags:[]};
-    return state.teamInventory.slotData[slotId];
-  }
-  const pd = ensurePlayerData(playerId);
-  if(!pd[subareaId].slots[slotId]) pd[subareaId].slots[slotId] = {note:'', tags:[]};
-  return pd[subareaId].slots[slotId];
-}
-
-function tagFieldHTML(playerId, subareaId, slotId, area, defaultCategory){
-  const tags = area.tags || [];
+/* ============ Generic tag field + collapsible sections ============ */
+function tagFieldHTML(loc, tags, defaultCategory){
   return `
-  <div class="tagfield" data-player="${playerId}" data-subarea="${subareaId}" data-slot="${slotId||''}" data-defaultcat="${escapeHtml(defaultCategory||'')}">
+  <div class="tagfield" data-loc="${loc}" data-defcat="${escapeHtml(defaultCategory||'')}">
     <div class="tag-chips">
-      ${tags.length ? tags.map(t=>`<span class="tag-chip"><span class="tag-chip-name" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span><button class="tag-x" data-tag="${escapeHtml(t)}">×</button></span>`).join('') : '<span class="tag-empty">尚無標籤</span>'}
+      ${tags.length ? tags.map(t=>`<span class="tag-chip"><span class="tcn" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</span><button class="tcx" data-tag="${escapeHtml(t)}">×</button></span>`).join('') : '<span class="tag-empty">尚無標籤</span>'}
     </div>
     <div class="tag-add-row">
-      <input type="text" class="tag-input" placeholder="輸入標籤名稱，或搜尋分類…">
-      <button class="tag-add-btn" type="button">加入</button>
+      <input type="text" class="tf-input" placeholder="輸入或搜尋標籤…">
+      <button class="tf-add" type="button">加入</button>
     </div>
     <div class="tag-suggest"></div>
   </div>`;
 }
-
-function renderPlayerDetail(){
-  const p = state.equipPlayers.find(x=>x.id===openPlayerId);
-  if(!p){ closePlayerDetail(); return; }
-  const pd = ensurePlayerData(p.id);
-
-  const subareasHTML = state.subareaDefs.map(sa=>{
-    if(sa.type === 'simple'){
-      const area = pd[sa.id];
-      return `
-      <div class="subarea">
-        <div class="subarea-head">
-          <span class="sa-name sa-rename" data-sa="${sa.id}">${escapeHtml(sa.name)} ✎</span>
-          <button class="subarea-delete" data-sa="${sa.id}">刪除區域</button>
-        </div>
-        ${tagFieldHTML(p.id, sa.id, null, area, sa.name)}
-        <textarea class="area-note" data-player="${p.id}" data-subarea="${sa.id}" data-slot="" placeholder="補充說明（可選）">${escapeHtml(area.note||'')}</textarea>
-      </div>`;
-    } else {
-      const slotsHTML = sa.slots.length ? sa.slots.map(slot=>{
-        const area = getSlotArea(p.id, sa.id, slot.id);
-        return `
-        <div class="slot-row">
-          <div class="slot-row-head">
-            <span class="slot-name slot-rename" data-sa="${sa.id}" data-slot="${slot.id}">${escapeHtml(slot.name)} ✎</span>
-            <button class="slot-delete" data-sa="${sa.id}" data-slot="${slot.id}">刪除</button>
-          </div>
-          ${tagFieldHTML(p.id, sa.id, slot.id, area, slot.name)}
-        </div>`;
-      }).join('') : `<div class="empty" style="padding:20px 10px;"><p>尚未設定格子。點下方新增，例如：武器格、護甲格、飾品格…</p></div>`;
-      return `
-      <div class="subarea">
-        <div class="subarea-head">
-          <span class="sa-name sa-rename" data-sa="${sa.id}">${escapeHtml(sa.name)} ✎</span>
-          <button class="subarea-delete" data-sa="${sa.id}">刪除區域</button>
-        </div>
-        ${slotsHTML}
-        <button class="add-slot-btn" data-sa="${sa.id}">＋ 新增格子</button>
-      </div>`;
-    }
-  }).join('');
-
-  $('#playerSheetBody').innerHTML = `
-    <div class="pd-photo-row">
-      ${p.photo ? `<img class="pd-photo" src="${p.photo}" id="pdPhotoImg" alt="">` : `<div class="pd-photo-empty" id="pdPhotoImg">照片</div>`}
-      <input type="text" class="pd-name-input" id="pdName" value="${escapeHtml(p.name)}" placeholder="玩家名稱">
-      <div class="pd-photo-btns">
-        <label for="pdPhotoCamera">拍照</label>
-        <label for="pdPhotoFile">選圖</label>
-      </div>
-      <input type="file" id="pdPhotoCamera" accept="image/*" capture="environment">
-      <input type="file" id="pdPhotoFile" accept="image/*">
-    </div>
-    ${subareasHTML}
-    <button class="add-subarea-btn" id="btnAddSubarea">＋ 新增自訂區域</button>
-    <div class="sheet-actions" style="margin-top:16px;">
-      <button class="btn ghost" id="btnDuplicatePlayer" style="flex:1;">複製為新玩家</button>
-      <button class="btn danger-ghost" id="btnDeletePlayer" style="flex:1;">刪除這位玩家</button>
-    </div>
-    <button class="btn save" id="btnClosePlayer" style="width:100%; margin-top:10px;">完成</button>
-  `;
-
-  $('#pdPhotoCamera').addEventListener('change', e => compressImage(e.target.files[0], (url)=>{ p.photo=url; markDirty(); renderPlayerDetail(); }));
-  $('#pdPhotoFile').addEventListener('change', e => compressImage(e.target.files[0], (url)=>{ p.photo=url; markDirty(); renderPlayerDetail(); }));
-  $('#pdName').addEventListener('input', e => { p.name = e.target.value; markDirty(); });
-  $('#btnDuplicatePlayer').addEventListener('click', ()=>{
-    const newName = prompt('複製後的新玩家名稱：', p.name + ' 複製');
-    if(!newName || !newName.trim()) return;
-    const newId = uid();
-    state.playerAreaData[newId] = JSON.parse(JSON.stringify(ensurePlayerData(p.id)));
-    state.equipPlayers.push({id:newId, name:newName.trim(), photo:p.photo});
-    markDirty();
-    showToast(`已複製為「${newName.trim()}」，格子與目前標籤都一起帶過去了`);
-    openPlayer(newId);
-  });
-  $('#btnDeletePlayer').addEventListener('click', ()=>{
-    if(confirm(`確定要刪除玩家「${p.name}」與其所有紀錄嗎？`)){
-      state.equipPlayers = state.equipPlayers.filter(x=>x.id!==p.id);
-      delete state.playerAreaData[p.id];
-      markDirty();
-      closePlayerDetail();
-    }
-  });
-  $('#btnClosePlayer').addEventListener('click', closePlayerDetail);
-  $('#btnAddSubarea').addEventListener('click', addSubarea);
-}
-
-/* Delegated events inside player sheet: tags, notes, rename/delete of areas & slots */
-$('#playerSheetBody').addEventListener('click', (ev)=>{
-  const p = state.equipPlayers.find(x=>x.id===openPlayerId);
-  if(!p) return;
-
-  const tagX = ev.target.closest('.tag-x');
-  if(tagX){
-    const field = ev.target.closest('.tagfield');
-    const {subarea, slot} = field.dataset;
-    const area = slot ? getSlotArea(p.id, subarea, slot) : getSimpleArea(p.id, subarea);
-    area.tags = area.tags.filter(t=>t!==tagX.dataset.tag);
-    markDirty(); renderPlayerDetail(); return;
+function resolveArr(loc){
+  const parts = loc.split(':');
+  if(parts[0]==='player'){
+    const p = state.players.find(x=>x.id===parts[1]); if(!p) return null;
+    if(parts[2]==='hand') return p.hand.tags;
+    if(parts[2]==='discard') return p.discard.tags;
+    if(parts[2]==='equip'){ const c=p.equipCats.find(c=>c.id===parts[3]); return c?c.tags:null; }
+  } else if(parts[0]==='team'){
+    const c = state.teamInventory.cats.find(c=>c.id===parts[1]); return c?c.tags:null;
   }
-
-  const chipName = ev.target.closest('.tag-chip-name');
-  if(chipName){
-    const field = ev.target.closest('.tagfield');
-    openMovePicker(chipName.dataset.tag, {player: p.id, subarea: field.dataset.subarea, slot: field.dataset.slot || null});
-    return;
-  }
-
-  const addBtn = ev.target.closest('.tag-add-btn');
-  if(addBtn){
-    const field = ev.target.closest('.tagfield');
-    const input = field.querySelector('.tag-input');
-    addTagToField(p.id, field, input.value.trim());
-    return;
-  }
-
-  const sugg = ev.target.closest('.sugg');
-  if(sugg){
-    const field = ev.target.closest('.tagfield');
-    addTagToField(p.id, field, sugg.dataset.tag);
-    return;
-  }
-
-  const saRename = ev.target.closest('.sa-rename');
-  if(saRename){
-    const sa = state.subareaDefs.find(x=>x.id===saRename.dataset.sa);
-    const name = prompt('區域名稱：', sa.name);
-    if(name && name.trim()){ sa.name = name.trim(); markDirty(); renderPlayerDetail(); }
-    return;
-  }
-
-  const saDelete = ev.target.closest('.subarea-delete');
-  if(saDelete){
-    if(state.subareaDefs.length <= 1){ showToast('至少要保留一個區域'); return; }
-    const sa = state.subareaDefs.find(x=>x.id===saDelete.dataset.sa);
-    if(confirm(`確定要刪除「${sa.name}」這個區域嗎？所有玩家在此區域的紀錄都會一併刪除。`)){
-      state.subareaDefs = state.subareaDefs.filter(x=>x.id!==sa.id);
-      Object.keys(state.playerAreaData).forEach(pid => delete state.playerAreaData[pid][sa.id]);
-      markDirty(); renderPlayerDetail();
-    }
-    return;
-  }
-
-  const slotRename = ev.target.closest('.slot-rename');
-  if(slotRename){
-    const sa = state.subareaDefs.find(x=>x.id===slotRename.dataset.sa);
-    const slot = sa.slots.find(s=>s.id===slotRename.dataset.slot);
-    const name = prompt('格子名稱：', slot.name);
-    if(name && name.trim()){ slot.name = name.trim(); markDirty(); renderPlayerDetail(); }
-    return;
-  }
-
-  const slotDelete = ev.target.closest('.slot-delete');
-  if(slotDelete){
-    const sa = state.subareaDefs.find(x=>x.id===slotDelete.dataset.sa);
-    const slot = sa.slots.find(s=>s.id===slotDelete.dataset.slot);
-    if(confirm(`確定要刪除格子「${slot.name}」嗎？`)){
-      sa.slots = sa.slots.filter(s=>s.id!==slot.id);
-      Object.keys(state.playerAreaData).forEach(pid=>{
-        const areaObj = state.playerAreaData[pid][sa.id];
-        if(areaObj && areaObj.slots) delete areaObj.slots[slot.id];
-      });
-      markDirty(); renderPlayerDetail();
-    }
-    return;
-  }
-
-  const addSlotBtn = ev.target.closest('.add-slot-btn');
-  if(addSlotBtn){
-    const sa = state.subareaDefs.find(x=>x.id===addSlotBtn.dataset.sa);
-    const name = prompt('新格子名稱，例如：武器格、護甲格、飾品格…');
-    if(name && name.trim()){
-      sa.slots.push({id: uid(), name: name.trim()});
-      markDirty(); renderPlayerDetail();
-    }
-    return;
-  }
-});
-
-$('#playerSheetBody').addEventListener('input', (ev)=>{
-  if(ev.target.classList.contains('area-note')){
-    const {player, subarea, slot} = ev.target.dataset;
-    const area = slot ? getSlotArea(player, subarea, slot) : getSimpleArea(player, subarea);
-    area.note = ev.target.value;
-    markDirty();
-    return;
-  }
-  if(ev.target.classList.contains('tag-input')){
-    renderTagSuggestions(ev.target);
-  }
-});
-
-$('#playerSheetBody').addEventListener('keydown', (ev)=>{
-  if(ev.target.classList.contains('tag-input') && ev.key === 'Enter'){
-    ev.preventDefault();
-    const p = state.equipPlayers.find(x=>x.id===openPlayerId);
-    const field = ev.target.closest('.tagfield');
-    addTagToField(p.id, field, ev.target.value.trim());
-  }
-});
-
-function renderTagSuggestions(input){
-  const field = input.closest('.tagfield');
-  const box = field.querySelector('.tag-suggest');
-  const q = input.value.trim().toLowerCase();
-  let matches;
-  if(q){
-    matches = state.tagLibrary.filter(t => t.name.toLowerCase().includes(q) || (t.category||'').toLowerCase().includes(q));
-  } else {
-    matches = state.tagLibrary.slice(0, 8);
-  }
-  matches = matches.slice(0, 8);
-  box.innerHTML = matches.map(t => `<span class="sugg" data-tag="${escapeHtml(t.name)}">${escapeHtml(t.name)}${t.category ? ` <small>· ${escapeHtml(t.category)}</small>` : ''}</span>`).join('');
-}
-
-/* ---------------- Card cap enforcement ---------------- */
-function getCardCap(tagName){
-  const shopItem = state.shopCatalog.find(it=>it.name===tagName);
-  if(shopItem) return (shopItem.baseQty !== undefined ? shopItem.baseQty : shopItem.qty);
-  const skillItem = state.skillCatalog.find(it=>it.name===tagName);
-  if(skillItem) return skillItem.cap;
-  const handItem = state.handCatalog.find(it=>it.name===tagName);
-  if(handItem) return handItem.cap;
   return null;
 }
-function countTagInPlay(tagName){
-  let n = 0;
-  Object.values(state.playerAreaData).forEach(pd=>{
-    Object.values(pd).forEach(area=>{
-      if(area.tags) n += area.tags.filter(t=>t===tagName).length;
-      if(area.slots) Object.values(area.slots).forEach(s=> n += (s.tags||[]).filter(t=>t===tagName).length);
-    });
-  });
-  Object.values(state.teamInventory.slotData||{}).forEach(s=> n += (s.tags||[]).filter(t=>t===tagName).length);
-  return n;
-}
-function countTagRemoved(tagName){
-  return state.removedTags.filter(rt=>rt.name===tagName).length;
-}
-function checkCapOrWarn(tagName){
-  const cap = getCardCap(tagName);
-  if(cap === null || cap === undefined || isNaN(cap)) return true;
-  const used = countTagInPlay(tagName) + countTagRemoved(tagName);
-  if(used >= cap){
-    showToast(`「${tagName}」已達數量上限（${cap}張），無法再新增`);
-    return false;
+function resolveScope(loc){
+  const parts = loc.split(':');
+  if(parts[0]==='player'){
+    if(parts[2]==='equip') return {type:'player', playerId:parts[1], area:parts[3]};
+    return {type:'player', playerId:parts[1], area:parts[2]};
   }
-  return true;
+  return {type:'team', catId:parts[1]};
+}
+function addTagDirect(loc, name, defaultCategory){
+  if(!name) return;
+  if(!canPlace(name)){ showToast(`「${name}」已達數量上限，無法再新增`); return; }
+  const arr = resolveArr(loc); if(!arr) return;
+  if(!arr.includes(name)) arr.push(name);
+  if(!state.tagLibrary.find(t=>t.name===name)) upsertTagLibrary(name, defaultCategory||'', '', '', null);
+  markDirty(); rerenderActiveTab();
+}
+function rerenderActiveTab(){ if(RENDER_FN[activeTab]) RENDER_FN[activeTab](); }
+
+let openSections = new Set(['inv:cats']);
+function sectionHTML(id, title, bodyHtml){
+  const open = openSections.has(id);
+  return `<div class="section ${open?'open':''}"><button class="section-head" data-sec="${id}"><span class="st">${title}</span><span class="chev">▸</span></button><div class="section-body">${bodyHtml}</div></div>`;
 }
 
-function addTagToField(playerId, field, value){
-  if(!value) return;
-  if(!checkCapOrWarn(value)) return;
-  const {subarea, slot, defaultcat} = field.dataset;
-  const area = slot ? getSlotArea(playerId, subarea, slot) : getSimpleArea(playerId, subarea);
-  if(!area.tags.includes(value)) area.tags.push(value);
-  let entry = state.tagLibrary.find(t=>t.name===value);
-  if(entry){
-    state.tagLibrary = state.tagLibrary.filter(t=>t.name!==value);
-  } else {
-    entry = {name:value, category: defaultcat || ''};
-  }
-  state.tagLibrary.unshift(entry);
-  markDirty();
-  renderPlayerDetail();
-}
-
-function addSubarea(){
-  const name = prompt('新區域名稱，例如：狀態區、詛咒區…');
-  if(!name || !name.trim()) return;
-  const isSlots = confirm('這個區域是否需要再分成好幾個格子？（例如裝備區可分武器格、護甲格…）\n\n按「確定」＝需要分格子\n按「取消」＝只要一般文字＋標籤');
-  const sa = {id: uid(), name: name.trim(), type: isSlots ? 'slots' : 'simple'};
-  if(isSlots) sa.slots = [];
-  state.subareaDefs.push(sa);
-  markDirty();
-  renderPlayerDetail();
-}
-
-$('#playerOverlay').addEventListener('click', (ev)=>{ if(ev.target.id === 'playerOverlay') closePlayerDetail(); });
-
-/* ---------------- Team inventory (village storage) ---------------- */
-function goldRowHTML(){
-  const teamRow = `
-    <div class="gold-row">
-      <span class="gold-label">💰 團隊金庫</span>
-      <div class="gold-stepper">
-        <button class="gold-btn" data-target="team" data-delta="-10">−10</button>
-        <button class="gold-btn" data-target="team" data-delta="-1">−1</button>
-        <span class="gold-num gold-edit" data-target="team">${state.teamInventory.totalGold||0}</span>
-        <button class="gold-btn" data-target="team" data-delta="1">+1</button>
-        <button class="gold-btn" data-target="team" data-delta="10">+10</button>
+/* ============ Players tab ============ */
+function playerCardHTML(p){
+  const equipHTML = p.equipCats.map(c=>`
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="cn cat-rename" data-pid="${p.id}" data-cid="${c.id}">${escapeHtml(c.name)} ✎</span>
+        <button class="del cat-del" data-pid="${p.id}" data-cid="${c.id}">刪除</button>
       </div>
-    </div>`;
-  const playerRows = state.equipPlayers.map(p=>`
-    <div class="gold-row">
-      <span class="gold-label">${escapeHtml(p.name)}</span>
-      <div class="gold-stepper">
-        <button class="gold-btn" data-target="player" data-player="${p.id}" data-delta="-10">−10</button>
-        <button class="gold-btn" data-target="player" data-player="${p.id}" data-delta="-1">−1</button>
-        <span class="gold-num gold-edit" data-target="player" data-player="${p.id}">${(state.teamInventory.playerGold||{})[p.id]||0}</span>
-        <button class="gold-btn" data-target="player" data-player="${p.id}" data-delta="1">+1</button>
-        <button class="gold-btn" data-target="player" data-player="${p.id}" data-delta="10">+10</button>
-      </div>
+      ${tagFieldHTML(`player:${p.id}:equip:${c.id}`, c.tags, c.name)}
     </div>`).join('');
   return `
-    <div class="subarea" style="margin-bottom:12px;">
-      ${teamRow}
-      ${playerRows || `<div class="hint" style="padding:8px 4px;">還沒有玩家，先到「玩家裝備」分頁新增，就會出現在這裡。</div>`}
-    </div>`;
-}
-
-function adjustGold(target, playerId, delta){
-  if(target === 'team'){
-    state.teamInventory.totalGold = Math.max(0, (state.teamInventory.totalGold||0) + delta);
-  } else {
-    if(!state.teamInventory.playerGold) state.teamInventory.playerGold = {};
-    state.teamInventory.playerGold[playerId] = Math.max(0, (state.teamInventory.playerGold[playerId]||0) + delta);
-  }
-  markDirty(); renderInvView();
-}
-function setGoldExact(target, playerId){
-  const cur = target === 'team' ? (state.teamInventory.totalGold||0) : ((state.teamInventory.playerGold||{})[playerId]||0);
-  const val = prompt('輸入金額：', cur);
-  if(val === null) return;
-  const num = parseInt(val, 10);
-  if(isNaN(num)) return;
-  if(target === 'team') state.teamInventory.totalGold = Math.max(0, num);
-  else { if(!state.teamInventory.playerGold) state.teamInventory.playerGold = {}; state.teamInventory.playerGold[playerId] = Math.max(0, num); }
-  markDirty(); renderInvView();
-}
-
-function renderInvView(){
-  const wrap = $('#invView');
-  const slotsHTML = state.teamInventory.slots.length ? state.teamInventory.slots.map(slot=>{
-    const area = getSlotArea('__team__', 'inventory', slot.id);
-    return `
-    <div class="slot-row">
-      <div class="slot-row-head">
-        <span class="slot-name slot-rename" data-slot="${slot.id}">${escapeHtml(slot.name)} ✎</span>
-        <button class="slot-delete" data-slot="${slot.id}">刪除</button>
-      </div>
-      ${tagFieldHTML('__team__', 'inventory', slot.id, area, slot.name)}
-    </div>`;
-  }).join('') : `<div class="empty" style="padding:30px 10px;"><div class="glyph">◌</div><p>尚未設定分類。點下方新增，例如：武器、防具、消耗品、卷軸…</p></div>`;
-
-  wrap.innerHTML = `
-    <div class="pd-photo-row" style="margin-bottom:16px;">
-      ${state.teamInventory.photo ? `<img class="pd-photo" src="${state.teamInventory.photo}" alt="">` : `<div class="pd-photo-empty">照片</div>`}
-      <div style="flex:1; font-family:'Bitter',serif; font-weight:700; font-size:15px; color:var(--inv);">村莊倉庫</div>
-      <div class="pd-photo-btns">
-        <label for="invPhotoCamera">拍照</label>
-        <label for="invPhotoFile">選圖</label>
-      </div>
-      <input type="file" id="invPhotoCamera" accept="image/*" capture="environment">
-      <input type="file" id="invPhotoFile" accept="image/*">
-    </div>
-    ${goldRowHTML()}
-    <div class="subarea" style="--tab-color:${CATS.inv.color}">
-      ${slotsHTML}
-      <button class="add-slot-btn" id="invAddSlot">＋ 新增分類</button>
-    </div>
-    <div class="field" style="margin-top:4px;">
-      <label>整體備註（可選）</label>
-      <textarea id="invGeneralNote" placeholder="例如：倉庫已滿、需要買新箱子…">${escapeHtml(state.teamInventory.note||'')}</textarea>
-    </div>
-  `;
-
-  $('#invPhotoCamera').addEventListener('change', e => compressImage(e.target.files[0], (url)=>{ state.teamInventory.photo=url; markDirty(); renderInvView(); }));
-  $('#invPhotoFile').addEventListener('change', e => compressImage(e.target.files[0], (url)=>{ state.teamInventory.photo=url; markDirty(); renderInvView(); }));
-  $('#invGeneralNote').addEventListener('input', e => { state.teamInventory.note = e.target.value; markDirty(); });
-  $('#invAddSlot').addEventListener('click', ()=>{
-    const name = prompt('新分類名稱，例如：武器、防具、消耗品…');
-    if(name && name.trim()){
-      state.teamInventory.slots.push({id: uid(), name: name.trim()});
-      markDirty(); renderInvView();
-    }
-  });
-}
-
-$('#invView').addEventListener('click', (ev)=>{
-  const goldBtn = ev.target.closest('.gold-btn');
-  if(goldBtn){
-    adjustGold(goldBtn.dataset.target, goldBtn.dataset.player, parseInt(goldBtn.dataset.delta,10));
-    return;
-  }
-  const goldEdit = ev.target.closest('.gold-edit');
-  if(goldEdit){
-    setGoldExact(goldEdit.dataset.target, goldEdit.dataset.player);
-    return;
-  }
-  const tagX = ev.target.closest('.tag-x');
-  if(tagX){
-    const field = ev.target.closest('.tagfield');
-    const area = getSlotArea('__team__', 'inventory', field.dataset.slot);
-    area.tags = area.tags.filter(t=>t!==tagX.dataset.tag);
-    markDirty(); renderInvView(); return;
-  }
-  const chipName = ev.target.closest('.tag-chip-name');
-  if(chipName){
-    const field = ev.target.closest('.tagfield');
-    openMovePicker(chipName.dataset.tag, {player: '__team__', subarea: 'inventory', slot: field.dataset.slot || null});
-    return;
-  }
-  const addBtn = ev.target.closest('.tag-add-btn');
-  if(addBtn){
-    const field = ev.target.closest('.tagfield');
-    addTagToField('__team__', field, field.querySelector('.tag-input').value.trim());
-    return;
-  }
-  const sugg = ev.target.closest('.sugg');
-  if(sugg){
-    const field = ev.target.closest('.tagfield');
-    addTagToField('__team__', field, sugg.dataset.tag);
-    return;
-  }
-  const slotRename = ev.target.closest('.slot-rename');
-  if(slotRename){
-    const slot = state.teamInventory.slots.find(s=>s.id===slotRename.dataset.slot);
-    const name = prompt('分類名稱：', slot.name);
-    if(name && name.trim()){ slot.name = name.trim(); markDirty(); renderInvView(); }
-    return;
-  }
-  const slotDelete = ev.target.closest('.slot-delete');
-  if(slotDelete){
-    const slot = state.teamInventory.slots.find(s=>s.id===slotDelete.dataset.slot);
-    if(confirm(`確定要刪除分類「${slot.name}」嗎？`)){
-      state.teamInventory.slots = state.teamInventory.slots.filter(s=>s.id!==slot.id);
-      delete state.teamInventory.slotData[slot.id];
-      markDirty(); renderInvView();
-    }
-    return;
-  }
-});
-$('#invView').addEventListener('input', (ev)=>{
-  if(ev.target.classList.contains('tag-input')) renderTagSuggestions(ev.target);
-});
-$('#invView').addEventListener('keydown', (ev)=>{
-  if(ev.target.classList.contains('tag-input') && ev.key === 'Enter'){
-    ev.preventDefault();
-    const field = ev.target.closest('.tagfield');
-    addTagToField('__team__', field, ev.target.value.trim());
-  }
-});
-
-/* ---------------- Shop cards ---------------- */
-function visibleShopItems(){
-  return state.shopCatalog.filter(it => !it.tier || state.unlockedTiers.includes(it.tier));
-}
-
-function renderShopView(){
-  const wrap = $('#shopView');
-  const items = visibleShopItems();
-  const itemsHTML = items.length ? `<div class="shop-grid">${items.map(it=>`
-    <div class="shop-card" data-id="${it.id}">
-      <div class="shop-card-photo">
-        ${it.photo ? `<img src="${it.photo}" class="lightbox-photo" alt="">` : `<div class="shop-no-photo">無照片</div>`}
-      </div>
-      <div class="shop-name-display">${escapeHtml(it.name || '未命名商品')}</div>
-      ${it.tier ? `<div class="shop-tier-badge">${escapeHtml(it.tier)}</div>` : ''}
-      <div class="shop-qty-row"><span class="qty-num">庫存 ${it.qty} · ${it.price||0} 💰</span></div>
-      <div class="shop-actions">
-        <button class="shop-buy-btn" data-id="${it.id}" ${it.qty<=0?'disabled':''}>${it.qty<=0 ? '已售完' : '購買'}</button>
-        <button class="shop-sell-btn" data-id="${it.id}">賣出</button>
-      </div>
-    </div>`).join('')}</div>` : `<div class="empty"><div class="glyph">◌</div><p>${state.shopCatalog.length ? '目前沒有已開放等級的商品，請到 GM 區勾選要開放的等級。' : '還沒有商品。請到「GM區 → 商店品項總表」上傳並設定商品。'}</p></div>`;
-
-  wrap.innerHTML = `
-    <div class="hint" style="margin-bottom:10px;">商品由 GM 區統一管理與上架。購買：從團隊金庫扣單價，並指定給玩家或團隊背包。賣出：自訂換回的金額，加回團隊金庫，並指定要從哪裡移除這個標籤。</div>
-    ${itemsHTML}
-  `;
-}
-
-function doBuyShopItem(item){
-  const name = (item.name||'').trim();
-  if(!name){ showToast('這張商品卡還沒有名稱，請先到 GM 區設定'); return; }
-  if(item.qty <= 0) return;
-  const price = item.price || 0;
-  item.qty -= 1;
-  const before = state.teamInventory.totalGold || 0;
-  state.teamInventory.totalGold = Math.max(0, before - price);
-  if(before < price) showToast(`團隊金庫不足，已扣至 0（原需 ${price}）`);
-  markDirty();
-  renderShopView();
-
-  let entry = state.tagLibrary.find(t=>t.name===name);
-  if(entry){ state.tagLibrary = state.tagLibrary.filter(t=>t.name!==name); }
-  else { entry = {name, category: item.tier || '商店'}; }
-  state.tagLibrary.unshift(entry);
-
-  taglibTargetTag = name;
-  taglibMode = 'assign';
-  taglibPickerAction = 'assign'; taglibSourceScope = null;
-  assignStep = 'destination'; assignPlayerId = null; assignSubareaId = null;
-  renderTaglibOverlay();
-  $('#taglibOverlay').classList.add('show');
-}
-
-function doSellShopItem(item){
-  const name = (item.name||'').trim();
-  if(!name){ showToast('這張商品卡還沒有名稱，請先到 GM 區設定'); return; }
-  const val = prompt(`「${name}」的賣出價格：`, item.price || 0);
-  if(val === null) return;
-  const price = parseInt(val, 10);
-  if(isNaN(price) || price < 0){ showToast('請輸入有效的金額'); return; }
-  item.qty += 1;
-  state.teamInventory.totalGold = (state.teamInventory.totalGold || 0) + price;
-  markDirty();
-  renderShopView();
-  showToast(`已賣出「${name}」，團隊金庫 +${price}`);
-
-  taglibTargetTag = name;
-  taglibMode = 'assign';
-  taglibPickerAction = 'remove'; taglibSourceScope = null;
-  assignStep = 'destination'; assignPlayerId = null; assignSubareaId = null;
-  renderTaglibOverlay();
-  $('#taglibOverlay').classList.add('show');
-}
-
-$('#shopView').addEventListener('click', (ev)=>{
-  const photo = ev.target.closest('.lightbox-photo');
-  if(photo){ $('#lightboxImg').src = photo.src; $('#lightbox').classList.add('show'); return; }
-  const buyBtn = ev.target.closest('.shop-buy-btn');
-  if(buyBtn && !buyBtn.disabled){
-    const item = state.shopCatalog.find(x=>x.id===buyBtn.dataset.id);
-    if(item) doBuyShopItem(item);
-    return;
-  }
-  const sellBtn = ev.target.closest('.shop-sell-btn');
-  if(sellBtn){
-    const item = state.shopCatalog.find(x=>x.id===sellBtn.dataset.id);
-    if(item) doSellShopItem(item);
-    return;
-  }
-});
-
-/* ---------------- 遊戲卡牌 tab: read-only browsable overview ---------------- */
-let cardsOpenSections = new Set(['hand','skill']);
-let cardsGroupOpen = new Set();
-let cardsFilter = {hand:'', skill:''};
-
-function overviewGroupsHTML(prefix){
-  const catalog = prefix === 'skill' ? state.skillCatalog : state.handCatalog;
-  const unlocked = prefix === 'skill' ? state.skillUnlocked : state.handUnlocked;
-  const q = cardsFilter[prefix].trim().toLowerCase();
-  const visibleItems = catalog.filter(it=>{
-    const key = (it.school||'') + '|' + (it.level||'');
-    const isUnlocked = (!it.school || !it.level) || unlocked.includes(key);
-    if(!isUnlocked) return false;
-    if(q) return (it.name||'').toLowerCase().includes(q) || (it.school||'').toLowerCase().includes(q) || (it.level||'').toLowerCase().includes(q);
-    return true;
-  });
-  if(!visibleItems.length) return `<div class="empty" style="padding:30px 10px;"><div class="glyph">◌</div><p>目前沒有已開放的卡牌可以顯示${q?'，或找不到符合搜尋的結果':''}。請到 GM 區設定並勾選開放。</p></div>`;
-
-  const schools = Array.from(new Set(visibleItems.map(it=>it.school || '未分類')));
-  return schools.map(school=>{
-    const levels = Array.from(new Set(visibleItems.filter(it=>(it.school||'未分類')===school).map(it=>it.level||'未分級')));
-    const levelHTML = levels.map(level=>{
-      const items = visibleItems.filter(it=>(it.school||'未分類')===school && (it.level||'未分級')===level);
-      const gkey = prefix+':'+school+'|'+level;
-      const open = cardsGroupOpen.has(gkey);
-      return `
-      <div class="cards-level-group">
-        <button class="cards-level-head" data-gkey="${escapeHtml(gkey)}">
-          <span>${escapeHtml(level)}（${items.length}）</span>
-          <span class="gm-section-chevron">${open?'▾':'▸'}</span>
-        </button>
-        <div class="cards-level-body" style="display:${open?'grid':'none'}">
-          ${items.map(it=>`
-            <div class="overview-card">
-              ${it.photo ? `<img src="${it.photo}" class="lightbox-photo" alt="">` : `<div class="shop-no-photo">無照片</div>`}
-              <div class="overview-card-name">${escapeHtml(it.name||'未命名')}</div>
-            </div>`).join('')}
-        </div>
-      </div>`;
-    }).join('');
-    return `<div class="school-group"><div class="school-head">${escapeHtml(school)}</div>${levelHTML}</div>`;
-  }).join('');
-}
-
-function renderCardsView(){
-  const wrap = $('#cardsView');
-  wrap.innerHTML = `
-    <div class="gm-section">
-      <button class="gm-section-head" data-csec="hand">
-        <span class="gm-section-title" style="color:var(--cards)">🃏 手牌總攬區</span>
-        <span class="gm-section-chevron">${cardsOpenSections.has('hand')?'▾':'▸'}</span>
-      </button>
-      <div class="gm-section-body" style="display:${cardsOpenSections.has('hand')?'block':'none'}">
-        <div class="field" style="margin-bottom:12px;"><input type="text" id="handFilterInput" placeholder="搜尋流派、等級或卡牌名稱…" value="${escapeHtml(cardsFilter.hand)}"></div>
-        <div id="handOverviewBody">${overviewGroupsHTML('hand')}</div>
-      </div>
-    </div>
-    <div class="gm-section">
-      <button class="gm-section-head" data-csec="skill">
-        <span class="gm-section-title" style="color:var(--cards)">✨ 技能總攬區</span>
-        <span class="gm-section-chevron">${cardsOpenSections.has('skill')?'▾':'▸'}</span>
-      </button>
-      <div class="gm-section-body" style="display:${cardsOpenSections.has('skill')?'block':'none'}">
-        <div class="field" style="margin-bottom:12px;"><input type="text" id="skillFilterInput" placeholder="搜尋流派、等級或技能名稱…" value="${escapeHtml(cardsFilter.skill)}"></div>
-        <div id="skillOverviewBody">${overviewGroupsHTML('skill')}</div>
-      </div>
-    </div>
-  `;
-}
-$('#cardsView').addEventListener('click', (ev)=>{
-  const photo = ev.target.closest('.lightbox-photo');
-  if(photo){ $('#lightboxImg').src = photo.src; $('#lightbox').classList.add('show'); return; }
-  const secHead = ev.target.closest('.gm-section-head[data-csec]');
-  if(secHead){
-    const id = secHead.dataset.csec;
-    if(cardsOpenSections.has(id)) cardsOpenSections.delete(id); else cardsOpenSections.add(id);
-    renderCardsView();
-    return;
-  }
-  const levelHead = ev.target.closest('.cards-level-head');
-  if(levelHead){
-    const gkey = levelHead.dataset.gkey;
-    if(cardsGroupOpen.has(gkey)) cardsGroupOpen.delete(gkey); else cardsGroupOpen.add(gkey);
-    renderCardsView();
-    return;
-  }
-});
-$('#cardsView').addEventListener('input', (ev)=>{
-  if(ev.target.id === 'handFilterInput'){ cardsFilter.hand = ev.target.value; $('#handOverviewBody').innerHTML = overviewGroupsHTML('hand'); }
-  if(ev.target.id === 'skillFilterInput'){ cardsFilter.skill = ev.target.value; $('#skillOverviewBody').innerHTML = overviewGroupsHTML('skill'); }
-});
-
-/* ---------------- Tag library sheet ---------------- */
-let taglibMode = 'list';      // 'list' | 'assign' | 'category'
-let taglibSearch = '';
-let taglibCatFilter = '__all__';
-let taglibTargetTag = null;
-let taglibPickerAction = 'assign';  // 'assign' | 'remove' | 'move'
-let taglibSourceScope = null;       // {player, subarea, slot} when opened from an in-place tag chip
-let assignStep = 'destination';    // 'destination' | 'subarea' | 'slot' | 'invslot'
-let assignPlayerId = null;
-let assignSubareaId = null;
-
-$('#btnTagLib').addEventListener('click', ()=>{
-  taglibMode = 'list'; taglibSearch = ''; taglibCatFilter = '__all__';
-  renderTaglibOverlay();
-  $('#taglibOverlay').classList.add('show');
-});
-
-function getAllCategories(){
-  const set = new Set();
-  state.tagLibrary.forEach(t => set.add(t.category ? t.category : '__none__'));
-  return Array.from(set);
-}
-
-function renderTaglibOverlay(){
-  const body = $('#taglibBody');
-  if(taglibMode === 'assign'){ body.innerHTML = assignPanelHTML(); return; }
-  if(taglibMode === 'category'){ body.innerHTML = categoryPanelHTML(); return; }
-  body.innerHTML = `
-    <h3>🏷 標籤庫</h3>
-    <div class="hint" style="margin-bottom:10px;">點「指定去哪」可以直接把標籤放進團隊背包或某位玩家的區域；點分類徽章可以改分類。</div>
-    <div class="field" style="margin-bottom:10px;">
-      <input type="text" id="taglibSearch" placeholder="搜尋標籤名稱或分類…" value="${escapeHtml(taglibSearch)}">
-    </div>
-    <div class="cat-tabs" id="catTabsWrap"></div>
-    <div id="taglibList"></div>
-    <div class="sheet-actions" style="margin-top:14px;">
-      <button class="btn cancel" id="btnCloseTaglib">關閉</button>
-    </div>
-  `;
-  updateTaglibListView();
-}
-
-function updateTaglibListView(){
-  const cats = getAllCategories();
-  const tabsHTML = ['__all__', ...cats].map(c=>{
-    const label = c==='__all__' ? '全部' : (c==='__none__' ? '未分類' : c);
-    const active = taglibCatFilter === c;
-    return `<button class="cat-tab ${active?'active':''}" data-cat="${escapeHtml(c)}">${escapeHtml(label)}</button>`;
-  }).join('');
-  $('#catTabsWrap').innerHTML = tabsHTML;
-
-  let items = state.tagLibrary;
-  if(taglibCatFilter !== '__all__') items = items.filter(t => (t.category?t.category:'__none__') === taglibCatFilter);
-  const q = taglibSearch.trim().toLowerCase();
-  if(q) items = items.filter(t => t.name.toLowerCase().includes(q) || (t.category||'').toLowerCase().includes(q));
-  items = items.slice().sort((a,b)=> a.name.length - b.name.length || a.name.localeCompare(b.name, 'zh-Hant'));
-
-  $('#taglibList').innerHTML = items.length ? items.map(t=>{
-    const cap = getCardCap(t.name);
-    const capBadge = cap !== null && cap !== undefined ? `<span class="taglib-cat" style="opacity:.8;">${countTagInPlay(t.name)+countTagRemoved(t.name)}/${cap} 張</span>` : '';
-    return `
-    <div class="taglib-item">
-      <div class="ti-top">
-        <span class="taglib-name">${escapeHtml(t.name)}</span>
-        <button class="taglib-del" data-tag="${escapeHtml(t.name)}">刪除</button>
-      </div>
-      <div class="ti-bottom">
-        <button class="taglib-cat" data-tag="${escapeHtml(t.name)}">${t.category ? escapeHtml(t.category) : '未分類'}</button>
-        ${capBadge}
-        <button class="taglib-assign" data-tag="${escapeHtml(t.name)}">指定去哪 →</button>
-        <button class="taglib-gm" data-tag="${escapeHtml(t.name)}">移出遊戲 →</button>
-      </div>
-    </div>`;
-  }).join('') : `<div class="taglib-empty">${state.tagLibrary.length ? '找不到符合的標籤' : '標籤庫是空的，先在玩家裝備區新增幾個標籤試試看。'}</div>`;
-}
-
-function assignPanelHTML(){
-  const playerName = assignPlayerId ? (state.equipPlayers.find(x=>x.id===assignPlayerId)?.name || '') : '';
-  const verb = taglibPickerAction === 'remove' ? '移除' : (taglibPickerAction === 'move' ? '移動' : '指定');
-
-  if(assignStep === 'destination'){
-    const playerBtns = state.equipPlayers.map(p=>`<button class="picker-btn" data-player="${p.id}">${escapeHtml(p.name)}</button>`).join('');
-    let hintText = '選擇要放到哪裡：';
-    if(taglibPickerAction === 'remove') hintText = '這件物品原本在哪裡？（選了才會從那邊移除標籤）';
-    if(taglibPickerAction === 'move') hintText = '要移到哪裡？（選「賣到商店」會直接換成金錢）';
-    return `
-      <h3>${verb}「${escapeHtml(taglibTargetTag)}」</h3>
-      <div class="hint" style="margin-bottom:12px;">${hintText}</div>
-      <div class="picker-list">
-        <button class="picker-btn" data-dest="inventory">🎒 團隊背包</button>
-        <button class="picker-btn" data-dest="sell">🏪 賣到商店（換錢）</button>
-        ${playerBtns}
-      </div>
-      ${!state.equipPlayers.length ? `<div class="hint" style="margin-top:10px;">還沒有玩家，可以到「玩家裝備」分頁新增。</div>` : ''}
-      <div class="sheet-actions" style="margin-top:16px; flex-wrap:wrap;">
-        ${(taglibPickerAction === 'remove' || taglibPickerAction === 'move') ? `<button class="btn ghost" id="btnSkipRemove" style="flex:1;">取消，不做變動</button>` : ''}
-        <button class="btn cancel" id="btnAssignBack" style="flex:1;">返回標籤庫</button>
-      </div>
-    `;
-  }
-
-  let stepDesc = '';
-  let stepHTML = '';
-  if(assignStep === 'invslot'){
-    stepDesc = `🎒 團隊背包 → 選擇分類：`;
-    stepHTML = state.teamInventory.slots.length
-      ? state.teamInventory.slots.map(s=>`<button class="picker-btn" data-invslot="${s.id}">${escapeHtml(s.name)}</button>`).join('')
-      : `<div class="taglib-empty">團隊背包還沒有分類，請先到「團隊背包」分頁新增分類。</div>`;
-  } else if(assignStep === 'subarea'){
-    stepDesc = `玩家：${escapeHtml(playerName)} → 選擇區域：`;
-    stepHTML = state.subareaDefs.map(sa=>`<button class="picker-btn" data-subarea="${sa.id}">${escapeHtml(sa.name)}</button>`).join('');
-  } else if(assignStep === 'slot'){
-    const sa = state.subareaDefs.find(x=>x.id===assignSubareaId);
-    stepDesc = `玩家：${escapeHtml(playerName)} → ${escapeHtml(sa.name)} → 選擇格子：`;
-    stepHTML = sa.slots.length
-      ? sa.slots.map(s=>`<button class="picker-btn" data-slot="${s.id}">${escapeHtml(s.name)}</button>`).join('')
-      : `<div class="taglib-empty">這個區域還沒有格子，請先到玩家頁面新增格子。</div>`;
-  }
-  return `
-    <h3>${verb}「${escapeHtml(taglibTargetTag)}」</h3>
-    <div class="hint" style="margin-bottom:12px;">${stepDesc}</div>
-    <div class="picker-list">${stepHTML}</div>
-    <div class="sheet-actions" style="margin-top:16px;">
-      <button class="btn cancel" id="btnAssignBack">‹ 上一步</button>
-    </div>
-  `;
-}
-
-function categoryPanelHTML(){
-  const cats = Array.from(new Set(state.tagLibrary.map(t=>t.category).filter(Boolean)));
-  return `
-    <h3>「${escapeHtml(taglibTargetTag)}」的分類</h3>
-    <div class="picker-list">
-      <button class="picker-btn cat-choice" data-cat="">未分類</button>
-      ${cats.map(c=>`<button class="picker-btn cat-choice" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')}
-    </div>
-    <div class="field" style="margin-top:16px;">
-      <label>或新增分類</label>
-      <div style="display:flex; gap:8px;">
-        <input type="text" id="newCatInput" placeholder="輸入新分類名稱…">
-        <button class="btn save" id="btnNewCatConfirm" style="flex:none; padding:10px 16px;">套用</button>
-      </div>
-    </div>
-    <div class="sheet-actions" style="margin-top:16px;">
-      <button class="btn cancel" id="btnCatBack">‹ 返回</button>
-    </div>
-  `;
-}
-
-/* ---- Picker helpers shared by tag library / in-place tag moves ---- */
-function scopesEqual(a, b){
-  if(!a || !b) return false;
-  return a.player === b.player && a.subarea === b.subarea && (a.slot||'') === (b.slot||'');
-}
-function scopeArea(scope){
-  return scope.slot ? getSlotArea(scope.player, scope.subarea, scope.slot) : getSimpleArea(scope.player, scope.subarea);
-}
-function removeTagFromScope(scope, tagName){
-  const area = scopeArea(scope);
-  area.tags = area.tags.filter(t=>t!==tagName);
-}
-function finishPickerFlow(){
-  assignStep = 'destination'; assignPlayerId = null; assignSubareaId = null;
-  if(taglibPickerAction === 'move'){
-    $('#taglibOverlay').classList.remove('show');
-    taglibSourceScope = null; taglibPickerAction = 'assign';
-    if(openPlayerId) renderPlayerDetail();
-    if(activeCat === 'inv') renderInvView();
-  } else {
-    renderTaglibOverlay();
-  }
-}
-function openMovePicker(tagName, sourceScope){
-  taglibTargetTag = tagName;
-  taglibSourceScope = sourceScope;
-  taglibPickerAction = 'move';
-  taglibMode = 'assign';
-  assignStep = 'destination'; assignPlayerId = null; assignSubareaId = null;
-  renderTaglibOverlay();
-  $('#taglibOverlay').classList.add('show');
-}
-function doSellToShop(){
-  const val = prompt(`「${taglibTargetTag}」的賣出價格：`, 0);
-  if(val === null) return;
-  const price = parseInt(val, 10);
-  if(isNaN(price) || price < 0){ showToast('請輸入有效的金額'); return; }
-  state.teamInventory.totalGold = (state.teamInventory.totalGold || 0) + price;
-  if(taglibPickerAction === 'move' && taglibSourceScope){
-    removeTagFromScope(taglibSourceScope, taglibTargetTag);
-  }
-  markDirty();
-  showToast(`已賣出「${taglibTargetTag}」，團隊金庫 +${price}`);
-  finishPickerFlow();
-}
-
-function doAssignTag(playerId, subareaId, slotId){
-  ensurePlayerData(playerId);
-  const destScope = {player: playerId, subarea: subareaId, slot: slotId};
-  if(taglibPickerAction === 'move' && scopesEqual(destScope, taglibSourceScope)){
-    showToast('已經在這裡了'); finishPickerFlow(); return;
-  }
-  const area = slotId ? getSlotArea(playerId, subareaId, slotId) : getSimpleArea(playerId, subareaId);
-  const pname = state.equipPlayers.find(x=>x.id===playerId)?.name || '';
-  if(taglibPickerAction === 'remove'){
-    area.tags = area.tags.filter(t=>t!==taglibTargetTag);
-    markDirty();
-    showToast(`已從 ${pname} 移除「${taglibTargetTag}」`);
-  } else {
-    if(taglibPickerAction === 'assign' && !area.tags.includes(taglibTargetTag) && !checkCapOrWarn(taglibTargetTag)) return;
-    if(!area.tags.includes(taglibTargetTag)) area.tags.push(taglibTargetTag);
-    if(taglibPickerAction === 'move' && taglibSourceScope) removeTagFromScope(taglibSourceScope, taglibTargetTag);
-    markDirty();
-    showToast(`已把「${taglibTargetTag}」${taglibPickerAction==='move' ? '移到' : '加到'} ${pname}`);
-  }
-  finishPickerFlow();
-}
-
-function doAssignTagToInventory(slotId){
-  const destScope = {player: '__team__', subarea: 'inventory', slot: slotId};
-  if(taglibPickerAction === 'move' && scopesEqual(destScope, taglibSourceScope)){
-    showToast('已經在這裡了'); finishPickerFlow(); return;
-  }
-  const area = getSlotArea('__team__', 'inventory', slotId);
-  if(taglibPickerAction === 'remove'){
-    area.tags = area.tags.filter(t=>t!==taglibTargetTag);
-    markDirty();
-    showToast(`已從團隊背包移除「${taglibTargetTag}」`);
-  } else {
-    if(taglibPickerAction === 'assign' && !area.tags.includes(taglibTargetTag) && !checkCapOrWarn(taglibTargetTag)) return;
-    if(!area.tags.includes(taglibTargetTag)) area.tags.push(taglibTargetTag);
-    if(taglibPickerAction === 'move' && taglibSourceScope) removeTagFromScope(taglibSourceScope, taglibTargetTag);
-    markDirty();
-    showToast(`已把「${taglibTargetTag}」${taglibPickerAction==='move' ? '移到' : '放進'}團隊背包`);
-  }
-  finishPickerFlow();
-}
-
-$('#taglibBody').addEventListener('click', (ev)=>{
-  if(ev.target.closest('#btnCloseTaglib')){ $('#taglibOverlay').classList.remove('show'); return; }
-
-  const catTab = ev.target.closest('.cat-tab');
-  if(catTab){ taglibCatFilter = catTab.dataset.cat; updateTaglibListView(); return; }
-
-  const delBtn = ev.target.closest('.taglib-del');
-  if(delBtn){
-    state.tagLibrary = state.tagLibrary.filter(t=>t.name!==delBtn.dataset.tag);
-    markDirty(); updateTaglibListView(); return;
-  }
-
-  const catBtn = ev.target.closest('.taglib-cat');
-  if(catBtn){ taglibTargetTag = catBtn.dataset.tag; taglibMode = 'category'; renderTaglibOverlay(); return; }
-
-  const assignBtn = ev.target.closest('.taglib-assign');
-  if(assignBtn){
-    taglibTargetTag = assignBtn.dataset.tag; taglibMode = 'assign';
-    taglibPickerAction = 'assign'; taglibSourceScope = null;
-    assignStep = 'destination'; assignPlayerId = null; assignSubareaId = null;
-    renderTaglibOverlay(); return;
-  }
-
-  const gmBtn = ev.target.closest('.taglib-gm');
-  if(gmBtn){
-    const entry = state.tagLibrary.find(t=>t.name===gmBtn.dataset.tag);
-    if(entry && confirm(`確定要把「${entry.name}」移出遊戲嗎？之後就不會在標籤庫或指定清單中出現。`)){
-      state.tagLibrary = state.tagLibrary.filter(t=>t.name!==entry.name);
-      state.removedTags.push({id:uid(), name:entry.name, category:entry.category||'', removedAt:Date.now()});
-      markDirty();
-      updateTaglibListView();
-      showToast(`已把「${entry.name}」移到 GM 區`);
-    }
-    return;
-  }
-
-  const skipRemove = ev.target.closest('#btnSkipRemove');
-  if(skipRemove){ taglibSourceScope = null; taglibPickerAction = 'assign'; $('#taglibOverlay').classList.remove('show'); return; }
-
-  const destBtn = ev.target.closest('.picker-btn[data-dest]');
-  if(destBtn){
-    if(destBtn.dataset.dest === 'inventory'){ assignStep = 'invslot'; renderTaglibOverlay(); }
-    else if(destBtn.dataset.dest === 'sell'){ doSellToShop(); }
-    return;
-  }
-
-  const invSlotBtn = ev.target.closest('.picker-btn[data-invslot]');
-  if(invSlotBtn){ doAssignTagToInventory(invSlotBtn.dataset.invslot); return; }
-
-  const playerBtn = ev.target.closest('.picker-btn[data-player]');
-  if(playerBtn){ assignPlayerId = playerBtn.dataset.player; assignStep = 'subarea'; renderTaglibOverlay(); return; }
-
-  const subareaBtn = ev.target.closest('.picker-btn[data-subarea]');
-  if(subareaBtn){
-    assignSubareaId = subareaBtn.dataset.subarea;
-    const sa = state.subareaDefs.find(x=>x.id===assignSubareaId);
-    if(sa.type === 'slots'){ assignStep = 'slot'; renderTaglibOverlay(); }
-    else { doAssignTag(assignPlayerId, assignSubareaId, null); }
-    return;
-  }
-
-  const slotBtn = ev.target.closest('.picker-btn[data-slot]');
-  if(slotBtn){ doAssignTag(assignPlayerId, assignSubareaId, slotBtn.dataset.slot); return; }
-
-  const assignBack = ev.target.closest('#btnAssignBack');
-  if(assignBack){
-    if(assignStep === 'destination'){
-      taglibMode = 'list'; taglibSourceScope = null; taglibPickerAction = 'assign';
-    }
-    else if(assignStep === 'subarea' || assignStep === 'invslot'){ assignStep = 'destination'; }
-    else if(assignStep === 'slot'){ assignStep = 'subarea'; }
-    renderTaglibOverlay(); return;
-  }
-
-  const catChoice = ev.target.closest('.cat-choice');
-  if(catChoice){
-    const entry = state.tagLibrary.find(t=>t.name===taglibTargetTag);
-    entry.category = catChoice.dataset.cat;
-    markDirty(); taglibMode = 'list'; renderTaglibOverlay(); return;
-  }
-
-  const catConfirm = ev.target.closest('#btnNewCatConfirm');
-  if(catConfirm){
-    const val = $('#newCatInput').value.trim();
-    if(val){
-      const entry = state.tagLibrary.find(t=>t.name===taglibTargetTag);
-      entry.category = val;
-      markDirty();
-    }
-    taglibMode = 'list'; renderTaglibOverlay(); return;
-  }
-
-  const catBack = ev.target.closest('#btnCatBack');
-  if(catBack){ taglibMode = 'list'; renderTaglibOverlay(); return; }
-});
-
-$('#taglibBody').addEventListener('input', (ev)=>{
-  if(ev.target.id === 'taglibSearch'){ taglibSearch = ev.target.value; updateTaglibListView(); }
-});
-
-/* ---------------- GM area (removed cards) ---------------- */
-let gmOpenSections = new Set(['removed','shop']);
-function sectionWrap(id, title, colorVar, bodyHtml){
-  const open = gmOpenSections.has(id);
-  return `
-  <div class="gm-section">
-    <button class="gm-section-head" data-sec="${id}">
-      <span class="gm-section-title" style="color:${colorVar}">${title}</span>
-      <span class="gm-section-chevron">${open ? '▾' : '▸'}</span>
+  <div class="player-card ${p.collapsed?'':'open'}" data-pid="${p.id}">
+    <button class="player-head" data-toggle-player="${p.id}">
+      <span class="pn">${escapeHtml(p.name)}</span>
+      <span class="chev">▸</span>
     </button>
-    <div class="gm-section-body" style="display:${open?'block':'none'}">${bodyHtml}</div>
+    <div class="player-body">
+      <div class="field"><input type="text" class="p-name-input" data-pid="${p.id}" value="${escapeHtml(p.name)}" placeholder="玩家名稱"></div>
+      ${p.photos.length ? `<div class="photo-grid">${p.photos.map(ph=>`<div class="photo-item"><img src="${ph.photo}" class="p-photo" data-pid="${p.id}"><button class="pi-del p-photo-del" data-pid="${p.id}" data-phid="${ph.id}">✕</button></div>`).join('')}</div>` : ''}
+      ${p.photos.length<2 ? `<div class="photo-add-row"><label for="pPhotoCam-${p.id}">📷 拍照</label><label for="pPhotoFile-${p.id}">🖼 選圖</label></div><input type="file" id="pPhotoCam-${p.id}" class="p-photo-cam" data-pid="${p.id}" accept="image/*" capture="environment"><input type="file" id="pPhotoFile-${p.id}" class="p-photo-file" data-pid="${p.id}" accept="image/*">` : '<div class="hint" style="margin-bottom:8px;">已達 2 張上限。</div>'}
+      <div class="field"><label>照片備註</label><textarea class="p-note" data-pid="${p.id}" placeholder="針對照片的說明…">${escapeHtml(p.note||'')}</textarea></div>
+
+      <div class="cat-block">
+        <div class="cat-head"><span class="cn" style="cursor:default;">手牌區</span></div>
+        ${tagFieldHTML(`player:${p.id}:hand`, p.hand.tags, '')}
+      </div>
+      <div class="cat-block">
+        <div class="cat-head"><span class="cn" style="cursor:default;">棄牌區</span></div>
+        ${tagFieldHTML(`player:${p.id}:discard`, p.discard.tags, '')}
+      </div>
+      <div class="hint" style="margin:10px 0 6px; font-weight:700; color:var(--equip);">裝備區</div>
+      ${equipHTML}
+      <button class="add-cat-btn" data-addcat-player="${p.id}">＋ 新增分類</button>
+
+      <div class="row" style="margin-top:14px;">
+        <button class="btn ghost" data-dup="${p.id}" style="flex:1;">複製為新玩家</button>
+        <button class="btn danger" data-delplayer="${p.id}" style="flex:1;">刪除玩家</button>
+      </div>
+    </div>
   </div>`;
 }
-
-function syncCatalogTag(name, category){
-  if(!name) return;
-  let entry = state.tagLibrary.find(t=>t.name===name);
-  if(entry){ entry.category = category; }
-  else { state.tagLibrary.unshift({name, category}); }
-}
-
-function catalogCardHTML(it){
-  return `
-    <div class="shop-card" data-id="${it.id}">
-      <div class="shop-card-photo">
-        ${it.photo ? `<img src="${it.photo}" alt="">` : `<div class="shop-no-photo">無照片</div>`}
-        <button class="shop-card-del" data-id="${it.id}">✕</button>
-      </div>
-      <input type="text" class="cat-name-input" data-id="${it.id}" placeholder="商品名稱…" value="${escapeHtml(it.name)}">
-      <div class="shop-price-row">
-        <span class="shop-price-label">分類</span>
-        <input type="text" class="cat-category-input" data-id="${it.id}" placeholder="例如 裝備" value="${escapeHtml(it.category||'')}">
-      </div>
-      <div class="shop-price-row">
-        <span class="shop-price-label">等級</span>
-        <input type="text" class="cat-tier-input" data-id="${it.id}" placeholder="例如 Lv1" value="${escapeHtml(it.tier||'')}">
-      </div>
-      <div class="shop-price-row">
-        <span class="shop-price-label">單價</span>
-        <input type="number" class="cat-price-input" data-id="${it.id}" value="${it.price||0}" min="0">
-      </div>
-      <div class="shop-price-row">
-        <span class="shop-price-label">上限</span>
-        <input type="number" class="cat-qty-input" data-id="${it.id}" value="${it.qty||0}" min="0">
-      </div>
-    </div>`;
-}
-function renderShopCatalogSection(){
-  const tiers = Array.from(new Set(state.shopCatalog.map(it => it.tier || '未分級')));
-  const tierGroupsHTML = tiers.map(tier=>{
-    const items = state.shopCatalog.filter(it => (it.tier || '未分級') === tier);
-    const isUngrouped = tier === '未分級';
-    const unlocked = isUngrouped ? true : state.unlockedTiers.includes(tier);
-    return `
-    <div class="tier-group">
-      <div class="tier-head">
-        <label class="tier-toggle">
-          <input type="checkbox" class="tier-check" data-tier="${escapeHtml(tier)}" ${unlocked?'checked':''} ${isUngrouped?'disabled':''}>
-          <span>${escapeHtml(tier)}${isUngrouped ? '（永遠開放）' : ''}</span>
-        </label>
-        <span class="tier-count">${items.length} 項</span>
-      </div>
-      <div class="shop-grid">${items.map(catalogCardHTML).join('')}</div>
-    </div>`;
-  }).join('');
-
-  return `
-    <div class="equip-toolbar" style="justify-content:flex-start; gap:8px; flex-wrap:wrap;">
-      <label class="io-btn primary" for="catalogMultiUpload" style="flex:none; padding:9px 14px;">📥 從相簿新增多張商品</label>
-      <input type="file" id="catalogMultiUpload" accept="image/*" multiple>
+function renderPlayers(){
+  const wrap = $('#panel-players');
+  const options = state.players.map(p=>`<option value="${p.id}" ${state.playerFilter===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
+  const visible = state.playerFilter ? state.players.filter(p=>p.id===state.playerFilter) : state.players;
+  wrap.innerHTML = `
+    <div class="row" style="margin-bottom:12px;">
+      <select id="playerFilterSel" class="grow" style="background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px; padding:9px; color:var(--ink); font-size:13px;">
+        <option value="">— 顯示全部玩家 —</option>
+        ${options}
+      </select>
+      <button class="btn primary" id="btnAddPlayer">＋ 新增玩家</button>
     </div>
-    <div class="hint" style="margin:8px 0 12px;">建立完整商品清單並設定分類/等級/單價/上限（上限＝這張卡在整個遊戲中最多能同時存在幾張）；勾選等級即可開放給「商店區」讓玩家購買（沒填等級的商品永遠開放）。設定好名稱後會自動加進標籤庫。</div>
-    ${tierGroupsHTML || `<div class="empty"><div class="glyph">◌</div><p>還沒有商品，先上傳照片建立總表。</p></div>`}
+    ${visible.length ? visible.map(playerCardHTML).join('') : `<div class="empty"><div class="glyph">◌</div><p>還沒有玩家。</p></div>`}
   `;
-}
-
-function schoolCardHTML(it, prefix){
-  return `
-    <div class="shop-card" data-id="${it.id}">
-      <div class="shop-card-photo">
-        ${it.photo ? `<img src="${it.photo}" alt="">` : `<div class="shop-no-photo">無照片</div>`}
-        <button class="${prefix}-card-del" data-id="${it.id}">✕</button>
-      </div>
-      <input type="text" class="${prefix}-name-input" data-id="${it.id}" placeholder="卡牌名稱…" value="${escapeHtml(it.name)}">
-      <div class="shop-price-row">
-        <span class="shop-price-label">流派</span>
-        <input type="text" class="${prefix}-school-input" data-id="${it.id}" placeholder="例如 戰士" value="${escapeHtml(it.school||'')}">
-      </div>
-      <div class="shop-price-row">
-        <span class="shop-price-label">等級</span>
-        <input type="text" class="${prefix}-level-input" data-id="${it.id}" placeholder="例如 Lv1" value="${escapeHtml(it.level||'')}">
-      </div>
-      <div class="shop-price-row">
-        <span class="shop-price-label">上限</span>
-        <input type="number" class="${prefix}-cap-input" data-id="${it.id}" value="${it.cap!==undefined?it.cap:1}" min="0">
-      </div>
-    </div>`;
-}
-function renderSchoolCatalogSection(prefix, title, uploadLabel){
-  const catalogArr = prefix === 'skill' ? state.skillCatalog : state.handCatalog;
-  const unlockedArr = prefix === 'skill' ? state.skillUnlocked : state.handUnlocked;
-  const schools = Array.from(new Set(catalogArr.map(it => it.school || '未分類流派')));
-  const body = schools.map(school=>{
-    const levels = Array.from(new Set(catalogArr.filter(it=>(it.school||'未分類流派')===school).map(it=>it.level || '未分級')));
-    const levelHTML = levels.map(level=>{
-      const items = catalogArr.filter(it=>(it.school||'未分類流派')===school && (it.level||'未分級')===level);
-      const key = school + '|' + level;
-      const unlocked = unlockedArr.includes(key);
-      return `
-      <div class="tier-group">
-        <div class="tier-head">
-          <label class="tier-toggle">
-            <input type="checkbox" class="${prefix}-unlock-check" data-key="${escapeHtml(key)}" ${unlocked?'checked':''}>
-            <span>${escapeHtml(level)}</span>
-          </label>
-          <span class="tier-count">${items.length} 項</span>
-        </div>
-        <div class="shop-grid">${items.map(it=>schoolCardHTML(it, prefix)).join('')}</div>
-      </div>`;
-    }).join('');
-    return `<div class="school-group"><div class="school-head">${escapeHtml(school)}</div>${levelHTML}</div>`;
-  }).join('');
-
-  return `
-    <div class="equip-toolbar" style="justify-content:flex-start; gap:8px; flex-wrap:wrap;">
-      <label class="io-btn primary" for="${prefix}Upload" style="flex:none; padding:9px 14px;">${uploadLabel}</label>
-      <input type="file" id="${prefix}Upload" accept="image/*" multiple>
-    </div>
-    <div class="hint" style="margin:8px 0 12px;">上傳卡牌後，直接在卡片上填流派、等級、名稱與數量上限；勾選等級即可開放到「遊戲卡牌」分頁給玩家瀏覽。設定好名稱後會自動加進標籤庫。</div>
-    ${body || `<div class="empty"><div class="glyph">◌</div><p>還沒有${title}，先上傳照片建立。</p></div>`}
-  `;
-}
-
-function getCatalogByPrefix(prefix){ return prefix === 'skill' ? state.skillCatalog : state.handCatalog; }
-function getUnlockedByPrefix(prefix){ return prefix === 'skill' ? state.skillUnlocked : state.handUnlocked; }
-function tagCategoryForPrefix(prefix){ return prefix === 'skill' ? '技能' : '手牌'; }
-
-function handleSchoolUpload(prefix, fileList){
-  const files = Array.from(fileList || []);
-  if(!files.length) return;
-  let remaining = files.length;
-  files.forEach(file=>{
-    compressImage(file, (url)=>{
-      const item = {id: uid(), photo:url, name:'', school:'', level:'', cap:1, ts:Date.now()};
-      if(prefix==='skill') state.skillCatalog.push(item); else state.handCatalog.push(item);
-      remaining--;
-      if(remaining===0){ markDirty(); renderGMView(); }
-    }, 1100, 0.82);
+  $('#playerFilterSel').addEventListener('change', e=>{ state.playerFilter = e.target.value || null; renderPlayers(); });
+  $('#btnAddPlayer').addEventListener('click', ()=>{
+    const name = prompt('玩家名稱：'); if(!name||!name.trim()) return;
+    state.players.push(newPlayer(name.trim())); markDirty(); renderPlayers();
   });
 }
+RENDER_FN.players = renderPlayers;
 
-function renderGMView(){
-  const wrap = $('#gmView');
-  const removedHTML = state.removedTags.length ? state.removedTags.map(rt=>`
+/* ============ Team inventory tab ============ */
+function renderInventory(){
+  const wrap = $('#panel-inventory');
+  const ti = state.teamInventory;
+  const catsHTML = ti.cats.map(c=>`
+    <div class="cat-block">
+      <div class="cat-head">
+        <span class="cn inv-cat-rename" data-cid="${c.id}">${escapeHtml(c.name)} ✎</span>
+        <button class="del inv-cat-del" data-cid="${c.id}">刪除</button>
+      </div>
+      ${tagFieldHTML(`team:${c.id}`, c.tags, c.name)}
+    </div>`).join('');
+  const removedHTML = ti.removedCards.length ? ti.removedCards.map(r=>`
     <div class="taglib-item">
-      <div class="ti-top">
-        <span class="taglib-name">${escapeHtml(rt.name)}</span>
-        <button class="gm-del" data-id="${rt.id}">刪除</button>
-      </div>
-      <div class="ti-bottom">
-        <span class="taglib-cat">${rt.category ? escapeHtml(rt.category) : '未分類'}</span>
-        <span class="taglib-cat" style="opacity:.7;">${fmtTime(rt.removedAt)}</span>
-        <button class="gm-restore" data-id="${rt.id}">移回並指定位置 ↩</button>
-      </div>
-    </div>`).join('') : `<div class="empty"><div class="glyph">◌</div><p>還沒有移出遊戲的卡牌。在「🏷 標籤庫」裡點某個標籤的「移出遊戲」，就會出現在這裡。移出後，這張卡的數量上限會永久減 1。</p></div>`;
-
-  const removedBody = `
-    <div class="equip-toolbar" style="justify-content:flex-start;">
-      <button class="btn ghost" id="btnGmAdd">＋ 手動新增</button>
-    </div>
-    <div class="hint" style="margin:6px 0 12px;">已經永久離場、銷毀、或不再使用的卡牌可以放這裡歸檔，標籤庫和指定清單就不會再出現，避免誤用。</div>
-    ${removedHTML}
-  `;
+      <div class="ti-top"><span class="ti-name">${escapeHtml(r.name)}</span><button class="ti-del rc-del" data-id="${r.id}">刪除</button></div>
+      <div class="ti-bottom"><span class="ti-badge">${fmtTime(r.removedAt)}</span><button class="ti-action rc-restore" data-id="${r.id}">移回並指定位置 ↩</button></div>
+    </div>`).join('') : `<div class="hint">還沒有移出遊戲的卡牌。</div>`;
 
   wrap.innerHTML = `
-    ${sectionWrap('removed', `🗑 移出遊戲的卡牌（${state.removedTags.length}）`, 'var(--gm)', removedBody)}
-    ${sectionWrap('shop', '🏪 商店品項總表', 'var(--shop)', renderShopCatalogSection())}
-    ${sectionWrap('skill', '✨ 技能卡總表', 'var(--cards)', renderSchoolCatalogSection('skill', '技能卡', '📥 新增技能卡照片'))}
-    ${sectionWrap('hand', '🃏 手牌卡總表', 'var(--cards)', renderSchoolCatalogSection('hand', '手牌卡', '📥 新增手牌卡照片'))}
+    <div class="section open"><div class="section-body" style="display:block;">
+      <div class="gold-row">
+        <span>💰 團隊金庫</span>
+        <div class="gold-stepper">
+          <button class="gold-btn" data-gt="team" data-gd="-10">−10</button>
+          <button class="gold-btn" data-gt="team" data-gd="-1">−1</button>
+          <span class="gold-num gold-edit" data-gt="team">${ti.totalGold||0}</span>
+          <button class="gold-btn" data-gt="team" data-gd="1">+1</button>
+          <button class="gold-btn" data-gt="team" data-gd="10">+10</button>
+        </div>
+      </div>
+      ${state.players.map(p=>`
+      <div class="gold-row">
+        <span>${escapeHtml(p.name)}</span>
+        <div class="gold-stepper">
+          <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="-10">−10</button>
+          <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="-1">−1</button>
+          <span class="gold-num gold-edit" data-gt="player" data-gp="${p.id}">${ti.playerGold[p.id]||0}</span>
+          <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="1">+1</button>
+          <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="10">+10</button>
+        </div>
+      </div>`).join('') || `<div class="hint" style="padding:6px 2px;">尚無玩家。</div>`}
+    </div></div>
+
+    ${sectionHTML('inv:cats', `📦 分類`, `
+      ${catsHTML}
+      <button class="add-cat-btn" data-addcat-team="1">＋ 新增分類</button>
+      <div class="field" style="margin-top:12px;"><label>備註</label><textarea id="invNote" placeholder="現況、進度說明…">${escapeHtml(ti.note||'')}</textarea></div>
+    `)}
+
+    ${sectionHTML('inv:removed', `🗑 卡牌移除區（${ti.removedCards.length}）`, removedHTML)}
   `;
-  $('#btnGmAdd')?.addEventListener('click', ()=>{
-    const name = prompt('要移出的卡牌名稱：');
-    if(name && name.trim()){
-      state.removedTags.push({id:uid(), name:name.trim(), category:'', removedAt:Date.now()});
-      markDirty(); renderGMView();
-    }
-  });
-  $('#catalogMultiUpload')?.addEventListener('change', e => handleCatalogUpload(e.target.files));
-  $('#skillUpload')?.addEventListener('change', e => handleSchoolUpload('skill', e.target.files));
-  $('#handUpload')?.addEventListener('change', e => handleSchoolUpload('hand', e.target.files));
+  $('#invNote').addEventListener('input', e=>{ ti.note=e.target.value; markDirty(); });
+}
+RENDER_FN.inventory = renderInventory;
+
+/* ============ Shared delegated events for players / inventory ============ */
+function adjustGold(target, playerId, delta){
+  if(target==='team') state.teamInventory.totalGold = Math.max(0,(state.teamInventory.totalGold||0)+delta);
+  else state.teamInventory.playerGold[playerId] = Math.max(0,(state.teamInventory.playerGold[playerId]||0)+delta);
+  markDirty(); rerenderActiveTab();
+}
+function setGoldExact(target, playerId){
+  const cur = target==='team' ? (state.teamInventory.totalGold||0) : (state.teamInventory.playerGold[playerId]||0);
+  const val = prompt('輸入金額：', cur); if(val===null) return;
+  const num = parseInt(val,10); if(isNaN(num)) return;
+  if(target==='team') state.teamInventory.totalGold = Math.max(0,num);
+  else state.teamInventory.playerGold[playerId] = Math.max(0,num);
+  markDirty(); rerenderActiveTab();
 }
 
-function handleCatalogUpload(fileList){
-  const files = Array.from(fileList || []);
-  if(!files.length) return;
+$('#main').addEventListener('click', (ev)=>{
+  const secHead = ev.target.closest('.section-head');
+  if(secHead){ const id=secHead.dataset.sec; if(openSections.has(id)) openSections.delete(id); else openSections.add(id); rerenderActiveTab(); return; }
+
+  const tcx = ev.target.closest('.tcx');
+  if(tcx){ const field=ev.target.closest('.tagfield'); const arr=resolveArr(field.dataset.loc); if(arr){ const i=arr.indexOf(tcx.dataset.tag); if(i>=0) arr.splice(i,1); markDirty(); rerenderActiveTab(); } return; }
+
+  const tcn = ev.target.closest('.tcn');
+  if(tcn){ const field=ev.target.closest('.tagfield'); openMovePicker(tcn.dataset.tag, resolveScope(field.dataset.loc)); return; }
+
+  const tfAdd = ev.target.closest('.tf-add');
+  if(tfAdd){ const field=ev.target.closest('.tagfield'); const input=field.querySelector('.tf-input'); addTagDirect(field.dataset.loc, input.value.trim(), field.dataset.defcat); return; }
+
+  const sugg = ev.target.closest('.tag-suggest span');
+  if(sugg){ const field=ev.target.closest('.tagfield'); addTagDirect(field.dataset.loc, sugg.dataset.tag, field.dataset.defcat); return; }
+
+  const photoImg = ev.target.closest('.p-photo, .bf-photo');
+  if(photoImg){ openLightbox(photoImg.src); return; }
+
+  const toggleP = ev.target.closest('[data-toggle-player]');
+  if(toggleP){ const p=state.players.find(x=>x.id===toggleP.dataset.togglePlayer); p.collapsed=!p.collapsed; markDirty(); rerenderActiveTab(); return; }
+
+  const pPhotoDel = ev.target.closest('.p-photo-del');
+  if(pPhotoDel){
+    const p=state.players.find(x=>x.id===pPhotoDel.dataset.pid);
+    if(confirm('確定要刪除這張照片嗎？')){ p.photos=p.photos.filter(ph=>ph.id!==pPhotoDel.dataset.phid); markDirty(); rerenderActiveTab(); }
+    return;
+  }
+  const catRename = ev.target.closest('.cat-rename');
+  if(catRename){ const p=state.players.find(x=>x.id===catRename.dataset.pid); const c=p.equipCats.find(c=>c.id===catRename.dataset.cid); const name=prompt('分類名稱：', c.name); if(name&&name.trim()){ c.name=name.trim(); markDirty(); rerenderActiveTab(); } return; }
+  const catDel = ev.target.closest('.cat-del');
+  if(catDel){
+    const p=state.players.find(x=>x.id===catDel.dataset.pid);
+    if(p.equipCats.length<=1){ showToast('至少要保留一個分類'); return; }
+    if(confirm('確定要刪除這個分類嗎？裡面的標籤也會一併移除。')){ p.equipCats=p.equipCats.filter(c=>c.id!==catDel.dataset.cid); markDirty(); rerenderActiveTab(); }
+    return;
+  }
+  const addCatP = ev.target.closest('[data-addcat-player]');
+  if(addCatP){ const p=state.players.find(x=>x.id===addCatP.dataset.addcatPlayer); const name=prompt('新分類名稱，例如：武器、護甲…'); if(name&&name.trim()){ p.equipCats.push(newEquipCat(name.trim())); markDirty(); rerenderActiveTab(); } return; }
+  const dup = ev.target.closest('[data-dup]');
+  if(dup){
+    const p=state.players.find(x=>x.id===dup.dataset.dup);
+    const name=prompt('複製後的新玩家名稱：', p.name+' 複製'); if(!name||!name.trim()) return;
+    const np = JSON.parse(JSON.stringify(p)); np.id=uid(); np.name=name.trim();
+    state.players.push(np); markDirty(); showToast(`已複製為「${np.name}」`); rerenderActiveTab();
+    return;
+  }
+  const delP = ev.target.closest('[data-delplayer]');
+  if(delP){ const p=state.players.find(x=>x.id===delP.dataset.delplayer); if(confirm(`確定要刪除玩家「${p.name}」與其所有紀錄嗎？`)){ state.players=state.players.filter(x=>x.id!==p.id); delete state.teamInventory.playerGold[p.id]; if(state.playerFilter===p.id) state.playerFilter=null; markDirty(); rerenderActiveTab(); } return; }
+
+  const invCatRename = ev.target.closest('.inv-cat-rename');
+  if(invCatRename){ const c=state.teamInventory.cats.find(c=>c.id===invCatRename.dataset.cid); const name=prompt('分類名稱：', c.name); if(name&&name.trim()){ c.name=name.trim(); markDirty(); rerenderActiveTab(); } return; }
+  const invCatDel = ev.target.closest('.inv-cat-del');
+  if(invCatDel){
+    if(state.teamInventory.cats.length<=1){ showToast('至少要保留一個分類'); return; }
+    if(confirm('確定要刪除這個分類嗎？')){ state.teamInventory.cats=state.teamInventory.cats.filter(c=>c.id!==invCatDel.dataset.cid); markDirty(); rerenderActiveTab(); }
+    return;
+  }
+  const addCatT = ev.target.closest('[data-addcat-team]');
+  if(addCatT){ const name=prompt('新分類名稱，例如：武器、護甲…（建議跟玩家裝備區一致，商店購買才能自動歸位）'); if(name&&name.trim()){ state.teamInventory.cats.push(newInvCat(name.trim())); markDirty(); rerenderActiveTab(); } return; }
+
+  const rcDel = ev.target.closest('.rc-del');
+  if(rcDel){ if(confirm('確定要永久刪除這筆紀錄嗎？')){ state.teamInventory.removedCards=state.teamInventory.removedCards.filter(r=>r.id!==rcDel.dataset.id); markDirty(); rerenderActiveTab(); } return; }
+  const rcRestore = ev.target.closest('.rc-restore');
+  if(rcRestore){
+    const r = state.teamInventory.removedCards.find(x=>x.id===rcRestore.dataset.id);
+    if(r){ state.teamInventory.removedCards = state.teamInventory.removedCards.filter(x=>x.id!==r.id); markDirty(); showToast(`已把「${r.name}」移回，請選擇要放到哪裡`); openMovePicker(r.name, null); }
+    return;
+  }
+
+  const goldBtn = ev.target.closest('.gold-btn');
+  if(goldBtn){ adjustGold(goldBtn.dataset.gt, goldBtn.dataset.gp, parseInt(goldBtn.dataset.gd,10)); return; }
+  const goldEdit = ev.target.closest('.gold-edit');
+  if(goldEdit){ setGoldExact(goldEdit.dataset.gt, goldEdit.dataset.gp); return; }
+});
+
+$('#main').addEventListener('input', (ev)=>{
+  if(ev.target.classList.contains('tf-input')){
+    const field=ev.target.closest('.tagfield'); const box=field.querySelector('.tag-suggest');
+    const q=ev.target.value.trim().toLowerCase();
+    let matches = q ? state.tagLibrary.filter(t=>t.name.toLowerCase().includes(q)||(t.category||'').toLowerCase().includes(q)) : state.tagLibrary.slice(0,8);
+    matches = matches.slice(0,8);
+    box.innerHTML = matches.map(t=>`<span data-tag="${escapeHtml(t.name)}">${escapeHtml(t.name)}${t.level?` <small>Lv${escapeHtml(t.level)}</small>`:''}</span>`).join('');
+    return;
+  }
+  if(ev.target.id==='bfNote' || ev.target.classList.contains('p-note') || ev.target.id==='invNote') return; // handled elsewhere
+  if(ev.target.classList.contains('p-name-input')){ const p=state.players.find(x=>x.id===ev.target.dataset.pid); if(p){ p.name=ev.target.value; markDirty(); } return; }
+});
+$('#main').addEventListener('keydown', (ev)=>{
+  if(ev.target.classList.contains('tf-input') && ev.key==='Enter'){
+    ev.preventDefault();
+    const field=ev.target.closest('.tagfield');
+    addTagDirect(field.dataset.loc, ev.target.value.trim(), field.dataset.defcat);
+  }
+});
+$('#main').addEventListener('change', (ev)=>{
+  if(ev.target.classList.contains('p-photo-cam') || ev.target.classList.contains('p-photo-file')){
+    const p = state.players.find(x=>x.id===ev.target.dataset.pid);
+    compressImage(ev.target.files[0], url=>{ p.photos.push({id:uid(), photo:url, ts:Date.now()}); markDirty(); rerenderActiveTab(); }, 1400, 0.8);
+  }
+});
+// p-note is a textarea, needs its own delegated 'input' (added above returned early) - handle separately:
+$('#main').addEventListener('input', (ev)=>{
+  if(ev.target.classList.contains('p-note')){ const p=state.players.find(x=>x.id===ev.target.dataset.pid); if(p){ p.note=ev.target.value; markDirty(); } }
+});
+$('#main').addEventListener('input', (ev)=>{
+  if(ev.target.id==='bfNote'){ state.battlefield.note = ev.target.value; markDirty(); }
+  if(ev.target.id==='invNote'){ state.teamInventory.note = ev.target.value; markDirty(); }
+});
+
+/* ============ Unified move / assign / buy picker ============ */
+let taglibMode = 'list';
+let taglibSearch = '';
+let taglibCatFilter = '__all__';
+let taglibSchoolFilter = '__all__';
+let taglibTargetTag = null;
+let picker = { active:false, mode:null, tag:null, source:null, shopItem:null, step:'dest', playerId:null };
+
+function openAssignPicker(tagName){ picker={active:true,mode:'assign',tag:tagName,source:null,shopItem:null,step:'dest',playerId:null}; taglibMode='picker'; renderTaglibOverlay(); $('#taglibOverlay').classList.add('show'); }
+function openMovePicker(tagName, source){ picker={active:true,mode:'move',tag:tagName,source,shopItem:null,step:'dest',playerId:null}; taglibMode='picker'; renderTaglibOverlay(); $('#taglibOverlay').classList.add('show'); }
+function openBuyPicker(item){ picker={active:true,mode:'buy',tag:item.name,source:null,shopItem:item,step:'dest',playerId:null}; taglibMode='picker'; renderTaglibOverlay(); $('#taglibOverlay').classList.add('show'); }
+function closePicker(){ $('#taglibOverlay').classList.remove('show'); picker.active=false; }
+function finishPicker(){ if(picker.mode==='assign'){ picker.active=false; taglibMode='list'; renderTaglibOverlay(); } else { closePicker(); } }
+
+function renderPicker(){
+  const body = $('#taglibBody');
+  if(picker.step==='dest'){
+    const playerBtns = state.players.map(p=>`<button class="picker-btn" data-destplayer="${p.id}">${escapeHtml(p.name)}</button>`).join('');
+    const sellBtn = (picker.mode==='move') ? `<button class="picker-btn" data-destsell="1">🏪 賣到商店（換錢）</button>` : '';
+    body.innerHTML = `
+      <h3>${picker.mode==='buy'?'購買':(picker.mode==='move'?'移動':'指定')}「${escapeHtml(picker.tag)}」</h3>
+      <div class="hint" style="margin-bottom:12px;">選擇要放到哪裡：</div>
+      <div class="picker-list">
+        <button class="picker-btn" data-destteam="1">🎒 團隊背包</button>
+        ${sellBtn}
+        ${playerBtns}
+      </div>
+      ${!state.players.length ? `<div class="hint" style="margin-top:10px;">還沒有玩家，可以到「玩家」分頁新增。</div>` : ''}
+      <div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerCancel">取消</button></div>
+    `;
+  } else if(picker.step==='playerarea'){
+    const p = state.players.find(x=>x.id===picker.playerId);
+    const areaBtns = [
+      `<button class="picker-btn" data-area="hand">手牌區</button>`,
+      `<button class="picker-btn" data-area="discard">棄牌區</button>`,
+      ...p.equipCats.map(c=>`<button class="picker-btn" data-area="${c.id}">${escapeHtml(c.name)}</button>`),
+    ].join('');
+    body.innerHTML = `<h3>放到 ${escapeHtml(p.name)} 的哪裡？</h3><div class="picker-list">${areaBtns}</div><div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerBack">‹ 上一步</button></div>`;
+  } else if(picker.step==='teamcat'){
+    const catBtns = state.teamInventory.cats.map(c=>`<button class="picker-btn" data-teamcat="${c.id}">${escapeHtml(c.name)}</button>`).join('');
+    body.innerHTML = `<h3>放到團隊背包的哪個分類？</h3><div class="picker-list">${catBtns}</div><div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerBack">‹ 上一步</button></div>`;
+  }
+}
+function doPlaceAtTeamCat(catId){
+  const ok = placeTag(picker.tag, {type:'team', catId}); if(!ok) return;
+  if(picker.mode==='move' && picker.source) removeTagFromSource(picker.source, picker.tag);
+  markDirty(); showToast(`已把「${picker.tag}」放進團隊背包`); rerenderActiveTab(); finishPicker();
+}
+function doPlaceAtPlayerArea(area){
+  const dest = {type:'player', playerId:picker.playerId, area};
+  const ok = placeTag(picker.tag, dest); if(!ok) return;
+  if(picker.mode==='move' && picker.source) removeTagFromSource(picker.source, picker.tag);
+  markDirty();
+  const p = state.players.find(x=>x.id===picker.playerId);
+  showToast(`已把「${picker.tag}」加到 ${p.name}`); rerenderActiveTab(); finishPicker();
+}
+function doBuyToTeam(){
+  const item = picker.shopItem;
+  if(state.teamInventory.totalGold < item.price){ showToast('團隊金庫不足，無法購買'); return; }
+  if(!canPlace(item.name)){ showToast(`「${item.name}」已達數量上限`); return; }
+  const c = findMatchingInvCat(item.category);
+  const ok = placeTag(item.name, {type:'team', catId:c.id}); if(!ok) return;
+  state.teamInventory.totalGold -= item.price;
+  markDirty(); showToast(`已購買「${item.name}」`); rerenderActiveTab(); closePicker();
+}
+function doBuyToPlayer(playerId){
+  const item = picker.shopItem;
+  if(state.teamInventory.totalGold < item.price){ showToast('團隊金庫不足，無法購買'); return; }
+  if(!canPlace(item.name)){ showToast(`「${item.name}」已達數量上限`); return; }
+  const p = state.players.find(x=>x.id===playerId);
+  const c = findMatchingEquipCat(p, item.category);
+  const ok = placeTag(item.name, {type:'player', playerId:p.id, area:c.id}); if(!ok) return;
+  state.teamInventory.totalGold -= item.price;
+  markDirty(); showToast(`已購買「${item.name}」給 ${p.name}`); rerenderActiveTab(); closePicker();
+}
+function ensureShopListing(tagName, price){
+  let item = state.shopCatalog.find(x=>x.name===tagName);
+  if(item) return item; // 已經在商店總表裡了，保留 GM 原本設定的價格/等級，不覆蓋
+  const lib = state.tagLibrary.find(t=>t.name===tagName);
+  item = {id:uid(), photo:null, name:tagName, category: (lib&&lib.category)?lib.category:'其他', level:'', price: price||0, cap: lib?lib.cap:null};
+  state.shopCatalog.push(item);
+  return item;
+}
+function sellTagFlow(tag, source){
+  const val = prompt(`「${tag}」的賣出價格：`, 0); if(val===null) return;
+  const price = parseInt(val,10); if(isNaN(price)||price<0){ showToast('請輸入有效金額'); return; }
+  if(source) removeTagFromSource(source, tag);
+  state.teamInventory.totalGold += price;
+  showToast(`已賣出「${tag}」，團隊金庫 +${price}`);
+  const destroy = confirm(`要把「${tag}」永久移出遊戲嗎？（上限視同-1，之後無法再取得，除非手動移回）\n\n選「取消」代表只是賣掉，會自動依分類上架回商店，之後還能再買到。`);
+  if(destroy){
+    state.teamInventory.removedCards.push({id:uid(), name:tag, removedAt:Date.now()});
+  } else {
+    const listing = ensureShopListing(tag, price);
+    showToast(`已上架到商店「${listing.category}」分類`);
+  }
+  markDirty();
+  rerenderActiveTab(); closePicker();
+}
+
+/* ============ Shop tab ============ */
+let shopCatFilter = '';
+function visibleShopItems(){ return state.shopCatalog.filter(it => !it.level || state.shopUnlockedLevels.includes(it.level)); }
+function shopCardHTML(it){
+  const cap = it.cap;
+  const used = countInPlay(it.name)+countRemoved(it.name);
+  const avail = cap!=null ? Math.max(0, cap-used) : null;
+  const outOfStock = avail!=null && avail<=0;
+  const canAfford = state.teamInventory.totalGold >= (it.price||0);
+  const canBuy = !outOfStock && canAfford;
+  return `
+  <div class="shop-card" data-id="${it.id}">
+    <div class="shop-card-photo">${it.photo?`<img src="${it.photo}" class="shop-photo" data-id="${it.id}">`:`<div class="shop-no-photo">無照片</div>`}</div>
+    <div class="shop-name">${escapeHtml(it.name||'未命名')}</div>
+    <div class="shop-badge">${it.level?`Lv${escapeHtml(it.level)} · `:''}${it.price||0}💰${avail!=null?` · 剩${avail}`:''}</div>
+    <div class="shop-actions"><button class="shop-buy" data-buy="${it.id}" ${canBuy?'':'disabled'}>${outOfStock?'已達上限':(!canAfford?'金庫不足':'購買')}</button></div>
+  </div>`;
+}
+function renderShop(){
+  const wrap = $('#panel-shop');
+  const items = visibleShopItems();
+  const cats = Array.from(new Set(items.map(it=>it.category||'未分類')));
+  const filtered = shopCatFilter ? items.filter(it=>(it.category||'未分類')===shopCatFilter) : items;
+  const groups = Array.from(new Set(filtered.map(it=>it.category||'未分類')));
+  const body = groups.length ? groups.map(cat=>{
+    const catItems = filtered.filter(it=>(it.category||'未分類')===cat);
+    return sectionHTML('shop:'+cat, `${cat}（${catItems.length}）`, `<div class="shop-grid">${catItems.map(shopCardHTML).join('')}</div>`);
+  }).join('') : `<div class="empty"><div class="glyph">◌</div><p>${state.shopCatalog.length?'目前沒有已開放等級的商品，請到 GM 區勾選要開放的等級。':'還沒有商品，請到 GM 區的商店卡牌管理新增。'}</p></div>`;
+
+  wrap.innerHTML = `
+    <div class="cat-tabs">
+      <button class="cat-tab ${!shopCatFilter?'active':''}" data-shopcat="">全部</button>
+      ${cats.map(c=>`<button class="cat-tab ${shopCatFilter===c?'active':''}" data-shopcat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')}
+    </div>
+    ${body}
+  `;
+}
+RENDER_FN.shop = renderShop;
+$('#panel-shop').addEventListener('click', ev=>{
+  const catTab = ev.target.closest('[data-shopcat]');
+  if(catTab){ shopCatFilter = catTab.dataset.shopcat; renderShop(); return; }
+  const photo = ev.target.closest('.shop-photo');
+  if(photo){ openLightbox(photo.src); return; }
+  const buyBtn = ev.target.closest('[data-buy]');
+  if(buyBtn && !buyBtn.disabled){
+    const item = state.shopCatalog.find(x=>x.id===buyBtn.dataset.buy);
+    if(item) openBuyPicker(item);
+    return;
+  }
+});
+
+/* ============ Tag library: list / category-edit modes ============ */
+function taglibComputeItems(){
+  let items = state.tagLibrary;
+  if(taglibCatFilter!=='__all__') items = items.filter(t=>(t.category||'__none__')===taglibCatFilter);
+  if((taglibCatFilter==='技能'||taglibCatFilter==='手牌') && taglibSchoolFilter!=='__all__') items = items.filter(t=>(t.school||'__none__')===taglibSchoolFilter);
+  const q = taglibSearch.trim().toLowerCase();
+  if(q) items = items.filter(t=> t.name.toLowerCase().includes(q) || (t.category||'').toLowerCase().includes(q) || (t.school||'').toLowerCase().includes(q));
+  return items.slice().sort(compareTagEntries);
+}
+function taglibRowsHTML(items){
+  if(!items.length) return `<div class="hint" style="padding:20px 4px;">${state.tagLibrary.length?'找不到符合的標籤':'標籤庫是空的。'}</div>`;
+  return items.map(t=>{
+    const used = countInPlay(t.name)+countRemoved(t.name);
+    const capBadge = t.cap!=null ? `<span class="ti-badge">${used}/${t.cap}</span>` : '';
+    return `
+    <div class="taglib-item">
+      <div class="ti-top"><span class="ti-name tl-edit" data-tag="${escapeHtml(t.name)}">${escapeHtml(t.name)} ✎</span><button class="ti-del tl-del" data-tag="${escapeHtml(t.name)}">刪除</button></div>
+      <div class="ti-bottom">
+        <span class="ti-badge">${t.category?escapeHtml(t.category):'未分類'}</span>
+        ${t.level?`<span class="ti-badge">Lv${escapeHtml(t.level)}</span>`:''}
+        ${t.school?`<span class="ti-badge">${escapeHtml(t.school)}</span>`:''}
+        ${capBadge}
+        <button class="ti-action tl-assign" data-tag="${escapeHtml(t.name)}">指定去哪 →</button>
+        <button class="ti-action tl-gm" data-tag="${escapeHtml(t.name)}" style="background:rgba(139,123,168,.15); border-color:rgba(139,123,168,.5); color:var(--gm);">移出遊戲</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+function updateTaglibListBody(){ const el=$('#taglibListBody'); if(el) el.innerHTML = taglibRowsHTML(taglibComputeItems()); }
+function renderTaglibList(){
+  const cats = Array.from(new Set(state.tagLibrary.map(t=>t.category||'__none__')));
+  const tabsHTML = ['__all__', ...cats].map(c=>{
+    const label = c==='__all__'?'全部':(c==='__none__'?'未分類':c);
+    return `<button class="cat-tab ${taglibCatFilter===c?'active':''}" data-catf="${escapeHtml(c)}">${escapeHtml(label)}</button>`;
+  }).join('');
+  let schoolTabsHTML = '';
+  if(taglibCatFilter==='技能' || taglibCatFilter==='手牌'){
+    const inCat = state.tagLibrary.filter(t=>(t.category||'__none__')===taglibCatFilter);
+    const schools = Array.from(new Set(inCat.map(t=>t.school||'__none__')));
+    schoolTabsHTML = `<div class="cat-tabs">${['__all__',...schools].map(s=>{
+      const label = s==='__all__'?'全部流派/角色':(s==='__none__'?'未分類':s);
+      return `<button class="cat-tab ${taglibSchoolFilter===s?'active':''}" data-schoolf="${escapeHtml(s)}">${escapeHtml(label)}</button>`;
+    }).join('')}</div>`;
+  }
+  $('#taglibBody').innerHTML = `
+    <h3>🏷 標籤庫</h3>
+    <div class="field"><input type="text" id="taglibSearchInput" placeholder="搜尋標籤名稱、分類或流派…" value="${escapeHtml(taglibSearch)}"></div>
+    <div class="cat-tabs">${tabsHTML}</div>
+    ${schoolTabsHTML}
+    <button class="btn ghost sm" id="btnTlAdd" style="margin-bottom:10px;">＋ 手動新增標籤</button>
+    <div id="taglibListBody">${taglibRowsHTML(taglibComputeItems())}</div>
+    <div class="row" style="margin-top:14px;"><button class="btn ghost grow" id="btnCloseTaglib">關閉</button></div>
+  `;
+}
+function renderCategoryPanel(){
+  const t = state.tagLibrary.find(x=>x.name===taglibTargetTag);
+  if(!t){ taglibMode='list'; renderTaglibList(); return; }
+  $('#taglibBody').innerHTML = `
+    <h3>編輯「${escapeHtml(t.name)}」</h3>
+    <div class="field"><label>分類</label><input type="text" id="editCat" value="${escapeHtml(t.category||'')}" placeholder="例如：武器、技能、手牌"></div>
+    <div class="field"><label>等級</label><input type="text" id="editLevel" value="${escapeHtml(t.level||'')}" placeholder="例如 1 或 Lv2"></div>
+    <div class="field"><label>流派 / 角色（技能、手牌用）</label><input type="text" id="editSchool" value="${escapeHtml(t.school||'')}"></div>
+    <div class="field"><label>數量上限（留空＝無限制）</label><input type="number" id="editCap" value="${t.cap==null?'':t.cap}" min="0"></div>
+    <div class="row"><button class="btn ghost grow" id="btnCatBack">‹ 返回</button><button class="btn primary grow" id="btnCatSave">儲存</button></div>
+  `;
+}
+function renderTaglibOverlay(){
+  if(taglibMode==='picker'){ renderPicker(); return; }
+  if(taglibMode==='category'){ renderCategoryPanel(); return; }
+  renderTaglibList();
+}
+$('#btnTagLib').addEventListener('click', ()=>{ taglibMode='list'; taglibSearch=''; taglibCatFilter='__all__'; taglibSchoolFilter='__all__'; renderTaglibOverlay(); $('#taglibOverlay').classList.add('show'); });
+
+$('#taglibBody').addEventListener('click', (ev)=>{
+  if(taglibMode==='picker'){
+    if(ev.target.closest('#pickerCancel')){ closePicker(); return; }
+    if(ev.target.closest('#pickerBack')){ picker.step='dest'; renderPicker(); return; }
+    if(ev.target.closest('[data-destteam]')){ if(picker.mode==='buy'){ doBuyToTeam(); } else { picker.step='teamcat'; renderPicker(); } return; }
+    if(ev.target.closest('[data-destsell]')){ sellTagFlow(picker.tag, picker.source); return; }
+    const destPlayer = ev.target.closest('[data-destplayer]');
+    if(destPlayer){ picker.playerId=destPlayer.dataset.destplayer; if(picker.mode==='buy'){ doBuyToPlayer(picker.playerId); } else { picker.step='playerarea'; renderPicker(); } return; }
+    const areaBtn = ev.target.closest('[data-area]');
+    if(areaBtn){ doPlaceAtPlayerArea(areaBtn.dataset.area); return; }
+    const teamcatBtn = ev.target.closest('[data-teamcat]');
+    if(teamcatBtn){ doPlaceAtTeamCat(teamcatBtn.dataset.teamcat); return; }
+    return;
+  }
+  if(ev.target.closest('#btnCloseTaglib')){ $('#taglibOverlay').classList.remove('show'); return; }
+  if(taglibMode==='category'){
+    if(ev.target.closest('#btnCatBack')){ taglibMode='list'; renderTaglibOverlay(); return; }
+    if(ev.target.closest('#btnCatSave')){
+      const t = state.tagLibrary.find(x=>x.name===taglibTargetTag);
+      t.category = $('#editCat').value.trim();
+      t.level = $('#editLevel').value.trim();
+      t.school = $('#editSchool').value.trim();
+      const capVal = $('#editCap').value.trim();
+      t.cap = capVal==='' ? null : Math.max(0, parseInt(capVal,10)||0);
+      markDirty(); showToast('已儲存'); taglibMode='list'; renderTaglibOverlay();
+      return;
+    }
+    return;
+  }
+  const catf = ev.target.closest('[data-catf]');
+  if(catf){ taglibCatFilter=catf.dataset.catf; taglibSchoolFilter='__all__'; renderTaglibList(); return; }
+  const schoolf = ev.target.closest('[data-schoolf]');
+  if(schoolf){ taglibSchoolFilter=schoolf.dataset.schoolf; updateTaglibListBody(); $$('#taglibBody .cat-tabs')[1] && $$('#taglibBody .cat-tabs')[1].querySelectorAll('.cat-tab').forEach(b=>b.classList.toggle('active', b.dataset.schoolf===taglibSchoolFilter)); return; }
+  if(ev.target.closest('#btnTlAdd')){
+    const name = prompt('新標籤名稱：'); if(!name||!name.trim()) return;
+    if(state.tagLibrary.find(t=>t.name===name.trim())){ showToast('這個名稱已經存在'); return; }
+    upsertTagLibrary(name.trim(), '', '', '', null); markDirty();
+    taglibTargetTag = name.trim(); taglibMode='category'; renderTaglibOverlay();
+    return;
+  }
+  const tlEdit = ev.target.closest('.tl-edit');
+  if(tlEdit){ taglibTargetTag=tlEdit.dataset.tag; taglibMode='category'; renderTaglibOverlay(); return; }
+  const tlDel = ev.target.closest('.tl-del');
+  if(tlDel){ if(confirm(`確定要永久刪除標籤「${tlDel.dataset.tag}」的定義嗎？（已經放在場上的標籤不會被移除，但之後就不會再有上限管制）`)){ state.tagLibrary=state.tagLibrary.filter(t=>t.name!==tlDel.dataset.tag); markDirty(); updateTaglibListBody(); } return; }
+  const tlAssign = ev.target.closest('.tl-assign');
+  if(tlAssign){ openAssignPicker(tlAssign.dataset.tag); return; }
+  const tlGm = ev.target.closest('.tl-gm');
+  if(tlGm){ if(confirm(`確定要把「${tlGm.dataset.tag}」標記為移出遊戲嗎？（上限視同-1）`)){ state.teamInventory.removedCards.push({id:uid(), name:tlGm.dataset.tag, removedAt:Date.now()}); markDirty(); updateTaglibListBody(); showToast('已標記移出遊戲'); } return; }
+});
+$('#taglibBody').addEventListener('input', ev=>{
+  if(ev.target.id==='taglibSearchInput'){ taglibSearch=ev.target.value; updateTaglibListBody(); }
+});
+
+/* ============ GM tab: 3 catalog managers ============ */
+function getCatalogArr(kind){ return kind==='shop'?state.shopCatalog:(kind==='skill'?state.skillCatalog:state.handCatalog); }
+function syncCatalogItemToLibrary(kind, item){
+  if(!item.name) return;
+  const category = kind==='shop' ? (item.category||'') : (kind==='skill'?'技能':'手牌');
+  upsertTagLibrary(item.name, category, item.level||'', kind==='shop'?'':(item.school||''), item.cap);
+}
+function catalogCardHTML(it, kind){
+  const del = `<button class="gm-del" data-delcard="${it.id}" data-kind="${kind}">✕</button>`;
+  let fields;
+  if(kind==='shop'){
+    fields = `
+      <input type="text" class="gm-f" data-f="name" data-id="${it.id}" data-kind="shop" placeholder="商品名稱" value="${escapeHtml(it.name)}">
+      <input type="text" class="gm-f" data-f="category" data-id="${it.id}" data-kind="shop" placeholder="分類，例如 武器" value="${escapeHtml(it.category||'')}">
+      <input type="text" class="gm-f gm-regroup" data-f="level" data-id="${it.id}" data-kind="shop" placeholder="等級" value="${escapeHtml(it.level||'')}">
+      <input type="number" class="gm-f" data-f="price" data-id="${it.id}" data-kind="shop" placeholder="價格" value="${it.price||0}" min="0">
+      <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="shop" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">`;
+  } else {
+    fields = `
+      <input type="text" class="gm-f" data-f="name" data-id="${it.id}" data-kind="${kind}" placeholder="卡牌名稱" value="${escapeHtml(it.name)}">
+      <input type="text" class="gm-f gm-regroup" data-f="school" data-id="${it.id}" data-kind="${kind}" placeholder="${kind==='skill'?'流派':'角色/總名稱'}" value="${escapeHtml(it.school||'')}">
+      <input type="text" class="gm-f gm-regroup" data-f="level" data-id="${it.id}" data-kind="${kind}" placeholder="等級" value="${escapeHtml(it.level||'')}">
+      <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="${kind}" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">`;
+  }
+  return `<div class="shop-card" style="position:relative;"><div class="shop-card-photo">${it.photo?`<img src="${it.photo}" class="shop-photo" data-id="${it.id}">`:`<div class="shop-no-photo">無照片</div>`}${del}</div><div class="gm-inputs">${fields}</div></div>`;
+}
+function renderGmShopSection(){
+  const levels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
+  const body = levels.map(lv=>{
+    const items = state.shopCatalog.filter(it=>(it.level||'未分級')===lv);
+    const isNone = lv==='未分級';
+    const unlocked = isNone ? true : state.shopUnlockedLevels.includes(lv);
+    return `<div style="margin-bottom:16px;"><div class="level-check"><input type="checkbox" class="lvl-check" data-lvl="${escapeHtml(lv)}" ${unlocked?'checked':''} ${isNone?'disabled':''}><span>${escapeHtml(lv)}${isNone?'（永遠開放）':''}（${items.length}）</span></div><div class="shop-grid">${items.map(it=>catalogCardHTML(it,'shop')).join('')}</div></div>`;
+  }).join('');
+  return `
+    <div class="photo-add-row"><label for="shopUpload">📥 新增商品照片（可多選）</label></div>
+    <input type="file" id="shopUpload" accept="image/*" multiple>
+    <div class="hint" style="margin:8px 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。</div>
+    ${body || `<div class="hint">還沒有商品。</div>`}
+  `;
+}
+function renderGmSchoolSection(kind){
+  const catalog = getCatalogArr(kind);
+  const schools = Array.from(new Set(catalog.map(it=>it.school||'未分類')));
+  const body = schools.map(sch=>{
+    const levels = Array.from(new Set(catalog.filter(it=>(it.school||'未分類')===sch).map(it=>it.level||'未分級')));
+    const lvHTML = levels.map(lv=>{
+      const items = catalog.filter(it=>(it.school||'未分類')===sch && (it.level||'未分級')===lv);
+      return `<div style="margin-bottom:10px;"><div class="hint" style="font-weight:700; margin-bottom:6px;">${escapeHtml(lv)}（${items.length}）</div><div class="shop-grid">${items.map(it=>catalogCardHTML(it,kind)).join('')}</div></div>`;
+    }).join('');
+    return `<div style="margin-bottom:16px;"><div class="hint" style="font-weight:700; color:var(--gm); margin-bottom:8px; font-size:13px;">${escapeHtml(sch)}</div>${lvHTML}</div>`;
+  }).join('');
+  const uploadId = kind+'Upload';
+  return `
+    <div class="photo-add-row"><label for="${uploadId}">📥 新增${kind==='skill'?'技能':'手牌'}卡照片（可多選）</label></div>
+    <input type="file" id="${uploadId}" accept="image/*" multiple>
+    <div class="hint" style="margin:8px 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。</div>
+    ${body || `<div class="hint">還沒有卡牌。</div>`}
+  `;
+}
+function handleCatalogUpload(kind, fileList){
+  const files = Array.from(fileList||[]); if(!files.length) return;
   let remaining = files.length;
   files.forEach(file=>{
-    compressImage(file, (url)=>{
-      state.shopCatalog.push({id: uid(), photo:url, name:'', category:'', tier:'', price:0, qty:1, basePrice:0, baseQty:1, ts:Date.now()});
+    compressImage(file, url=>{
+      let item;
+      if(kind==='shop') item = {id:uid(), photo:url, name:'', category:'', level:'', price:0, cap:null};
+      else item = {id:uid(), photo:url, name:'', school:'', level:'', cap:null};
+      getCatalogArr(kind).push(item);
       remaining--;
-      if(remaining === 0){ markDirty(); renderGMView(); }
-    }, 1100, 0.82);
+      if(remaining===0){ markDirty(); renderGM(); }
+    }, 1200, 0.82);
   });
 }
-
-$('#gmView').addEventListener('click', (ev)=>{
-  const secHead = ev.target.closest('.gm-section-head');
-  if(secHead){
-    const id = secHead.dataset.sec;
-    if(gmOpenSections.has(id)) gmOpenSections.delete(id); else gmOpenSections.add(id);
-    renderGMView();
+function renderGM(){
+  const wrap = $('#panel-gm');
+  wrap.innerHTML = `
+    <div class="row" style="margin-bottom:12px;">
+      <button class="btn ghost sm grow" data-jump="gm:shop">🏪 商店卡牌</button>
+      <button class="btn ghost sm grow" data-jump="gm:skill">✨ 技能卡牌</button>
+      <button class="btn ghost sm grow" data-jump="gm:hand">🃏 手牌</button>
+    </div>
+    ${sectionHTML('gm:shop', `🏪 商店卡牌管理（${state.shopCatalog.length}）`, renderGmShopSection())}
+    ${sectionHTML('gm:skill', `✨ 技能卡牌管理（${state.skillCatalog.length}）`, renderGmSchoolSection('skill'))}
+    ${sectionHTML('gm:hand', `🃏 手牌管理（${state.handCatalog.length}）`, renderGmSchoolSection('hand'))}
+  `;
+  $('#shopUpload') && $('#shopUpload').addEventListener('change', e=> handleCatalogUpload('shop', e.target.files));
+  $('#skillUpload') && $('#skillUpload').addEventListener('change', e=> handleCatalogUpload('skill', e.target.files));
+  $('#handUpload') && $('#handUpload').addEventListener('change', e=> handleCatalogUpload('hand', e.target.files));
+}
+RENDER_FN.gm = renderGM;
+$('#panel-gm').addEventListener('click', ev=>{
+  const jump = ev.target.closest('[data-jump]');
+  if(jump){
+    openSections.add(jump.dataset.jump); renderGM();
+    requestAnimationFrame(()=>{ const el=document.querySelector(`[data-sec="${jump.dataset.jump}"]`); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); });
     return;
   }
-
-  const delBtn = ev.target.closest('.gm-del');
-  if(delBtn){
-    if(confirm('確定要永久刪除這筆紀錄嗎？')){
-      state.removedTags = state.removedTags.filter(x=>x.id!==delBtn.dataset.id);
-      markDirty(); renderGMView();
-    }
-    return;
-  }
-  const restoreBtn = ev.target.closest('.gm-restore');
-  if(restoreBtn){
-    const rt = state.removedTags.find(x=>x.id===restoreBtn.dataset.id);
-    if(rt){
-      state.removedTags = state.removedTags.filter(x=>x.id!==rt.id);
-      if(!state.tagLibrary.find(t=>t.name===rt.name)){
-        state.tagLibrary.unshift({name:rt.name, category:rt.category||''});
-      }
-      markDirty();
-      showToast(`已把「${rt.name}」移回標籤庫，請選擇要放到哪裡`);
-      taglibTargetTag = rt.name; taglibMode = 'assign';
-      taglibPickerAction = 'assign'; taglibSourceScope = null;
-      assignStep = 'destination'; assignPlayerId = null; assignSubareaId = null;
-      renderTaglibOverlay();
-      $('#taglibOverlay').classList.add('show');
-    }
-    return;
-  }
-  const catDel = ev.target.closest('.shop-card-del');
-  if(catDel){
-    if(confirm('確定要刪除這個商品嗎？')){
-      state.shopCatalog = state.shopCatalog.filter(x=>x.id!==catDel.dataset.id);
-      forgetPhoto(catDel.dataset.id);
-      markDirty(); renderGMView();
-    }
-    return;
-  }
-  const schoolCardDel = ev.target.closest('.skill-card-del, .hand-card-del');
-  if(schoolCardDel){
-    const prefix = schoolCardDel.classList.contains('skill-card-del') ? 'skill' : 'hand';
+  const photo = ev.target.closest('.shop-photo');
+  if(photo){ openLightbox(photo.src); return; }
+  const delCard = ev.target.closest('[data-delcard]');
+  if(delCard){
+    const kind = delCard.dataset.kind;
     if(confirm('確定要刪除這張卡牌嗎？')){
-      if(prefix==='skill') state.skillCatalog = state.skillCatalog.filter(x=>x.id!==schoolCardDel.dataset.id);
-      else state.handCatalog = state.handCatalog.filter(x=>x.id!==schoolCardDel.dataset.id);
-      forgetPhoto(schoolCardDel.dataset.id);
-      markDirty(); renderGMView();
+      const arr = getCatalogArr(kind).filter(x=>x.id!==delCard.dataset.delcard);
+      if(kind==='shop') state.shopCatalog=arr; else if(kind==='skill') state.skillCatalog=arr; else state.handCatalog=arr;
+      forgetPhoto(delCard.dataset.delcard);
+      markDirty(); renderGM();
     }
     return;
   }
 });
-$('#gmView').addEventListener('change', (ev)=>{
-  if(ev.target.classList.contains('tier-check')){
-    const tier = ev.target.dataset.tier;
-    if(ev.target.checked){ if(!state.unlockedTiers.includes(tier)) state.unlockedTiers.push(tier); }
-    else { state.unlockedTiers = state.unlockedTiers.filter(t=>t!==tier); }
-    markDirty();
-    showToast(ev.target.checked ? `已開放「${tier}」給商店` : `已關閉「${tier}」`);
-    return;
-  }
-  if(ev.target.classList.contains('cat-tier-input')){
-    const item = state.shopCatalog.find(x=>x.id===ev.target.dataset.id);
-    if(item){ item.tier = ev.target.value.trim(); markDirty(); renderGMView(); }
-    return;
-  }
-  if(ev.target.classList.contains('cat-category-input')){
-    const item = state.shopCatalog.find(x=>x.id===ev.target.dataset.id);
-    if(item){ item.category = ev.target.value.trim(); if(item.name) syncCatalogTag(item.name, item.category); markDirty(); }
-    return;
-  }
-  if(ev.target.classList.contains('skill-unlock-check') || ev.target.classList.contains('hand-unlock-check')){
-    const prefix = ev.target.classList.contains('skill-unlock-check') ? 'skill' : 'hand';
-    const key = ev.target.dataset.key;
-    let arr = getUnlockedByPrefix(prefix);
-    if(ev.target.checked){ if(!arr.includes(key)) arr.push(key); }
-    else { arr = arr.filter(k=>k!==key); if(prefix==='skill') state.skillUnlocked = arr; else state.handUnlocked = arr; }
-    markDirty();
-    showToast(ev.target.checked ? `已開放「${key.replace('|',' - ')}」` : `已關閉「${key.replace('|',' - ')}」`);
-    return;
-  }
-  const schoolInput = ev.target.classList.contains('skill-school-input') || ev.target.classList.contains('hand-school-input');
-  const levelInput = ev.target.classList.contains('skill-level-input') || ev.target.classList.contains('hand-level-input');
-  if(schoolInput || levelInput){
-    const prefix = ev.target.classList.contains('skill-school-input') || ev.target.classList.contains('skill-level-input') ? 'skill' : 'hand';
-    const item = getCatalogByPrefix(prefix).find(x=>x.id===ev.target.dataset.id);
-    if(item){
-      if(schoolInput) item.school = ev.target.value.trim(); else item.level = ev.target.value.trim();
-      markDirty(); renderGMView();
-    }
-    return;
-  }
+$('#panel-gm').addEventListener('input', ev=>{
+  if(!ev.target.classList.contains('gm-f')) return;
+  const {id, kind, f} = ev.target.dataset;
+  const item = getCatalogArr(kind).find(x=>x.id===id); if(!item) return;
+  if(f==='price') item.price = Math.max(0, parseInt(ev.target.value,10)||0);
+  else if(f==='cap') item.cap = ev.target.value.trim()==='' ? null : Math.max(0, parseInt(ev.target.value,10)||0);
+  else item[f] = ev.target.value;
+  syncCatalogItemToLibrary(kind, item);
+  markDirty();
 });
-$('#gmView').addEventListener('input', (ev)=>{
-  const id = ev.target.dataset.id;
-  if(!id) return;
-  if(ev.target.classList.contains('cat-name-input') || ev.target.classList.contains('cat-price-input') || ev.target.classList.contains('cat-qty-input')){
-    const item = state.shopCatalog.find(x=>x.id===id);
-    if(!item) return;
-    if(ev.target.classList.contains('cat-name-input')){ item.name = ev.target.value; if(item.name) syncCatalogTag(item.name, item.category||''); }
-    else if(ev.target.classList.contains('cat-price-input')){ item.price = Math.max(0, parseInt(ev.target.value,10)||0); item.basePrice = item.price; }
-    else if(ev.target.classList.contains('cat-qty-input')){ item.qty = Math.max(0, parseInt(ev.target.value,10)||0); item.baseQty = item.qty; }
-    markDirty();
+$('#panel-gm').addEventListener('change', ev=>{
+  if(ev.target.classList.contains('lvl-check')){
+    const lv = ev.target.dataset.lvl;
+    if(ev.target.checked){ if(!state.shopUnlockedLevels.includes(lv)) state.shopUnlockedLevels.push(lv); }
+    else state.shopUnlockedLevels = state.shopUnlockedLevels.filter(x=>x!==lv);
+    markDirty(); showToast(ev.target.checked?`已開放「${lv}」`:`已關閉「${lv}」`);
     return;
   }
-  const prefix = ev.target.classList.contains('skill-name-input') || ev.target.classList.contains('skill-cap-input') ? 'skill'
-    : (ev.target.classList.contains('hand-name-input') || ev.target.classList.contains('hand-cap-input') ? 'hand' : null);
-  if(prefix){
-    const item = getCatalogByPrefix(prefix).find(x=>x.id===id);
-    if(!item) return;
-    if(ev.target.classList.contains(prefix+'-name-input')){ item.name = ev.target.value; if(item.name) syncCatalogTag(item.name, tagCategoryForPrefix(prefix)); }
-    else if(ev.target.classList.contains(prefix+'-cap-input')){ item.cap = Math.max(0, parseInt(ev.target.value,10)||0); }
-    markDirty();
-  }
+  if(ev.target.classList.contains('gm-regroup')){ markDirty(); renderGM(); return; }
 });
 
-/* ---------------- Snapshots (quick-save / whole-state) ---------------- */
+/* ============ System tab: export/import + storage panel ============ */
+function computeStorageBreakdown(){
+  const sizeOf = o => JSON.stringify(o).length;
+  return [
+    {key:'battlefield', label:'戰場', size: sizeOf(state.battlefield)},
+    {key:'players', label:'玩家', size: sizeOf(state.players)},
+    {key:'inventory', label:'團隊背包', size: sizeOf(state.teamInventory)},
+    {key:'shop', label:'商店卡牌', size: sizeOf(state.shopCatalog)},
+    {key:'skill', label:'技能卡牌', size: sizeOf(state.skillCatalog)},
+    {key:'hand', label:'手牌', size: sizeOf(state.handCatalog)},
+    {key:'taglib', label:'標籤庫', size: sizeOf(state.tagLibrary)},
+  ];
+}
+function formatBytes(n){ const kb=n/1024; if(kb<1024) return kb.toFixed(1)+' KB'; return (kb/1024).toFixed(2)+' MB'; }
+const LOCAL_CAP = 5*1024*1024;
+function estimateLocalUsage(){
+  let total=0;
+  try{ for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k&&k.startsWith(STORE_PREFIX)) total += k.length+(localStorage.getItem(k)||'').length; } }catch(e){}
+  return total;
+}
+function updateStatusHint(){
+  const el = $('#statusHint'); if(!el) return;
+  el.textContent = state.exported ? '已自動保存 · 也已匯出備份檔案' : '已自動保存在此裝置 · 尚未匯出備份檔案';
+  el.style.color = state.exported ? '' : 'var(--danger)';
+}
+function renderSystem(){
+  const wrap = $('#panel-system');
+  const rows = computeStorageBreakdown();
+  const total = rows.reduce((s,r)=>s+r.size,0);
+  const quota = !hasNativeStorage ? (()=>{
+    const used=estimateLocalUsage(); const ratio=Math.min(1,used/LOCAL_CAP); const pct=Math.round(ratio*100);
+    const color = ratio>=.9?'var(--danger)':(ratio>=.7?'var(--accent)':'var(--inv)');
+    return `<div style="margin-bottom:14px;"><div class="quota-row"><span>裝置儲存空間（估計）</span><span class="mono" style="color:${color}">${formatBytes(used)} / ~5MB（${pct}%）</span></div><div class="quota-bar"><div class="quota-bar-fill" style="width:${pct}%;background:${color};"></div></div></div>`;
+  })() : '';
+  wrap.innerHTML = `
+    <div class="section open"><div class="section-body" style="display:block;">
+      <div class="row">
+        <button class="btn primary grow" id="btnExport">📤 匯出存檔</button>
+        <button class="btn ghost grow" id="btnImport">📥 匯入讀檔</button>
+      </div>
+      <input type="file" id="importInput" accept="application/json" style="display:none;">
+      <div class="hint" id="statusHint" style="margin-top:10px;"></div>
+      <div class="hint" style="margin-top:6px;">已自動保存在此裝置，關閉/重開程式資料不會消失（除非手動清除瀏覽器的網站資料）。不同遊戲存檔之間互不佔用彼此的圖片空間。離線時也能正常使用。</div>
+    </div></div>
+    ${sectionHTML('sys:storage', `📊 佔用空間（${formatBytes(total)}）`, `
+      ${quota}
+      ${rows.map(r=>`<div class="storage-row"><span class="lbl">${r.label}</span><span class="sz">${formatBytes(r.size)}</span><button class="btn danger sm" data-clearkey="${r.key}">清除</button></div>`).join('')}
+    `)}
+  `;
+  $('#btnExport').addEventListener('click', doExport);
+  $('#btnImport').addEventListener('click', ()=> $('#importInput').click());
+  $('#importInput').addEventListener('change', onImportFile);
+  updateStatusHint();
+}
+RENDER_FN.system = renderSystem;
+$('#panel-system').addEventListener('click', ev=>{
+  const clearBtn = ev.target.closest('[data-clearkey]');
+  if(clearBtn) clearStorageCategory(clearBtn.dataset.clearkey);
+});
+function clearStorageCategory(key){
+  const labels={battlefield:'戰場',players:'玩家',inventory:'團隊背包',shop:'商店卡牌',skill:'技能卡牌',hand:'手牌',taglib:'標籤庫'};
+  if(!confirm(`確定要清除「${labels[key]}」的資料嗎？此動作無法復原（除非你有備份存檔）。`)) return;
+  switch(key){
+    case 'battlefield': state.battlefield={photos:[],note:''}; break;
+    case 'players': state.players=[]; state.playerFilter=null; state.teamInventory.playerGold={}; break;
+    case 'inventory': state.teamInventory={totalGold:0,playerGold:{},cats:[newInvCat('其他分類')],note:'',removedCards:[]}; break;
+    case 'shop': state.shopCatalog=[]; state.shopUnlockedLevels=[]; break;
+    case 'skill': state.skillCatalog=[]; break;
+    case 'hand': state.handCatalog=[]; break;
+    case 'taglib': state.tagLibrary=[]; break;
+  }
+  markDirty(); rerenderActiveTab(); renderSystem();
+}
+
+/* ============ Snapshot / export / import ============ */
 function captureSnapshot(){
   return JSON.parse(JSON.stringify({
-    sessionName: $('#sessionName').value || '未命名場次',
-    entries: state.entries,
-    equipPlayers: state.equipPlayers,
-    subareaDefs: state.subareaDefs,
-    tagLibrary: state.tagLibrary,
-    playerAreaData: state.playerAreaData,
-    teamInventory: state.teamInventory,
-    shopCatalog: state.shopCatalog,
-    unlockedTiers: state.unlockedTiers,
-    skillCatalog: state.skillCatalog,
-    skillUnlocked: state.skillUnlocked,
-    handCatalog: state.handCatalog,
-    handUnlocked: state.handUnlocked,
-    removedTags: state.removedTags,
+    battlefield: state.battlefield, players: state.players, playerFilter: state.playerFilter,
+    teamInventory: state.teamInventory, shopCatalog: state.shopCatalog, shopUnlockedLevels: state.shopUnlockedLevels,
+    skillCatalog: state.skillCatalog, handCatalog: state.handCatalog, tagLibrary: state.tagLibrary,
   }));
 }
 function applySnapshot(snap){
-  state.entries = snap.entries || [];
-  state.equipPlayers = snap.equipPlayers || [];
-  state.subareaDefs = snap.subareaDefs || state.subareaDefs;
-  state.tagLibrary = (snap.tagLibrary || []).map(t => typeof t === 'string' ? {name:t, category:''} : t);
-  state.playerAreaData = snap.playerAreaData || {};
-  state.teamInventory = snap.teamInventory || {photo:null, note:'', slots:[], slotData:{}, totalGold:0, playerGold:{}};
-  if(state.teamInventory.totalGold === undefined) state.teamInventory.totalGold = 0;
-  if(!state.teamInventory.playerGold) state.teamInventory.playerGold = {};
-  state.shopCatalog = (snap.shopCatalog || snap.shopItems || []).map(it => ({
-    baseQty: it.qty, basePrice: it.price, tier: '', category: '', ...it,
-  }));
-  state.unlockedTiers = snap.unlockedTiers || [];
+  state.battlefield = snap.battlefield || {photos:[],note:''};
+  state.players = snap.players || [];
+  state.playerFilter = snap.playerFilter || null;
+  state.teamInventory = snap.teamInventory || {totalGold:0,playerGold:{},cats:[newInvCat('其他分類')],note:'',removedCards:[]};
+  state.shopCatalog = snap.shopCatalog || [];
+  state.shopUnlockedLevels = snap.shopUnlockedLevels || [];
   state.skillCatalog = snap.skillCatalog || [];
-  state.skillUnlocked = snap.skillUnlocked || [];
   state.handCatalog = snap.handCatalog || [];
-  state.handUnlocked = snap.handUnlocked || [];
-  state.removedTags = snap.removedTags || [];
-  $('#sessionName').value = snap.sessionName || '未命名場次';
-  if(activeCat === 'equip') renderPlayerList();
-  else if(activeCat === 'inv') renderInvView();
-  else if(activeCat === 'shop') renderShopView();
-  else if(activeCat === 'cards') renderCardsView();
-  else if(activeCat === 'gm') renderGMView();
-  else render();
+  state.tagLibrary = snap.tagLibrary || [];
+  rerenderActiveTab(); updateGoldChip();
 }
-
-/* ---------------- Storage usage panel ---------------- */
-function formatBytes(chars){
-  const kb = chars / 1024;
-  if(kb < 1024) return kb.toFixed(1) + ' KB';
-  return (kb/1024).toFixed(2) + ' MB';
-}
-function computeStorageBreakdown(){
-  const sizeOf = (obj) => JSON.stringify(obj).length;
-  return [
-    {key:'map',        label:'地圖現況',     size: sizeOf(state.entries.filter(e=>e.cat==='map'))},
-    {key:'equip',       label:'玩家裝備',     size: sizeOf({equipPlayers:state.equipPlayers, playerAreaData:state.playerAreaData})},
-    {key:'inv',         label:'團隊背包',     size: sizeOf(state.teamInventory)},
-    {key:'shop',        label:'商店卡片',     size: sizeOf(state.shopCatalog)},
-    {key:'skill',       label:'技能卡總表',   size: sizeOf(state.skillCatalog)},
-    {key:'hand',        label:'手牌卡總表',   size: sizeOf(state.handCatalog)},
-    {key:'gm',          label:'GM 移出區',    size: sizeOf(state.removedTags)},
-    {key:'taglib',      label:'標籤庫',       size: sizeOf(state.tagLibrary)},
-  ];
-}
-function estimateLocalStorageUsageBytes(){
-  let total = 0;
-  try{
-    for(let i=0;i<localStorage.length;i++){
-      const k = localStorage.key(i);
-      if(k && k.startsWith('boardgame-save-tool-v1:')) total += k.length + (localStorage.getItem(k)||'').length;
-    }
-  }catch(e){}
-  return total;
-}
-const LOCAL_STORAGE_ASSUMED_CAP = 5 * 1024 * 1024;
-function deviceQuotaBlockHTML(){
-  if(hasNativeStorage) return '';
-  const used = estimateLocalStorageUsageBytes();
-  const ratio = Math.min(1, used / LOCAL_STORAGE_ASSUMED_CAP);
-  const pct = Math.round(ratio*100);
-  const color = ratio >= 0.9 ? 'var(--danger)' : (ratio >= 0.7 ? 'var(--accent)' : 'var(--inv)');
-  return `
-    <div class="quota-block">
-      <div class="quota-row">
-        <span>裝置儲存空間（估計，此瀏覽器專用）</span>
-        <span class="mono" style="color:${color};">${formatBytes(used)} / ~5MB（${pct}%）</span>
-      </div>
-      <div class="quota-bar"><div class="quota-bar-fill" style="width:${pct}%; background:${color};"></div></div>
-      ${ratio>=0.8 ? `<div class="hint" style="color:var(--danger); margin-top:6px;">快滿了，建議盡快匯出備份，並清除一些用不到的舊卡牌照片。</div>` : ''}
-    </div>`;
-}
-function renderStorageOverlay(){
-  const rows = computeStorageBreakdown();
-  const total = rows.reduce((s,r)=>s+r.size, 0);
-  $('#storageBody').innerHTML = `
-    <h3>📊 目前佔用空間</h3>
-    <div class="storage-total">${formatBytes(total)}</div>
-    ${deviceQuotaBlockHTML()}
-    <div class="hint" style="margin-bottom:10px;">瀏覽器不會直接提供記憶體用量，這裡以目前資料換算成 JSON 大小來估算。自動保存已經拆成好幾包分開存（商店/技能卡/手牌卡/其他各自獨立），單一分類太大時只有那個分類會保存失敗，不會拖累其他資料；照片是佔用空間的主因。</div>
-    ${rows.map(r=>`
-      <div class="storage-row">
-        <span class="sr-label">${r.label}</span>
-        <span class="sr-size">${formatBytes(r.size)}</span>
-        <button class="sr-clear" data-key="${r.key}">清除</button>
-      </div>`).join('')}
-    <div class="sheet-actions" style="margin-top:16px;">
-      <button class="btn cancel" id="btnCloseStorage">關閉</button>
-    </div>
-  `;
-}
-function clearStorageCategory(key){
-  const labels = {map:'地圖現況', equip:'玩家裝備', inv:'團隊背包', shop:'商店卡片', skill:'技能卡總表', hand:'手牌卡總表', gm:'GM 移出區', taglib:'標籤庫'};
-  if(!confirm(`確定要清除「${labels[key]}」的資料嗎？此動作無法復原（除非你有備份存檔）。`)) return;
-  switch(key){
-    case 'map': state.entries = state.entries.filter(e=>e.cat!=='map'); break;
-    case 'equip': state.equipPlayers = []; state.playerAreaData = {}; break;
-    case 'inv': state.teamInventory = {photo:null, note:'', slots:[], slotData:{}, totalGold:0, playerGold:{}}; break;
-    case 'shop': state.shopCatalog = []; state.unlockedTiers = []; break;
-    case 'skill': state.skillCatalog = []; state.skillUnlocked = []; break;
-    case 'hand': state.handCatalog = []; state.handUnlocked = []; break;
-    case 'gm': state.removedTags = []; break;
-    case 'taglib': state.tagLibrary = []; break;
-  }
-  markDirty();
-  renderStorageOverlay();
-  if(activeCat === 'equip') renderPlayerList();
-  else if(activeCat === 'inv') renderInvView();
-  else if(activeCat === 'shop') renderShopView();
-  else if(activeCat === 'cards') renderCardsView();
-  else if(activeCat === 'gm') renderGMView();
-  else render();
-}
-$('#btnStorage').addEventListener('click', ()=>{ renderStorageOverlay(); $('#storageOverlay').classList.add('show'); });
-$('#storageBody').addEventListener('click', (ev)=>{
-  if(ev.target.closest('#btnCloseStorage')){ $('#storageOverlay').classList.remove('show'); return; }
-  const clearBtn = ev.target.closest('.sr-clear');
-  if(clearBtn){ clearStorageCategory(clearBtn.dataset.key); return; }
-});
-
-/* ---------------- Export / Import ---------------- */
-$('#btnExport').addEventListener('click', ()=>{
-  const payload = {
-    type: 'boardgame-save',
-    version: 9,
-    sessionName: $('#sessionName').value || '未命名場次',
-    savedAt: Date.now(),
-    entries: state.entries,
-    equipPlayers: state.equipPlayers,
-    subareaDefs: state.subareaDefs,
-    tagLibrary: state.tagLibrary,
-    playerAreaData: state.playerAreaData,
-    teamInventory: state.teamInventory,
-    shopCatalog: state.shopCatalog,
-    unlockedTiers: state.unlockedTiers,
-    skillCatalog: state.skillCatalog,
-    skillUnlocked: state.skillUnlocked,
-    handCatalog: state.handCatalog,
-    handUnlocked: state.handUnlocked,
-    removedTags: state.removedTags,
-  };
+function doExport(){
+  const payload = { type:'ttrpg-tracker-save', version:1, savedAt:Date.now(), ...captureSnapshot() };
   const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  const d = new Date();
-  const pad = n=>String(n).padStart(2,'0');
-  const fname = `${(payload.sessionName||'桌遊存檔').replace(/[\\/:*?"<>|]/g,'')}_${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.json`;
-  a.href = url; a.download = fname;
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-  markClean();
-  showToast('已匯出存檔檔案');
-});
-
-$('#btnImport').addEventListener('click', ()=> $('#importInput').click());
-$('#importInput').addEventListener('change', (e)=>{
-  const file = e.target.files[0];
-  if(!file) return;
+  const a = document.createElement('a'); const d=new Date(); const p=n=>String(n).padStart(2,'0');
+  a.href=url; a.download=`遊戲存檔_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.json`;
+  document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  markClean(); updateStatusHint(); showToast('已匯出存檔');
+}
+function onImportFile(e){
+  const file = e.target.files[0]; if(!file) return;
   const reader = new FileReader();
-  reader.onload = (ev)=>{
+  reader.onload = ev=>{
     try{
       const data = JSON.parse(ev.target.result);
-
-      if(data.type !== 'boardgame-save') throw new Error('not a save file');
-      const doProceed = (state.entries.length === 0 && state.equipPlayers.length === 0) || confirm('讀檔將會覆蓋目前尚未匯出的紀錄，確定要繼續嗎？');
-      if(!doProceed) return;
-
-      applySnapshot(data);
-      markClean();
-      showToast('讀檔成功，已還原紀錄');
-    } catch(err){
-      showToast('讀取失敗，請確認是正確的存檔檔案');
-    }
+      if(data.type!=='ttrpg-tracker-save') throw new Error('bad file');
+      const proceed = (!state.players.length && !state.shopCatalog.length) || confirm('讀檔會覆蓋目前尚未匯出的內容，確定要繼續嗎？');
+      if(!proceed) return;
+      applySnapshot(data); markClean(); updateStatusHint(); showToast('讀檔成功');
+    }catch(err){ showToast('讀取失敗，請確認是正確的存檔檔案'); }
   };
-  reader.readAsText(file);
-  e.target.value = '';
-});
+  reader.readAsText(file); e.target.value='';
+}
 
-$('#sessionName').addEventListener('input', markDirty);
-
-window.addEventListener('beforeunload', (e)=>{
-  if(!state.exported && (state.entries.length || state.equipPlayers.length)){
-    e.preventDefault(); e.returnValue = '';
-  }
-});
-
-/* ---------------- Undo / redo history ---------------- */
-let undoStack = [];
-let redoStack = [];
-let isRestoringHistory = false;
-let historyDebounceTimer = null;
-function captureFullSnapshot(){ return captureSnapshot(); }
+/* ============ Undo / redo ============ */
+let undoStack=[]; let redoStack=[]; let isRestoringHistory=false; let historyTimer=null;
 function scheduleHistoryPush(){
   if(isRestoringHistory) return;
-  clearTimeout(historyDebounceTimer);
-  historyDebounceTimer = setTimeout(()=>{
-    undoStack.push(JSON.stringify(captureFullSnapshot()));
-    if(undoStack.length > 30) undoStack.shift();
-    redoStack = [];
-    updateUndoRedoButtons();
-  }, 1200);
+  clearTimeout(historyTimer);
+  historyTimer = setTimeout(()=>{
+    undoStack.push(JSON.stringify(captureSnapshot()));
+    if(undoStack.length>30) undoStack.shift();
+    redoStack=[]; updateUndoRedoButtons();
+  }, 1000);
 }
-function updateUndoRedoButtons(){
-  $('#btnUndo').disabled = undoStack.length < 2;
-  $('#btnRedo').disabled = redoStack.length < 1;
-}
+function updateUndoRedoButtons(){ $('#btnUndo').disabled = undoStack.length<2; $('#btnRedo').disabled = redoStack.length<1; }
 function doUndo(){
-  if(undoStack.length < 2){ showToast('沒有更早的步驟了'); return; }
-  isRestoringHistory = true;
-  const current = undoStack.pop();
-  redoStack.push(current);
-  const prev = undoStack[undoStack.length-1];
-  applySnapshot(JSON.parse(prev));
-  isRestoringHistory = false;
-  updateUndoRedoButtons();
-  showToast('已回到上一步');
+  if(undoStack.length<2){ showToast('沒有更早的步驟了'); return; }
+  isRestoringHistory=true;
+  const cur = undoStack.pop(); redoStack.push(cur);
+  applySnapshot(JSON.parse(undoStack[undoStack.length-1]));
+  isRestoringHistory=false; updateUndoRedoButtons(); showToast('已回到上一步');
 }
 function doRedo(){
   if(!redoStack.length){ showToast('沒有下一步了'); return; }
-  isRestoringHistory = true;
-  const next = redoStack.pop();
-  undoStack.push(next);
+  isRestoringHistory=true;
+  const next = redoStack.pop(); undoStack.push(next);
   applySnapshot(JSON.parse(next));
-  isRestoringHistory = false;
-  updateUndoRedoButtons();
-  showToast('已重做');
+  isRestoringHistory=false; updateUndoRedoButtons(); showToast('已重做');
 }
 $('#btnUndo').addEventListener('click', doUndo);
 $('#btnRedo').addEventListener('click', doRedo);
 
-/* ---------------- Storage backend: native window.storage (in Claude) or localStorage fallback (standalone site) ---------------- */
-const hasNativeStorage = (typeof window.storage !== 'undefined') && window.storage && typeof window.storage.get === 'function';
-const appStorage = hasNativeStorage ? window.storage : {
-  async get(key){
-    const raw = localStorage.getItem('boardgame-save-tool-v1:'+key);
-    if(raw === null) throw new Error('not found');
-    return { key, value: raw };
-  },
-  async set(key, value){
-    localStorage.setItem('boardgame-save-tool-v1:'+key, value);
-    return { key, value };
-  },
-  async delete(key){
-    localStorage.removeItem('boardgame-save-tool-v1:'+key);
-    return { key, deleted:true };
-  },
-  async list(prefix){
-    const ids = [];
-    const fullPrefix = 'boardgame-save-tool-v1:' + (prefix||'');
-    for(let i=0;i<localStorage.length;i++){
-      const k = localStorage.key(i);
-      if(k && k.startsWith(fullPrefix)) ids.push(k.slice(fullPrefix.length));
-    }
-    return { keys: ids };
-  },
-};
-async function listPhotoIds(){
-  try{
-    const r = await appStorage.list('photo:');
-    const keys = (r && r.keys) ? r.keys : [];
-    return keys.map(k => k.startsWith('photo:') ? k.slice('photo:'.length) : k);
-  }catch(e){ return []; }
+/* ============ Persistence: per-photo storage, orphan pruning, quota checks ============ */
+let autoSaveTimer=null;
+function scheduleAutoSave(){ clearTimeout(autoSaveTimer); autoSaveTimer=setTimeout(flushAutoSaveNow, 700); }
+function flushAutoSaveNow(){ clearTimeout(autoSaveTimer); persistCurrentState(); }
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') flushAutoSaveNow(); });
+window.addEventListener('pagehide', flushAutoSaveNow);
+
+function stripPhotos(arr){ return arr.map(({photo,...r})=>r); }
+let persistedPhotoIds = new Set();
+async function forgetPhoto(id){ persistedPhotoIds.delete(id); try{ await appStorage.delete('photo:'+id, false); }catch(e){} }
+async function persistCatalogPhotos(arr){
+  let ok=true;
+  for(const it of arr){ if(!it.photo || persistedPhotoIds.has(it.id)) continue; try{ await appStorage.set('photo:'+it.id, it.photo, false); persistedPhotoIds.add(it.id); }catch(e){ ok=false; } }
+  return ok;
 }
 async function pruneOrphanedPhotos(){
-  const validIds = new Set([
-    ...state.shopCatalog.map(it=>it.id),
-    ...state.skillCatalog.map(it=>it.id),
-    ...state.handCatalog.map(it=>it.id),
-  ]);
-  const ids = await listPhotoIds();
-  for(const id of ids){
-    if(!validIds.has(id)){
-      try{ await appStorage.delete('photo:'+id); }catch(e){}
-      persistedPhotoIds.delete(id);
-    }
-  }
+  const validIds = new Set([...state.shopCatalog.map(i=>i.id), ...state.skillCatalog.map(i=>i.id), ...state.handCatalog.map(i=>i.id)]);
+  const ids = await listIds('photo:');
+  for(const id of ids){ if(!validIds.has(id)){ try{ await appStorage.delete('photo:'+id, false); }catch(e){} persistedPhotoIds.delete(id); } }
 }
-
-let autoSaveTimer = null;
-function scheduleAutoSave(){
-  clearTimeout(autoSaveTimer);
-  autoSaveTimer = setTimeout(flushAutoSaveNow, 700);
-}
-async function safeStorageGet(key){
-  try{
-    const r = await appStorage.get(key);
-    return r ? r.value : null;
-  }catch(e){ return null; }
-}
-function stripPhotos(catalogArr){
-  return catalogArr.map(({photo, ...rest}) => rest);
-}
-let persistedPhotoIds = new Set();
-async function forgetPhoto(id){
-  persistedPhotoIds.delete(id);
-  try{ await appStorage.delete("photo:"+id); }catch(e){ /* 沒存過就算了 */ }
-}
-async function persistCatalogPhotos(catalogArr){
-  let allOk = true;
-  for(const it of catalogArr){
-    if(!it.photo || persistedPhotoIds.has(it.id)) continue;
-    try{
-      await appStorage.set("photo:"+it.id, it.photo);
-      persistedPhotoIds.add(it.id);
-    }catch(e){
-      console.error('圖片保存失敗:'+it.id, e);
-      allOk = false;
-    }
-  }
-  return allOk;
+let lastQuotaWarnAt=0;
+function checkQuotaWarning(){
+  if(hasNativeStorage) return;
+  const ratio = estimateLocalUsage()/LOCAL_CAP; if(ratio<0.8) return;
+  const now=Date.now(); if(now-lastQuotaWarnAt<5*60*1000) return; lastQuotaWarnAt=now;
+  showToast(`⚠️ 裝置儲存空間約用了 ${Math.round(ratio*100)}%，建議盡快匯出備份並清除舊照片`);
 }
 async function persistCurrentState(){
   const snap = captureSnapshot();
   const { shopCatalog, skillCatalog, handCatalog, ...core } = snap;
-  const failedLabels = [];
-  const metaParts = [
-    ['state-core', core, '其他資料'],
-    ['state-shop', stripPhotos(shopCatalog), '商店品項總表'],
-    ['state-skill', stripPhotos(skillCatalog), '技能卡總表'],
-    ['state-hand', stripPhotos(handCatalog), '手牌卡總表'],
-  ];
-  for(const [key, val, label] of metaParts){
-    try{ await appStorage.set(key, JSON.stringify(val)); }
-    catch(e){ console.error('自動存檔失敗:'+key, e); failedLabels.push(label); }
-  }
-  const photoOk = await Promise.all([
-    persistCatalogPhotos(state.shopCatalog),
-    persistCatalogPhotos(state.skillCatalog),
-    persistCatalogPhotos(state.handCatalog),
-  ]);
-  if(photoOk.some(ok=>!ok)) failedLabels.push('卡牌圖片（單張過大）');
-  if(failedLabels.length){
-    showToast(`「${[...new Set(failedLabels)].join('、')}」自動保存失敗，建議到「📊」清除或先手動匯出備份`);
-  }
+  const fails=[];
+  const parts = [['core',core,'其他資料'],['shopmeta',stripPhotos(shopCatalog),'商店卡牌'],['skillmeta',stripPhotos(skillCatalog),'技能卡牌'],['handmeta',stripPhotos(handCatalog),'手牌']];
+  for(const [k,v,label] of parts){ try{ await appStorage.set(k, JSON.stringify(v), false); }catch(e){ fails.push(label); } }
+  const photoOk = await Promise.all([persistCatalogPhotos(state.shopCatalog), persistCatalogPhotos(state.skillCatalog), persistCatalogPhotos(state.handCatalog)]);
+  if(photoOk.some(o=>!o)) fails.push('卡牌圖片（單張過大）');
+  if(fails.length) showToast(`「${[...new Set(fails)].join('、')}」自動保存失敗，建議清除或先手動匯出備份`);
   await pruneOrphanedPhotos();
-  checkLocalStorageQuotaWarning();
+  checkQuotaWarning();
+  updateStatusHint();
 }
-let lastQuotaWarnAt = 0;
-function checkLocalStorageQuotaWarning(){
-  if(hasNativeStorage) return;
-  const ratio = estimateLocalStorageUsageBytes() / LOCAL_STORAGE_ASSUMED_CAP;
-  if(ratio < 0.8) return;
-  const now = Date.now();
-  if(now - lastQuotaWarnAt < 5 * 60 * 1000) return;
-  lastQuotaWarnAt = now;
-  showToast(`⚠️ 裝置儲存空間約用了 ${Math.round(ratio*100)}%，快滿了，建議盡快匯出備份並清除舊照片`);
-}
-function flushAutoSaveNow(){
-  clearTimeout(autoSaveTimer);
-  persistCurrentState();
-}
-document.addEventListener('visibilitychange', ()=>{
-  if(document.visibilityState === 'hidden') flushAutoSaveNow();
-});
-window.addEventListener('pagehide', flushAutoSaveNow);
+async function attachPhotos(arr){ await Promise.all(arr.map(async it=>{ const v=await safeGet('photo:'+it.id); if(v){ it.photo=v; persistedPhotoIds.add(it.id); } })); }
 
-async function attachPhotos(catalogArr){
-  await Promise.all(catalogArr.map(async (it)=>{
-    const val = await safeStorageGet('photo:'+it.id);
-    if(val){ it.photo = val; persistedPhotoIds.add(it.id); }
-  }));
-}
-
-async function cleanupLegacyStorage(){
-  try{ await appStorage.delete('current-state'); }catch(e){}
-  try{ await appStorage.delete('quicksaves'); }catch(e){}
-  if(!hasNativeStorage){
-    try{
-      const toRemove = [];
-      for(let i=0;i<localStorage.length;i++){
-        const k = localStorage.key(i);
-        if(k && k.startsWith('bgst:')) toRemove.push(k);
-      }
-      toRemove.forEach(k=>localStorage.removeItem(k));
-    }catch(e){}
-  }
-}
-
+/* ============ Boot ============ */
 async function initApp(){
   try{
-    const coreVal = await safeStorageGet('state-core');
-    let snap = null;
+    const coreVal = await safeGet('core');
     if(coreVal){
-      snap = JSON.parse(coreVal);
-      const shopVal = await safeStorageGet('state-shop');
-      const skillVal = await safeStorageGet('state-skill');
-      const handVal = await safeStorageGet('state-hand');
-      snap.shopCatalog = shopVal ? JSON.parse(shopVal) : [];
-      snap.skillCatalog = skillVal ? JSON.parse(skillVal) : [];
-      snap.handCatalog = handVal ? JSON.parse(handVal) : [];
-      await attachPhotos(snap.shopCatalog);
-      await attachPhotos(snap.skillCatalog);
-      await attachPhotos(snap.handCatalog);
-    } else {
-      const legacy = await safeStorageGet('current-state');
-      if(legacy) snap = JSON.parse(legacy);
+      const snap = JSON.parse(coreVal);
+      const shopMeta = await safeGet('shopmeta'); const skillMeta = await safeGet('skillmeta'); const handMeta = await safeGet('handmeta');
+      snap.shopCatalog = shopMeta?JSON.parse(shopMeta):[];
+      snap.skillCatalog = skillMeta?JSON.parse(skillMeta):[];
+      snap.handCatalog = handMeta?JSON.parse(handMeta):[];
+      await attachPhotos(snap.shopCatalog); await attachPhotos(snap.skillCatalog); await attachPhotos(snap.handCatalog);
+      applySnapshot(snap); markClean();
     }
-    if(snap){ applySnapshot(snap); markClean(); }
-  }catch(e){ /* 尚無存檔，從空白開始 */ }
-
-  await cleanupLegacyStorage();
-
-  undoStack = [JSON.stringify(captureFullSnapshot())];
-  redoStack = [];
-  updateUndoRedoButtons();
-
-  setActiveCat('map');
-  const cover = document.getElementById('loadingCover');
-  if(cover) cover.remove();
+  }catch(e){ /* 尚無存檔 */ }
+  undoStack=[JSON.stringify(captureSnapshot())]; redoStack=[]; updateUndoRedoButtons();
+  setActiveTab('battlefield');
+  updateGoldChip();
+  const cover=document.getElementById('loadingCover'); if(cover) cover.remove();
   pruneOrphanedPhotos();
+  if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
 }
 initApp();
 </script>
