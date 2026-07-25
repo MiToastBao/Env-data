@@ -184,7 +184,7 @@
   .sheet2-head{flex:0 0 auto; display:flex; justify-content:flex-end; padding:10px 12px 0;}
   .sheet2-close{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); width:38px; height:38px; border-radius:50%; font-size:17px;}
   .sheet2-scroll{flex:1 1 auto; overflow-y:auto; padding:0 16px calc(16px + var(--safe-b));}
-  .taglib-sticky{position:sticky; top:0; z-index:6; background:var(--panel); padding-top:4px; padding-bottom:8px;}
+  .taglib-sticky{background:var(--panel); padding-top:4px; padding-bottom:8px;}
   .sheet h3{font-family:Georgia,serif; margin:0 0 12px;}
   .picker-list{display:flex; flex-wrap:wrap; gap:8px;}
   .picker-btn{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); font-size:16.3px; padding:13px 16px; border-radius:10px; min-height:46px;}
@@ -265,7 +265,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.4.4';
+const APP_VERSION = '1.4.7';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -368,6 +368,35 @@ function addGlobalCategory(name){
   const cat = {id: name==='其他' ? 'other' : uid(), name};
   state.globalCategories.push(cat);
   return cat;
+}
+function deleteGlobalCategoryAndMigrate(catId){
+  const otherId = 'other';
+  let movedCount = 0;
+  state.players.forEach(p=>{
+    const src = p.equipData && p.equipData[catId];
+    if(src && src.tags && src.tags.length){
+      const dest = ensureCatData(p.equipData, otherId);
+      dest.tags = Array.from(new Set([...(dest.tags||[]), ...src.tags]));
+      movedCount += src.tags.length;
+    }
+    if(p.equipData) delete p.equipData[catId];
+  });
+  const srcTeam = state.teamInventory.catData && state.teamInventory.catData[catId];
+  if(srcTeam && srcTeam.tags && srcTeam.tags.length){
+    const dest = ensureCatData(state.teamInventory.catData, otherId);
+    dest.tags = Array.from(new Set([...(dest.tags||[]), ...srcTeam.tags]));
+    movedCount += srcTeam.tags.length;
+  }
+  if(state.teamInventory.catData) delete state.teamInventory.catData[catId];
+  const srcRemoved = state.teamInventory.removedCatData && state.teamInventory.removedCatData[catId];
+  if(srcRemoved && srcRemoved.cards && srcRemoved.cards.length){
+    const dest = ensureRemovedCatData(otherId);
+    dest.cards = [...(dest.cards||[]), ...srcRemoved.cards];
+    movedCount += srcRemoved.cards.length;
+  }
+  if(state.teamInventory.removedCatData) delete state.teamInventory.removedCatData[catId];
+  state.globalCategories = state.globalCategories.filter(c=>c.id!==catId);
+  return movedCount;
 }
 
 let state = {
@@ -682,7 +711,7 @@ function renderPlayers(){
   const wrap = $('#panel-players');
   const options = state.players.map(p=>`<option value="${p.id}" ${state.playerFilter===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
   const visible = state.playerFilter ? state.players.filter(p=>p.id===state.playerFilter) : state.players;
-  const jumpChips = state.players.length>2 ? `<div class="cat-tabs" style="position:sticky; top:0; z-index:5; background:var(--bg); padding:8px 0;">${state.players.map(p=>`<button class="cat-tab" data-jumpplayer="${p.id}">${escapeHtml(p.name)}</button>`).join('')}</div>` : '';
+  const jumpChips = state.players.length>2 ? `<div class="cat-tabs" style="background:var(--bg); padding:8px 0;">${state.players.map(p=>`<button class="cat-tab" data-jumpplayer="${p.id}">${escapeHtml(p.name)}</button>`).join('')}</div>` : '';
   wrap.innerHTML = `
     <div class="row" style="margin-bottom:12px;">
       <select id="playerFilterSel" class="grow" style="background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px; padding:12px; color:var(--ink); font-size:15px; min-height:44px;">
@@ -1339,7 +1368,7 @@ function renderGmShopSection(){
     </div>`;
   }).join('');
   return `
-    <button class="btn primary" data-addcard="shop" style="width:100%; margin-bottom:10px; position:sticky; top:0; z-index:5;">＋ 新增商品</button>
+    <button class="btn primary" data-addcard="shop" style="width:100%; margin-bottom:10px;">＋ 新增商品</button>
     <div class="hint" style="margin:0 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。同等級底下再依分類分組，各自可收合。</div>
     ${jumpChips}
     ${body || `<div class="hint">還沒有商品。</div>`}
@@ -1358,7 +1387,7 @@ function renderGmSchoolSection(kind){
     return `<div id="${anchorId(kind+'sch',sch)}" style="margin-bottom:16px; scroll-margin-top:64px;"><div class="hint" style="font-weight:700; color:var(--gm); margin-bottom:8px; font-size:15px;">${escapeHtml(sch)}</div>${lvHTML}</div>`;
   }).join('');
   return `
-    <button class="btn primary" data-addcard="${kind}" style="width:100%; margin-bottom:10px; position:sticky; top:0; z-index:5;">＋ 新增${kind==='skill'?'技能卡':'手牌'}</button>
+    <button class="btn primary" data-addcard="${kind}" style="width:100%; margin-bottom:10px;">＋ 新增${kind==='skill'?'技能卡':'手牌'}</button>
     <div class="hint" style="margin:0 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。</div>
     ${jumpChips}
     ${body || `<div class="hint">還沒有卡牌。</div>`}
@@ -1385,12 +1414,12 @@ function renderGmCategorySection(){
     <div class="cat-block">
       <div class="cat-head">
         <span class="cn gcat-rename" data-cid="${c.id}">${escapeHtml(c.name)} ✎</span>
-        <button class="del gcat-del" data-cid="${c.id}">刪除</button>
+        ${c.id==='other' ? '<span class="hint">（預設，不能刪除）</span>' : `<button class="del gcat-del" data-cid="${c.id}">刪除</button>`}
       </div>
     </div>`).join('');
   return `
-    <button class="btn primary" data-addgcat="1" style="width:100%; margin-bottom:10px; position:sticky; top:0; z-index:5;">＋ 新增分類</button>
-    <div class="hint" style="margin:0 0 12px;">這裡建立的分類，會自動套用到所有玩家的裝備區、團隊背包、卡牌移除區。物品移動到玩家/團隊背包時，只要分類名稱相符，就會自動歸位；找不到相符分類則歸到「其他」。</div>
+    <button class="btn primary" data-addgcat="1" style="width:100%; margin-bottom:10px;">＋ 新增分類</button>
+    <div class="hint" style="margin:0 0 12px;">這裡建立的分類，會自動套用到所有玩家的裝備區、團隊背包、卡牌移除區。物品移動到玩家/團隊背包時，只要分類名稱相符，就會自動歸位；找不到相符分類則歸到「其他」。刪除分類時，裡面原本的紀錄會自動改分類到「其他」，不會遺失。</div>
     ${rows}
   `;
 }
@@ -1420,9 +1449,13 @@ $('#panel-gm').addEventListener('click', ev=>{
   const gcatDel = ev.target.closest('.gcat-del');
   if(gcatDel){
     if(state.globalCategories.length<=1){ showToast('至少要保留一個分類'); return; }
-    if(confirm('確定要刪除這個分類嗎？裡面的標籤/紀錄仍會保留在資料裡，只是不會再顯示；如果之後想找回，需要重建同名分類。')){
-      state.globalCategories = state.globalCategories.filter(c=>c.id!==gcatDel.dataset.cid);
+    const cid = gcatDel.dataset.cid;
+    if(cid==='other'){ showToast('「其他」是預設分類，不能刪除（其他分類刪除時會歸到這裡）'); return; }
+    const cat = state.globalCategories.find(c=>c.id===cid);
+    if(confirm(`確定要刪除「${cat.name}」這個分類嗎？\n\n裡面原本歸在這個分類的標籤/紀錄（不管在哪位玩家、團隊背包、還是移除區）都會自動改分類到「其他」，不會遺失或憑空消失。`)){
+      const moved = deleteGlobalCategoryAndMigrate(cid);
       markDirty(); renderGM();
+      showToast(moved>0 ? `已刪除「${cat.name}」，${moved} 筆紀錄已改分類到「其他」` : `已刪除「${cat.name}」`);
     }
     return;
   }
@@ -1656,6 +1689,13 @@ function applySnapshot(snap){
 
   // ---- build/merge the global category list ----
   const nameToId = new Map();
+  // Seed from the snapshot's own category ids FIRST — reusing the existing,
+  // stable id is critical. Regenerating a fresh id here would silently orphan
+  // every tag already stored under the old id (this was a real bug).
+  (snap.globalCategories||[]).forEach(c=>{
+    let n = c.name; if(n==='其他分類') n='其他';
+    if(n && !nameToId.has(n)) nameToId.set(n, n==='其他' ? 'other' : c.id);
+  });
   function regName(name){
     if(!name) name='其他';
     if(name==='其他分類') name='其他';
@@ -1663,7 +1703,6 @@ function applySnapshot(snap){
     return nameToId.get(name);
   }
   regName('其他');
-  (snap.globalCategories||[]).forEach(c=>regName(c.name));
   (snap.players||[]).forEach(p=> (p.equipCats||[]).forEach(c=>regName(c.name)) );
   const oldTi = snap.teamInventory || {};
   (oldTi.cats||[]).forEach(c=>regName(c.name));
@@ -1714,7 +1753,58 @@ function applySnapshot(snap){
   state.skillCatalog = snap.skillCatalog || [];
   state.handCatalog = snap.handCatalog || [];
   state.tagLibrary = snap.tagLibrary || [];
+
+  const recovered = repairOrphanedCategoryData();
+  if(recovered > 0){
+    showToast(`⚠️ 偵測到 ${recovered} 筆之前分類異常消失的標籤，已自動救回並歸到「其他」分類，請手動核對重新分類`);
+  }
+
   rerenderActiveTab(); updateGoldChip();
+}
+function repairOrphanedCategoryData(){
+  const validIds = new Set(state.globalCategories.map(c=>c.id));
+  let recovered = 0;
+  state.players.forEach(p=>{
+    if(!p.equipData) return;
+    Object.keys(p.equipData).forEach(catId=>{
+      if(!validIds.has(catId)){
+        const orphan = p.equipData[catId];
+        if(orphan && orphan.tags && orphan.tags.length){
+          const dest = ensureCatData(p.equipData, 'other');
+          dest.tags = Array.from(new Set([...(dest.tags||[]), ...orphan.tags]));
+          recovered += orphan.tags.length;
+        }
+        delete p.equipData[catId];
+      }
+    });
+  });
+  if(state.teamInventory.catData){
+    Object.keys(state.teamInventory.catData).forEach(catId=>{
+      if(!validIds.has(catId)){
+        const orphan = state.teamInventory.catData[catId];
+        if(orphan && orphan.tags && orphan.tags.length){
+          const dest = ensureCatData(state.teamInventory.catData, 'other');
+          dest.tags = Array.from(new Set([...(dest.tags||[]), ...orphan.tags]));
+          recovered += orphan.tags.length;
+        }
+        delete state.teamInventory.catData[catId];
+      }
+    });
+  }
+  if(state.teamInventory.removedCatData){
+    Object.keys(state.teamInventory.removedCatData).forEach(catId=>{
+      if(!validIds.has(catId)){
+        const orphan = state.teamInventory.removedCatData[catId];
+        if(orphan && orphan.cards && orphan.cards.length){
+          const dest = ensureRemovedCatData('other');
+          dest.cards = [...(dest.cards||[]), ...orphan.cards];
+          recovered += orphan.cards.length;
+        }
+        delete state.teamInventory.removedCatData[catId];
+      }
+    });
+  }
+  return recovered;
 }
 /* ---------------- Excel bulk import (GM cards) ---------------- */
 function downloadExcelTemplate(){
