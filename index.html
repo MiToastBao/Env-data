@@ -265,7 +265,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.4.3';
+const APP_VERSION = '1.4.4';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -786,7 +786,7 @@ function setGoldExact(target, playerId){
 }
 
 $('#main').addEventListener('click', (ev)=>{
-  const secHead = ev.target.closest('.section-head');
+  const secHead = ev.target.closest('.section-head[data-sec]');
   if(secHead){ const id=secHead.dataset.sec; if(openSections.has(id)) openSections.delete(id); else openSections.add(id); rerenderActiveTab(); return; }
 
   const tcx = ev.target.closest('.tcx');
