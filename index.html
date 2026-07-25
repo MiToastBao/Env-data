@@ -244,7 +244,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.3.1';
+const APP_VERSION = '1.3.2';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -1209,7 +1209,7 @@ function catalogCardHTML(it, kind){
       <input type="text" class="gm-f gm-regroup" data-f="level" data-id="${it.id}" data-kind="${kind}" placeholder="等級" value="${escapeHtml(it.level||'')}">
       <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="${kind}" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">`;
   }
-  return `<div class="shop-card"><div class="gm-inputs">${fields}</div>${del}</div>`;
+  return `<div class="shop-card" id="cardrow-${it.id}" style="scroll-margin-top:64px;"><div class="gm-inputs">${fields}</div>${del}</div>`;
 }
 function renderGmShopSection(){
   const levels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
@@ -1252,6 +1252,14 @@ function addBlankCatalogItem(kind){
   else item = {id:uid(), name:'', school:'', level:'', cap:null};
   getCatalogArr(kind).push(item);
   markDirty(); renderGM();
+  requestAnimationFrame(()=>{
+    const el = document.getElementById('cardrow-'+item.id);
+    if(el){
+      el.scrollIntoView({behavior:'smooth', block:'center'});
+      const nameInput = el.querySelector('.gm-f[data-f="name"]');
+      if(nameInput) setTimeout(()=> nameInput.focus(), 250);
+    }
+  });
 }
 function renderGM(){
   const wrap = $('#panel-gm');
