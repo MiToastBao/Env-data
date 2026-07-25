@@ -37,13 +37,13 @@
   }
   #topbar .tb-btn{
     flex:0 0 auto; background:var(--panel-alt); border:1px solid var(--line); color:var(--ink);
-    border-radius:9px; padding:8px 11px; font-size:14px; display:flex; align-items:center; gap:4px;
+    border-radius:10px; padding:11px 14px; font-size:18px; display:flex; align-items:center; gap:4px; min-height:44px;
   }
   #topbar .tb-btn:disabled{opacity:0.35;}
-  #topbar .tb-title{flex:1; font-family:Georgia,serif; font-weight:700; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-dim);}
+  #topbar .tb-title{flex:1; font-family:Georgia,serif; font-weight:700; font-size:17.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-dim);}
   #goldChip{
     flex:0 0 auto; background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent);
-    border-radius:20px; padding:7px 12px; font-weight:700; font-size:13px; font-family:monospace;
+    border-radius:20px; padding:7px 12px; font-weight:700; font-size:16.3px; font-family:monospace;
   }
 
   /* ---- Main ---- */
@@ -58,8 +58,8 @@
   }
   #bottomnav button{
     flex:1 1 0; min-width:56px; background:none; border:none; color:var(--ink-dim);
-    display:flex; flex-direction:column; align-items:center; gap:3px; padding:9px 2px 7px;
-    font-size:10.5px; position:relative; white-space:nowrap;
+    display:flex; flex-direction:column; align-items:center; gap:4px; padding:11px 2px 9px; min-height:52px;
+    font-size:13.5px; position:relative; white-space:nowrap;
   }
   #bottomnav button .dot{width:5px;height:5px;border-radius:50%; background:currentColor; opacity:0.3;}
   #bottomnav button.active{color:var(--tabc, var(--accent));}
@@ -67,92 +67,94 @@
   #bottomnav button.active::before{content:""; position:absolute; top:0; left:22%; right:22%; height:2px; background:var(--tabc, var(--accent));}
 
   /* ---- Generic bits ---- */
-  .hint{font-size:11.5px; color:var(--ink-dim); line-height:1.5;}
+  .hint{font-size:14.6px; color:var(--ink-dim); line-height:1.5;}
   .empty{text-align:center; padding:40px 16px; color:var(--ink-dim);}
-  .empty .glyph{font-size:26px; margin-bottom:8px; opacity:.6;}
+  .empty .glyph{font-size:31.7px; margin-bottom:8px; opacity:.6;}
   .field{margin-bottom:12px;}
-  .field label{display:block; font-size:11px; color:var(--ink-dim); margin-bottom:5px; font-weight:600;}
+  .field label{display:block; font-size:14px; color:var(--ink-dim); margin-bottom:5px; font-weight:600;}
   .field input[type=text], .field input[type=number], .field textarea, .field select{
     width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px;
-    padding:9px 10px; color:var(--ink); font-size:13.5px; outline:none;
+    padding:12px 12px; color:var(--ink); font-size:16.9px; outline:none; min-height:44px;
   }
   .field textarea{min-height:64px; resize:vertical; line-height:1.5;}
-  .btn{border:none; border-radius:9px; padding:10px; font-size:13px; font-weight:600;}
+  .btn{border:none; border-radius:10px; padding:13px 12px; font-size:16.3px; font-weight:600; min-height:44px;}
   .btn.primary{background:var(--accent); color:#171D18;}
   .btn.ghost{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink);}
   .btn.danger{background:none; border:1px solid var(--danger); color:var(--danger);}
-  .btn.sm{padding:7px 10px; font-size:11.5px;}
+  .btn.sm{padding:7px 10px; font-size:14.6px;}
   .row{display:flex; gap:8px; flex-wrap:wrap;}
   .grow{flex:1;}
 
   /* ---- Collapsible section ---- */
   .section{border:1px solid var(--line); border-radius:12px; margin-bottom:12px; overflow:hidden; background:var(--panel);}
   .section-head{width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; padding:12px 13px; text-align:left;}
-  .section-head .st{font-family:Georgia,serif; font-weight:700; font-size:14px;}
-  .section-head .sc{color:var(--ink-dim); font-size:11px;}
+  .section-head .st{font-family:Georgia,serif; font-weight:700; font-size:17.5px;}
+  .section-head .sc{color:var(--ink-dim); font-size:14px;}
   .section-body{padding:12px; background:var(--panel-alt); display:none;}
   .section.open .section-body{display:block;}
   .section.open .chev{transform:rotate(90deg);}
-  .chev{transition:transform .15s; color:var(--ink-dim); font-size:11px;}
+  .chev{transition:transform .15s; color:var(--ink-dim); font-size:14px;}
 
   /* ---- Photo grid (battlefield / player / catalog thumbs) ---- */
   .photo-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; margin-bottom:10px;}
   .photo-item{position:relative; border-radius:9px; overflow:hidden; background:var(--panel-alt2); border:1px solid var(--line);}
   .photo-item img{width:100%; aspect-ratio:4/3; object-fit:cover; display:block; cursor:pointer;}
-  .photo-item .pi-del{position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; background:rgba(10,13,10,0.75); border:none; color:var(--ink); font-size:11px;}
+  .photo-item .pi-del{position:absolute; top:4px; right:4px; width:30px; height:30px; border-radius:50%; background:rgba(10,13,10,0.8); border:none; color:var(--ink); font-size:16px;}
   .photo-add-row{display:flex; gap:8px; margin-bottom:10px;}
   .photo-add-row label{
     flex:1; text-align:center; background:var(--panel-alt2); border:1px dashed var(--line); color:var(--ink-dim);
-    border-radius:9px; padding:10px; font-size:12px;
+    border-radius:9px; padding:14px; font-size:15.2px; min-height:44px;
   }
+  .bf-photo-card{margin-bottom:16px;}
+  .bf-photo-card img{width:100%; max-height:65vh; object-fit:contain; background:#000; border-radius:12px; border:1px solid var(--line); display:block; cursor:pointer;}
 
   /* ---- Tag chips / fields ---- */
   .tagfield{margin-bottom:6px;}
   .tag-chips{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:7px;}
-  .tag-chip{display:inline-flex; align-items:center; gap:5px; background:var(--accent-soft); border:1px solid rgba(201,154,60,.4); color:var(--accent); font-size:12px; padding:5px 5px 5px 10px; border-radius:16px;}
+  .tag-chip{display:inline-flex; align-items:center; gap:5px; background:var(--accent-soft); border:1px solid rgba(201,154,60,.4); color:var(--accent); font-size:15.2px; padding:5px 5px 5px 10px; border-radius:16px;}
   .tag-chip .tcn{cursor:pointer;}
-  .tag-chip .tcx{background:none; border:none; color:var(--accent); opacity:.7; font-size:12px; padding:0 3px;}
-  .tag-empty{font-size:11.5px; color:var(--ink-dim); font-style:italic;}
+  .tag-chip .tcx{background:none; border:none; color:var(--accent); opacity:.7; font-size:17px; padding:4px 6px; min-width:28px; min-height:28px;}
+  .tag-empty{font-size:14.6px; color:var(--ink-dim); font-style:italic;}
   .tag-add-row{display:flex; gap:6px;}
-  .tag-add-row input{flex:1; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px; padding:7px 9px; color:var(--ink); font-size:12.5px; outline:none;}
-  .tag-add-row button{background:var(--accent); color:#171D18; border:none; border-radius:7px; padding:0 12px; font-size:12px; font-weight:700;}
+  .tag-add-row input{flex:1; background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px; padding:10px 11px; color:var(--ink); font-size:15.8px; outline:none; min-height:44px;}
+  .tag-add-row button{background:var(--accent); color:#171D18; border:none; border-radius:8px; padding:0 16px; font-size:15.2px; font-weight:700; min-height:44px;}
   .tag-suggest{display:flex; flex-wrap:wrap; gap:5px; margin-top:6px;}
-  .tag-suggest span{background:var(--panel); border:1px dashed var(--line); color:var(--ink-dim); font-size:11px; padding:3px 9px; border-radius:14px;}
+  .tag-suggest span{background:var(--panel); border:1px dashed var(--line); color:var(--ink-dim); font-size:14px; padding:3px 9px; border-radius:14px;}
   .cat-block{background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:9px;}
   .cat-head{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
-  .cat-head .cn{font-weight:600; font-size:12.5px; flex:1; cursor:pointer;}
-  .cat-head button{background:none; border:none; color:var(--ink-dim); font-size:11px;}
+  .cat-head .cn{font-weight:600; font-size:15.8px; flex:1; cursor:pointer;}
+  .cat-head button{background:none; border:none; color:var(--ink-dim); font-size:14px;}
   .cat-head button.del{color:var(--danger);}
-  .add-cat-btn{width:100%; background:none; border:1px dashed var(--line); color:var(--ink-dim); border-radius:9px; padding:9px; font-size:12px;}
+  .add-cat-btn{width:100%; background:none; border:1px dashed var(--line); color:var(--ink-dim); border-radius:9px; padding:9px; font-size:15.2px;}
 
   /* ---- Player card ---- */
   .player-card{border:1px solid var(--line); border-left:3px solid var(--equip); border-radius:12px; margin-bottom:12px; overflow:hidden; background:var(--panel);}
   .player-head{width:100%; display:flex; align-items:center; gap:8px; background:none; border:none; padding:12px; text-align:left;}
-  .player-head .pn{font-family:Georgia,serif; font-weight:700; font-size:14.5px; flex:1;}
+  .player-head .pn{font-family:Georgia,serif; font-weight:700; font-size:18.1px; flex:1;}
   .player-body{display:none; padding:12px; background:var(--panel-alt);}
   .player-card.open .player-body{display:block;}
   .player-card.open .chev{transform:rotate(90deg);}
   .gold-row{display:flex; align-items:center; justify-content:space-between; padding:8px 2px; border-bottom:1px solid var(--line);}
   .gold-row:last-child{border-bottom:none;}
   .gold-stepper{display:flex; align-items:center; gap:5px;}
-  .gold-btn{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); border-radius:7px; padding:5px 8px; font-size:11px; font-family:monospace;}
-  .gold-num{font-family:monospace; font-size:14px; min-width:38px; text-align:center; font-weight:700; color:var(--inv); cursor:pointer;}
+  .gold-btn{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); border-radius:8px; padding:10px 12px; font-size:15px; font-family:monospace; min-height:40px;}
+  .gold-num{font-family:monospace; font-size:17.5px; min-width:38px; text-align:center; font-weight:700; color:var(--inv); cursor:pointer;}
 
   /* ---- Shop / catalog cards ---- */
   .shop-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px;}
   .shop-card{background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--shop); border-radius:11px; padding:9px; display:flex; flex-direction:column; gap:7px;}
   .shop-card-photo{position:relative; width:100%; aspect-ratio:3/4; border-radius:8px; overflow:hidden; background:var(--panel-alt2);}
   .shop-card-photo img{width:100%; height:100%; object-fit:cover; cursor:pointer;}
-  .shop-no-photo{width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-size:10px;}
-  .shop-name{font-size:12px; font-weight:700; text-align:center;}
-  .shop-badge{align-self:center; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:10px; padding:2px 8px; border-radius:10px;}
+  .shop-no-photo{width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-size:12.8px;}
+  .shop-name{font-size:15.2px; font-weight:700; text-align:center;}
+  .shop-badge{align-self:center; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:12.8px; padding:2px 8px; border-radius:10px;}
   .shop-actions{display:flex; gap:6px;}
-  .shop-actions button{flex:1; border-radius:7px; padding:8px; font-size:11.5px; font-weight:700; border:none;}
+  .shop-actions button{flex:1; border-radius:7px; padding:8px; font-size:14.6px; font-weight:700; border:none;}
   .shop-buy{background:var(--shop); color:#171D18;}
   .shop-buy:disabled{background:var(--panel-alt2); color:var(--ink-dim); font-weight:500;}
-  .gm-inputs input, .gm-inputs select{width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px; padding:6px 8px; color:var(--ink); font-size:11.5px; outline:none; margin-bottom:5px;}
-  .gm-del{position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; background:rgba(10,13,10,0.75); border:none; color:var(--ink); font-size:11px;}
-  .level-check{display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; margin-bottom:8px;}
+  .gm-inputs input, .gm-inputs select{width:100%; background:var(--panel-alt2); border:1px solid var(--line); border-radius:7px; padding:6px 8px; color:var(--ink); font-size:14.6px; outline:none; margin-bottom:5px;}
+  .gm-del{position:absolute; top:4px; right:4px; width:30px; height:30px; border-radius:50%; background:rgba(10,13,10,0.8); border:none; color:var(--ink); font-size:16px;}
+  .level-check{display:flex; align-items:center; gap:6px; font-size:15.2px; font-weight:700; margin-bottom:8px;}
   .level-check input{width:16px; height:16px; accent-color:var(--shop);}
 
   /* ---- Overlay / sheet ---- */
@@ -161,34 +163,34 @@
   .sheet{background:var(--panel); width:100%; max-width:640px; border-radius:18px 18px 0 0; padding:16px 16px calc(16px + var(--safe-b)); max-height:88vh; overflow-y:auto;}
   .sheet h3{font-family:Georgia,serif; margin:0 0 12px;}
   .picker-list{display:flex; flex-wrap:wrap; gap:8px;}
-  .picker-btn{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); font-size:13px; padding:9px 14px; border-radius:10px;}
+  .picker-btn{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink); font-size:16.3px; padding:13px 16px; border-radius:10px; min-height:46px;}
 
   #lightbox{position:fixed; inset:0; background:rgba(6,8,6,.92); z-index:80; display:none; align-items:center; justify-content:center; padding:20px;}
   #lightbox.show{display:flex;}
   #lightbox img{max-width:100%; max-height:100%; border-radius:8px;}
 
-  .toast{position:fixed; bottom:calc(72px + var(--safe-b)); left:50%; transform:translateX(-50%); background:var(--panel-alt2); border:1px solid var(--accent); color:var(--ink); padding:9px 16px; border-radius:20px; font-size:12.5px; z-index:90; opacity:0; pointer-events:none; transition:opacity .25s; max-width:88vw; text-align:center;}
+  .toast{position:fixed; bottom:calc(72px + var(--safe-b)); left:50%; transform:translateX(-50%); background:var(--panel-alt2); border:1px solid var(--accent); color:var(--ink); padding:9px 16px; border-radius:20px; font-size:15.8px; z-index:90; opacity:0; pointer-events:none; transition:opacity .25s; max-width:88vw; text-align:center;}
   .toast.show{opacity:1;}
 
-  #loadingCover{position:fixed; inset:0; background:var(--bg); z-index:999; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-family:monospace; font-size:13px;}
+  #loadingCover{position:fixed; inset:0; background:var(--bg); z-index:999; display:flex; align-items:center; justify-content:center; color:var(--ink-dim); font-family:monospace; font-size:16.3px;}
 
   .taglib-item{padding:10px 4px; border-bottom:1px solid var(--line);}
   .ti-top{display:flex; align-items:center; justify-content:space-between; gap:8px;}
-  .ti-name{font-size:13.5px; font-weight:700;}
+  .ti-name{font-size:16.9px; font-weight:700;}
   .ti-bottom{display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;}
-  .ti-badge{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:10.5px; padding:3px 8px; border-radius:10px;}
-  .ti-action{background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); font-size:10.5px; padding:3px 9px; border-radius:10px; font-weight:700;}
-  .ti-del{background:none; border:none; color:var(--danger); font-size:11px;}
+  .ti-badge{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:13.4px; padding:3px 8px; border-radius:10px;}
+  .ti-action{background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); font-size:13.4px; padding:3px 9px; border-radius:10px; font-weight:700;}
+  .ti-del{background:none; border:none; color:var(--danger); font-size:15px; padding:6px 8px; min-height:32px;}
   .cat-tabs{display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px;}
-  .cat-tab{flex-shrink:0; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:11.5px; padding:6px 11px; border-radius:14px; white-space:nowrap;}
+  .cat-tab{flex-shrink:0; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:14.6px; padding:10px 15px; border-radius:16px; white-space:nowrap; min-height:40px;}
   .cat-tab.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:700;}
 
-  .quota-row{display:flex; justify-content:space-between; align-items:center; font-size:11.5px; margin-bottom:5px; gap:8px;}
+  .quota-row{display:flex; justify-content:space-between; align-items:center; font-size:14.6px; margin-bottom:5px; gap:8px;}
   .quota-bar{height:7px; border-radius:4px; background:var(--panel-alt2); overflow:hidden;}
   .quota-bar-fill{height:100%; border-radius:4px; transition:width .3s;}
   .storage-row{display:flex; align-items:center; gap:8px; padding:8px 2px; border-bottom:1px solid var(--line);}
-  .storage-row .lbl{flex:1; font-size:12.5px;}
-  .storage-row .sz{font-family:monospace; font-size:11px; color:var(--ink-dim);}
+  .storage-row .lbl{flex:1; font-size:15.8px;}
+  .storage-row .sz{font-family:monospace; font-size:14px; color:var(--ink-dim);}
 </style>
 </head>
 <body>
@@ -232,6 +234,50 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
+const APP_VERSION = '1.1.0';
+let latestKnownVersion = null;
+async function checkForUpdate(showNoUpdateToast){
+  try{
+    const resp = await fetch('./version.json?t=' + Date.now(), { cache: 'no-store' });
+    if(!resp.ok) throw new Error('no version.json');
+    const data = await resp.json();
+    latestKnownVersion = data.version;
+    updateSystemVersionUI();
+    if(data.version !== APP_VERSION){
+      showToast(`⬆️ 發現新版本 v${data.version}（目前 v${APP_VERSION}），請到「系統」分頁更新`);
+      return true;
+    } else if(showNoUpdateToast){
+      showToast('已經是最新版本');
+    }
+    return false;
+  }catch(e){
+    if(showNoUpdateToast) showToast('離線中，無法檢查更新');
+    return false;
+  }
+}
+function updateSystemVersionUI(){
+  const el = $('#versionInfo');
+  if(!el) return;
+  const upToDate = latestKnownVersion===null || latestKnownVersion===APP_VERSION;
+  el.innerHTML = upToDate
+    ? `目前版本：v${APP_VERSION}（已是最新）`
+    : `目前版本：v${APP_VERSION} · <span style="color:var(--danger); font-weight:700;">發現新版本 v${latestKnownVersion}</span>`;
+}
+async function forceUpdateNow(){
+  showToast('更新中…');
+  try{
+    if('serviceWorker' in navigator){
+      const regs = await navigator.serviceWorker.getRegistrations();
+      for(const r of regs) await r.unregister();
+    }
+    if(window.caches){
+      const names = await caches.keys();
+      await Promise.all(names.map(n=>caches.delete(n)));
+    }
+  }catch(e){}
+  location.reload();
+}
+
 const $$ = s => Array.from(document.querySelectorAll(s));
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -388,17 +434,15 @@ function renderBattlefield(){
   wrap.innerHTML = `
     <div class="section open">
       <div class="section-body" style="display:block;">
-        ${bf.photos.length ? `<div class="photo-grid">${bf.photos.map(ph=>`
-          <div class="photo-item">
+        ${bf.photos.length ? bf.photos.map(ph=>`
+          <div class="bf-photo-card">
             <img src="${ph.photo}" data-id="${ph.id}" class="bf-photo">
-            <button class="pi-del" data-id="${ph.id}">✕</button>
-          </div>`).join('')}</div>` : `<div class="empty"><div class="glyph">◌</div><p>還沒有戰場照片。</p></div>`}
+            <button class="btn danger sm bf-photo-del" data-id="${ph.id}" style="width:100%; margin-top:8px;">🗑 刪除這張照片</button>
+          </div>`).join('') : `<div class="empty"><div class="glyph">◌</div><p>還沒有戰場照片。</p></div>`}
         ${bf.photos.length < 5 ? `
         <div class="photo-add-row">
-          <label for="bfCamera">📷 拍照</label>
-          <label for="bfFile">🖼 選圖</label>
+          <label for="bfFile">📷 新增照片</label>
         </div>
-        <input type="file" id="bfCamera" accept="image/*" capture="environment">
         <input type="file" id="bfFile" accept="image/*">` : `<div class="hint">已達 5 張上限，刪除舊照片才能再新增。</div>`}
         <div class="field" style="margin-top:10px;">
           <label>備註</label>
@@ -411,11 +455,10 @@ function renderBattlefield(){
     bf.photos.push({id:uid(), photo:url, ts:Date.now()});
     markDirty(); renderBattlefield();
   }, 1400, 0.8);
-  $('#bfCamera') && $('#bfCamera').addEventListener('change', e=> addPhoto(e.target.files[0]));
   $('#bfFile') && $('#bfFile').addEventListener('change', e=> addPhoto(e.target.files[0]));
   $('#bfNote').addEventListener('input', e=>{ bf.note=e.target.value; markDirty(); });
   wrap.querySelectorAll('.bf-photo').forEach(img=> img.addEventListener('click', ()=> openLightbox(img.src)));
-  wrap.querySelectorAll('.pi-del').forEach(btn=> btn.addEventListener('click', ()=>{
+  wrap.querySelectorAll('.bf-photo-del').forEach(btn=> btn.addEventListener('click', ()=>{
     if(confirm('確定要刪除這張照片嗎？')){
       bf.photos = bf.photos.filter(p=>p.id!==btn.dataset.id);
       markDirty(); renderBattlefield();
@@ -485,7 +528,7 @@ function playerCardHTML(p){
       ${tagFieldHTML(`player:${p.id}:equip:${c.id}`, c.tags, c.name)}
     </div>`).join('');
   return `
-  <div class="player-card ${p.collapsed?'':'open'}" data-pid="${p.id}">
+  <div class="player-card ${p.collapsed?'':'open'}" data-pid="${p.id}" id="pcard-${p.id}" style="scroll-margin-top:64px;">
     <button class="player-head" data-toggle-player="${p.id}">
       <span class="pn">${escapeHtml(p.name)}</span>
       <span class="chev">▸</span>
@@ -493,7 +536,7 @@ function playerCardHTML(p){
     <div class="player-body">
       <div class="field"><input type="text" class="p-name-input" data-pid="${p.id}" value="${escapeHtml(p.name)}" placeholder="玩家名稱"></div>
       ${p.photos.length ? `<div class="photo-grid">${p.photos.map(ph=>`<div class="photo-item"><img src="${ph.photo}" class="p-photo" data-pid="${p.id}"><button class="pi-del p-photo-del" data-pid="${p.id}" data-phid="${ph.id}">✕</button></div>`).join('')}</div>` : ''}
-      ${p.photos.length<2 ? `<div class="photo-add-row"><label for="pPhotoCam-${p.id}">📷 拍照</label><label for="pPhotoFile-${p.id}">🖼 選圖</label></div><input type="file" id="pPhotoCam-${p.id}" class="p-photo-cam" data-pid="${p.id}" accept="image/*" capture="environment"><input type="file" id="pPhotoFile-${p.id}" class="p-photo-file" data-pid="${p.id}" accept="image/*">` : '<div class="hint" style="margin-bottom:8px;">已達 2 張上限。</div>'}
+      ${p.photos.length<2 ? `<div class="photo-add-row"><label for="pPhotoFile-${p.id}">📷 新增照片</label></div><input type="file" id="pPhotoFile-${p.id}" class="p-photo-file" data-pid="${p.id}" accept="image/*">` : '<div class="hint" style="margin-bottom:8px;">已達 2 張上限。</div>'}
       <div class="field"><label>照片備註</label><textarea class="p-note" data-pid="${p.id}" placeholder="針對照片的說明…">${escapeHtml(p.note||'')}</textarea></div>
 
       <div class="cat-block">
@@ -519,14 +562,16 @@ function renderPlayers(){
   const wrap = $('#panel-players');
   const options = state.players.map(p=>`<option value="${p.id}" ${state.playerFilter===p.id?'selected':''}>${escapeHtml(p.name)}</option>`).join('');
   const visible = state.playerFilter ? state.players.filter(p=>p.id===state.playerFilter) : state.players;
+  const jumpChips = state.players.length>2 ? `<div class="cat-tabs" style="position:sticky; top:0; z-index:5; background:var(--bg); padding:8px 0;">${state.players.map(p=>`<button class="cat-tab" data-jumpplayer="${p.id}">${escapeHtml(p.name)}</button>`).join('')}</div>` : '';
   wrap.innerHTML = `
     <div class="row" style="margin-bottom:12px;">
-      <select id="playerFilterSel" class="grow" style="background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px; padding:9px; color:var(--ink); font-size:13px;">
+      <select id="playerFilterSel" class="grow" style="background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px; padding:12px; color:var(--ink); font-size:15px; min-height:44px;">
         <option value="">— 顯示全部玩家 —</option>
         ${options}
       </select>
       <button class="btn primary" id="btnAddPlayer">＋ 新增玩家</button>
     </div>
+    ${jumpChips}
     ${visible.length ? visible.map(playerCardHTML).join('') : `<div class="empty"><div class="glyph">◌</div><p>還沒有玩家。</p></div>`}
   `;
   $('#playerFilterSel').addEventListener('change', e=>{ state.playerFilter = e.target.value || null; renderPlayers(); });
@@ -534,6 +579,14 @@ function renderPlayers(){
     const name = prompt('玩家名稱：'); if(!name||!name.trim()) return;
     state.players.push(newPlayer(name.trim())); markDirty(); renderPlayers();
   });
+  wrap.querySelectorAll('[data-jumpplayer]').forEach(btn=> btn.addEventListener('click', ()=>{
+    const p = state.players.find(x=>x.id===btn.dataset.jumpplayer);
+    if(!p) return;
+    state.playerFilter = null;
+    p.collapsed = false;
+    renderPlayers();
+    requestAnimationFrame(()=>{ const el=document.getElementById('pcard-'+p.id); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); });
+  }));
 }
 RENDER_FN.players = renderPlayers;
 
@@ -829,8 +882,7 @@ function shopCardHTML(it){
   const canBuy = !outOfStock && canAfford;
   return `
   <div class="shop-card" data-id="${it.id}">
-    <div class="shop-card-photo">${it.photo?`<img src="${it.photo}" class="shop-photo" data-id="${it.id}">`:`<div class="shop-no-photo">無照片</div>`}</div>
-    <div class="shop-name">${escapeHtml(it.name||'未命名')}</div>
+    <div class="shop-name" style="font-size:16px; padding:4px 0;">${escapeHtml(it.name||'未命名')}</div>
     <div class="shop-badge">${it.level?`Lv${escapeHtml(it.level)} · `:''}${it.price||0}💰${avail!=null?` · 剩${avail}`:''}</div>
     <div class="shop-actions"><button class="shop-buy" data-buy="${it.id}" ${canBuy?'':'disabled'}>${outOfStock?'已達上限':(!canAfford?'金庫不足':'購買')}</button></div>
   </div>`;
@@ -1001,8 +1053,9 @@ function syncCatalogItemToLibrary(kind, item){
   const category = kind==='shop' ? (item.category||'') : (kind==='skill'?'技能':'手牌');
   upsertTagLibrary(item.name, category, item.level||'', kind==='shop'?'':(item.school||''), item.cap);
 }
+function anchorId(prefix, key){ return 'anchor-'+prefix+'-'+encodeURIComponent(String(key)).replace(/[%.]/g,'_'); }
 function catalogCardHTML(it, kind){
-  const del = `<button class="gm-del" data-delcard="${it.id}" data-kind="${kind}">✕</button>`;
+  const del = `<button class="btn danger sm gm-del-btn" data-delcard="${it.id}" data-kind="${kind}" style="width:100%; margin-top:6px;">🗑 刪除這張卡</button>`;
   let fields;
   if(kind==='shop'){
     fields = `
@@ -1018,55 +1071,49 @@ function catalogCardHTML(it, kind){
       <input type="text" class="gm-f gm-regroup" data-f="level" data-id="${it.id}" data-kind="${kind}" placeholder="等級" value="${escapeHtml(it.level||'')}">
       <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="${kind}" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">`;
   }
-  return `<div class="shop-card" style="position:relative;"><div class="shop-card-photo">${it.photo?`<img src="${it.photo}" class="shop-photo" data-id="${it.id}">`:`<div class="shop-no-photo">無照片</div>`}${del}</div><div class="gm-inputs">${fields}</div></div>`;
+  return `<div class="shop-card"><div class="gm-inputs">${fields}</div>${del}</div>`;
 }
 function renderGmShopSection(){
   const levels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
+  const jumpChips = levels.length>3 ? `<div class="cat-tabs">${levels.map(lv=>`<button class="cat-tab" data-scrollto="${anchorId('shoplvl',lv)}">${escapeHtml(lv)}</button>`).join('')}</div>` : '';
   const body = levels.map(lv=>{
     const items = state.shopCatalog.filter(it=>(it.level||'未分級')===lv);
     const isNone = lv==='未分級';
     const unlocked = isNone ? true : state.shopUnlockedLevels.includes(lv);
-    return `<div style="margin-bottom:16px;"><div class="level-check"><input type="checkbox" class="lvl-check" data-lvl="${escapeHtml(lv)}" ${unlocked?'checked':''} ${isNone?'disabled':''}><span>${escapeHtml(lv)}${isNone?'（永遠開放）':''}（${items.length}）</span></div><div class="shop-grid">${items.map(it=>catalogCardHTML(it,'shop')).join('')}</div></div>`;
+    return `<div id="${anchorId('shoplvl',lv)}" style="margin-bottom:16px; scroll-margin-top:64px;"><div class="level-check"><input type="checkbox" class="lvl-check" data-lvl="${escapeHtml(lv)}" ${unlocked?'checked':''} ${isNone?'disabled':''}><span>${escapeHtml(lv)}${isNone?'（永遠開放）':''}（${items.length}）</span></div><div class="shop-grid">${items.map(it=>catalogCardHTML(it,'shop')).join('')}</div></div>`;
   }).join('');
   return `
-    <div class="photo-add-row"><label for="shopUpload">📥 新增商品照片（可多選）</label></div>
-    <input type="file" id="shopUpload" accept="image/*" multiple>
-    <div class="hint" style="margin:8px 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。</div>
+    <button class="btn primary" data-addcard="shop" style="width:100%; margin-bottom:10px;">＋ 新增商品</button>
+    <div class="hint" style="margin:0 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。</div>
+    ${jumpChips}
     ${body || `<div class="hint">還沒有商品。</div>`}
   `;
 }
 function renderGmSchoolSection(kind){
   const catalog = getCatalogArr(kind);
   const schools = Array.from(new Set(catalog.map(it=>it.school||'未分類')));
+  const jumpChips = schools.length>3 ? `<div class="cat-tabs">${schools.map(s=>`<button class="cat-tab" data-scrollto="${anchorId(kind+'sch',s)}">${escapeHtml(s)}</button>`).join('')}</div>` : '';
   const body = schools.map(sch=>{
     const levels = Array.from(new Set(catalog.filter(it=>(it.school||'未分類')===sch).map(it=>it.level||'未分級')));
     const lvHTML = levels.map(lv=>{
       const items = catalog.filter(it=>(it.school||'未分類')===sch && (it.level||'未分級')===lv);
       return `<div style="margin-bottom:10px;"><div class="hint" style="font-weight:700; margin-bottom:6px;">${escapeHtml(lv)}（${items.length}）</div><div class="shop-grid">${items.map(it=>catalogCardHTML(it,kind)).join('')}</div></div>`;
     }).join('');
-    return `<div style="margin-bottom:16px;"><div class="hint" style="font-weight:700; color:var(--gm); margin-bottom:8px; font-size:13px;">${escapeHtml(sch)}</div>${lvHTML}</div>`;
+    return `<div id="${anchorId(kind+'sch',sch)}" style="margin-bottom:16px; scroll-margin-top:64px;"><div class="hint" style="font-weight:700; color:var(--gm); margin-bottom:8px; font-size:15px;">${escapeHtml(sch)}</div>${lvHTML}</div>`;
   }).join('');
-  const uploadId = kind+'Upload';
   return `
-    <div class="photo-add-row"><label for="${uploadId}">📥 新增${kind==='skill'?'技能':'手牌'}卡照片（可多選）</label></div>
-    <input type="file" id="${uploadId}" accept="image/*" multiple>
-    <div class="hint" style="margin:8px 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。</div>
+    <button class="btn primary" data-addcard="${kind}" style="width:100%; margin-bottom:10px;">＋ 新增${kind==='skill'?'技能卡':'手牌'}</button>
+    <div class="hint" style="margin:0 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。</div>
+    ${jumpChips}
     ${body || `<div class="hint">還沒有卡牌。</div>`}
   `;
 }
-function handleCatalogUpload(kind, fileList){
-  const files = Array.from(fileList||[]); if(!files.length) return;
-  let remaining = files.length;
-  files.forEach(file=>{
-    compressImage(file, url=>{
-      let item;
-      if(kind==='shop') item = {id:uid(), photo:url, name:'', category:'', level:'', price:0, cap:null};
-      else item = {id:uid(), photo:url, name:'', school:'', level:'', cap:null};
-      getCatalogArr(kind).push(item);
-      remaining--;
-      if(remaining===0){ markDirty(); renderGM(); }
-    }, 1200, 0.82);
-  });
+function addBlankCatalogItem(kind){
+  let item;
+  if(kind==='shop') item = {id:uid(), name:'', category:'', level:'', price:0, cap:null};
+  else item = {id:uid(), name:'', school:'', level:'', cap:null};
+  getCatalogArr(kind).push(item);
+  markDirty(); renderGM();
 }
 function renderGM(){
   const wrap = $('#panel-gm');
@@ -1080,9 +1127,6 @@ function renderGM(){
     ${sectionHTML('gm:skill', `✨ 技能卡牌管理（${state.skillCatalog.length}）`, renderGmSchoolSection('skill'))}
     ${sectionHTML('gm:hand', `🃏 手牌管理（${state.handCatalog.length}）`, renderGmSchoolSection('hand'))}
   `;
-  $('#shopUpload') && $('#shopUpload').addEventListener('change', e=> handleCatalogUpload('shop', e.target.files));
-  $('#skillUpload') && $('#skillUpload').addEventListener('change', e=> handleCatalogUpload('skill', e.target.files));
-  $('#handUpload') && $('#handUpload').addEventListener('change', e=> handleCatalogUpload('hand', e.target.files));
 }
 RENDER_FN.gm = renderGM;
 $('#panel-gm').addEventListener('click', ev=>{
@@ -1092,15 +1136,16 @@ $('#panel-gm').addEventListener('click', ev=>{
     requestAnimationFrame(()=>{ const el=document.querySelector(`[data-sec="${jump.dataset.jump}"]`); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); });
     return;
   }
-  const photo = ev.target.closest('.shop-photo');
-  if(photo){ openLightbox(photo.src); return; }
+  const scrollBtn = ev.target.closest('[data-scrollto]');
+  if(scrollBtn){ const el=document.getElementById(scrollBtn.dataset.scrollto); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); return; }
+  const addCard = ev.target.closest('[data-addcard]');
+  if(addCard){ addBlankCatalogItem(addCard.dataset.addcard); return; }
   const delCard = ev.target.closest('[data-delcard]');
   if(delCard){
     const kind = delCard.dataset.kind;
     if(confirm('確定要刪除這張卡牌嗎？')){
       const arr = getCatalogArr(kind).filter(x=>x.id!==delCard.dataset.delcard);
       if(kind==='shop') state.shopCatalog=arr; else if(kind==='skill') state.skillCatalog=arr; else state.handCatalog=arr;
-      forgetPhoto(delCard.dataset.delcard);
       markDirty(); renderGM();
     }
     return;
@@ -1163,6 +1208,11 @@ function renderSystem(){
   })() : '';
   wrap.innerHTML = `
     <div class="section open"><div class="section-body" style="display:block;">
+      <div class="hint" id="versionInfo" style="margin-bottom:10px; font-weight:600;">目前版本：v${APP_VERSION}</div>
+      <div class="row" style="margin-bottom:12px;">
+        <button class="btn ghost grow" id="btnCheckUpdate">🔄 檢查更新</button>
+        <button class="btn danger grow" id="btnForceUpdate">⬇️ 立即更新到最新版</button>
+      </div>
       <div class="row">
         <button class="btn primary grow" id="btnExport">📤 匯出存檔</button>
         <button class="btn ghost grow" id="btnImport">📥 匯入讀檔</button>
@@ -1179,7 +1229,12 @@ function renderSystem(){
   $('#btnExport').addEventListener('click', doExport);
   $('#btnImport').addEventListener('click', ()=> $('#importInput').click());
   $('#importInput').addEventListener('change', onImportFile);
+  $('#btnCheckUpdate').addEventListener('click', ()=> checkForUpdate(true));
+  $('#btnForceUpdate').addEventListener('click', ()=>{
+    if(confirm('確定要更新嗎？更新過程會重新整理頁面（不會影響你已經自動保存的存檔資料）。')) forceUpdateNow();
+  });
   updateStatusHint();
+  updateSystemVersionUI();
 }
 RENDER_FN.system = renderSystem;
 $('#panel-system').addEventListener('click', ev=>{
@@ -1335,7 +1390,26 @@ async function initApp(){
   updateGoldChip();
   const cover=document.getElementById('loadingCover'); if(cover) cover.remove();
   pruneOrphanedPhotos();
-  if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.register('sw.js').then(reg=>{
+      reg.addEventListener('updatefound', ()=>{
+        const nw = reg.installing;
+        if(!nw) return;
+        nw.addEventListener('statechange', ()=>{
+          if(nw.state==='installed' && navigator.serviceWorker.controller) checkForUpdate(false);
+        });
+      });
+    }).catch(()=>{});
+  }
+  checkForUpdate(false);
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState==='visible'){
+      checkForUpdate(false);
+      if('serviceWorker' in navigator && navigator.serviceWorker.getRegistration){
+        navigator.serviceWorker.getRegistration().then(reg=> reg && reg.update());
+      }
+    }
+  });
 }
 initApp();
 </script>
