@@ -265,7 +265,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -1541,8 +1541,9 @@ function renderSystem(){
     </div></div>
     ${sectionHTML('sys:excel', '📊 Excel 批次匯入卡牌（GM區）', `
       <div class="hint" style="margin-bottom:10px;">一次匯入商店卡、技能卡、手牌，欄位如下（第一列要是標題）：<br>
-      <span class="mono" style="font-size:11px;">類型｜名稱｜分類｜流派角色｜等級｜價格｜數量上限｜連動另一面名稱</span><br><br>
-      「類型」填「商店」「技能」或「手牌」；「分類」只有商店卡需要（例如武器）；「流派角色」只有技能/手牌需要（技能填流派、手牌填角色/總名稱）；「連動另一面名稱」選填，填另一張卡的名稱就會自動建立雙面卡連動。匯入後會自動同步進標籤庫。</div>
+      <span class="mono" style="font-size:11px;">類型｜名稱｜分類｜流派角色｜等級｜價格｜數量上限｜連動另一面名稱｜連動另一面分類</span><br><br>
+      「類型」填「商店」「技能」或「手牌」；「分類」只有商店卡需要（例如武器）；「流派角色」只有技能/手牌需要（技能填流派、手牌填角色/總名稱）。<br><br>
+      雙面卡只需要填「正面」那一列：把背面的名稱填在「連動另一面名稱」、背面的分類填在「連動另一面分類」，系統會自動幫你建立背面那張卡並完成連動（跟 GM 區手動新增時的「背面名稱/背面分類」欄位邏輯一樣）。匯入後會自動同步進標籤庫。</div>
       <div class="row">
         <button class="btn ghost grow" id="btnExcelTemplate">⬇️ 下載範例試算表</button>
         <button class="btn primary grow" id="btnExcelImport">📥 選擇檔案匯入</button>
@@ -1717,11 +1718,10 @@ function applySnapshot(snap){
 /* ---------------- Excel bulk import (GM cards) ---------------- */
 function downloadExcelTemplate(){
   const rows = [
-    ['類型','名稱','分類','流派角色','等級','價格','數量上限','連動另一面名稱'],
-    ['商店','飛彈魔杖','武器','','日常等級','50','1','神奇護甲'],
-    ['商店','神奇護甲','護甲','','日常等級','','',''],
-    ['技能','火球術','','火系流派','1','','3',''],
-    ['手牌','揮劍攻擊','','戰士','1','','2',''],
+    ['類型','名稱','分類','流派角色','等級','價格','數量上限','連動另一面名稱','連動另一面分類'],
+    ['商店','飛彈魔杖','武器','','日常等級','50','1','神奇護甲','護甲'],
+    ['技能','火球術','','火系流派','1','','3','',''],
+    ['手牌','揮劍攻擊','','戰士','1','','2','',''],
   ];
   const csv = rows.map(r=>r.map(cell=>{
     const s = String(cell);
@@ -1747,7 +1747,7 @@ function ensureXLSXLoaded(){
 }
 function parseExcelRows(rows){
   const added = {shop:0, skill:0, hand:0};
-  const linkPending = [];
+  const linkedRows = [];
   rows.forEach(row=>{
     const type = String(row['類型']||'').trim();
     const name = String(row['名稱']||'').trim();
@@ -1756,6 +1756,7 @@ function parseExcelRows(rows){
     const capRaw = row['數量上限'];
     const cap = (capRaw===undefined || capRaw==='' || capRaw===null) ? null : Math.max(0, parseInt(capRaw,10)||0);
     const backName = String(row['連動另一面名稱']||'').trim();
+    const backCategory = String(row['連動另一面分類']||'').trim();
     let kind;
     if(type==='商店') kind='shop';
     else if(type==='技能') kind='skill';
@@ -1776,18 +1777,11 @@ function parseExcelRows(rows){
       else { item.school = school||item.school; item.level = level||item.level; if(cap!=null) item.cap=cap; }
     }
     syncCatalogItemToLibrary(kind, item);
-    if(backName) linkPending.push({kind, name, backName});
+    if(backName){ item.backName = backName; item.backCategory = backCategory; linkedRows.push({kind, item}); }
   });
-  linkPending.forEach(({kind,name,backName})=>{
-    const arr = getCatalogArr(kind);
-    const a = arr.find(x=>x.name===name);
-    const b = arr.find(x=>x.name===backName);
-    if(a && b){
-      if(!a.linkedNames) a.linkedNames=[]; if(!a.linkedNames.includes(backName)) a.linkedNames.push(backName);
-      if(!b.linkedNames) b.linkedNames=[]; if(!b.linkedNames.includes(name)) b.linkedNames.push(name);
-      syncCatalogItemToLibrary(kind, a); syncCatalogItemToLibrary(kind, b);
-    }
-  });
+  // second pass: create/update counterparts now that all explicit rows exist,
+  // reusing the same logic as the GM in-app "背面名稱/背面分類" fields
+  linkedRows.forEach(({kind, item}) => { syncLinkedCounterpart(kind, item); });
   return added;
 }
 async function handleExcelImport(file){
