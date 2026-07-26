@@ -71,6 +71,11 @@
     width:56px; height:56px; border-radius:50%; background:var(--gm); color:#171D18; border:none;
     font-size:28px; line-height:1; box-shadow:0 6px 18px rgba(0,0,0,.45);
   }
+  #navFab{
+    display:none; position:fixed; left:16px; bottom:calc(78px + var(--safe-b)); z-index:30;
+    width:56px; height:56px; border-radius:50%; background:var(--accent); color:#171D18; border:none;
+    font-size:24px; line-height:1; box-shadow:0 6px 18px rgba(0,0,0,.45);
+  }
   #bottomnav{
     flex:0 0 auto; display:flex; overflow-x:auto; background:rgba(23,29,24,0.97);
     border-top:1px solid var(--line); padding-bottom:var(--safe-b); -webkit-overflow-scrolling:touch;
@@ -240,6 +245,14 @@
   </div>
 
   <button id="gmFab" title="新增卡牌">＋</button>
+  <button id="navFab" title="篩選／跳轉">🧭</button>
+
+  <div class="overlay" id="navOverlay">
+    <div class="sheet2">
+      <div class="sheet2-head"><button class="sheet2-close" id="navCloseX">✕</button></div>
+      <div class="sheet2-scroll" id="navBody"></div>
+    </div>
+  </div>
 
   <nav id="bottomnav">
     <button data-tab="battlefield" class="active" style="--tabc:var(--map)"><span class="dot"></span>戰場</button>
@@ -265,7 +278,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.5.3';
+const APP_VERSION = '1.6.1';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -579,6 +592,10 @@ function setActiveTab(tab){
   $('#gmFab').style.display = (tab==='gm') ? 'flex' : 'none';
   $('#gmFab').style.alignItems = 'center';
   $('#gmFab').style.justifyContent = 'center';
+  const navTabs = ['players','shop','gm'];
+  $('#navFab').style.display = navTabs.includes(tab) ? 'flex' : 'none';
+  $('#navFab').style.alignItems = 'center';
+  $('#navFab').style.justifyContent = 'center';
   if(RENDER_FN[tab]) RENDER_FN[tab]();
 }
 $$('#bottomnav button').forEach(b=> b.addEventListener('click', ()=> setActiveTab(b.dataset.tab)));
@@ -1397,6 +1414,15 @@ function syncLinkedCounterpart(kind, item){
   return counterpart;
 }
 function anchorId(prefix, key){ return 'anchor-'+prefix+'-'+encodeURIComponent(String(key)).replace(/[%.]/g,'_'); }
+function linkStatusHTML(it, kind){
+  const backName = (it.backName||'').trim();
+  if(!backName) return '';
+  const isLinked = it.linkedNames && it.linkedNames.includes(backName);
+  if(isLinked){
+    return `<div class="hint" style="color:var(--danger);">✅ 已連動：${escapeHtml(backName)}</div>`;
+  }
+  return `<div class="hint" style="color:var(--shop); font-weight:700;">⚠️ 連動尚未建立</div><button class="btn ghost sm gm-force-link" data-id="${it.id}" data-kind="${kind}" style="width:100%; margin-top:4px;">🔗 立即建立連動</button>`;
+}
 function catalogCardHTML(it, kind){
   const del = `<button class="btn danger sm gm-del-btn" data-delcard="${it.id}" data-kind="${kind}" style="width:100%; margin-top:6px;">🗑 刪除這張卡</button>`;
   let fields;
@@ -1411,7 +1437,7 @@ function catalogCardHTML(it, kind){
       <div class="hint" style="margin:8px 0 4px; font-weight:700; color:var(--danger);">🔗 雙面卡（選填，正反面共用同一份庫存上限）</div>
       <input type="text" class="gm-f gm-link" data-f="backName" data-id="${it.id}" data-kind="shop" placeholder="背面名稱，例如 神奇護甲" value="${escapeHtml(it.backName||'')}">
       <input type="text" class="gm-f gm-link" data-f="backCategory" data-id="${it.id}" data-kind="shop" placeholder="背面分類，例如 護甲" value="${escapeHtml(it.backCategory||'')}">
-      ${(it.linkedNames&&it.linkedNames.length) ? `<div class="hint" style="color:var(--danger);">已連動：${it.linkedNames.map(escapeHtml).join('、')}</div>` : ''}`;
+      ${linkStatusHTML(it, kind)}`;
   } else {
     fields = `
       <input type="text" class="gm-f" data-f="name" data-id="${it.id}" data-kind="${kind}" placeholder="卡牌名稱" value="${escapeHtml(it.name)}">
@@ -1420,7 +1446,7 @@ function catalogCardHTML(it, kind){
       <input type="number" class="gm-f" data-f="cap" data-id="${it.id}" data-kind="${kind}" placeholder="數量上限（留空無限）" value="${it.cap==null?'':it.cap}" min="0">
       <div class="hint" style="margin:8px 0 4px; font-weight:700; color:var(--danger);">🔗 雙面卡（選填，共用同一份庫存上限）</div>
       <input type="text" class="gm-f gm-link" data-f="backName" data-id="${it.id}" data-kind="${kind}" placeholder="另一面名稱" value="${escapeHtml(it.backName||'')}">
-      ${(it.linkedNames&&it.linkedNames.length) ? `<div class="hint" style="color:var(--danger);">已連動：${it.linkedNames.map(escapeHtml).join('、')}</div>` : ''}`;
+      ${linkStatusHTML(it, kind)}`;
   }
   return `<div class="shop-card" id="cardrow-${it.id}" style="scroll-margin-top:64px;"><div class="gm-inputs">${fields}</div>${del}</div>`;
 }
@@ -1430,13 +1456,16 @@ function subSectionHTML(id, title, bodyHtml){
   return `<div class="section ${closed?'':'open'}" style="background:var(--panel-alt2);"><button class="section-head" data-subsec="${id}"><span class="st" style="font-size:14.5px;">${title}</span><span class="chev">▸</span></button><div class="section-body">${bodyHtml}</div></div>`;
 }
 function renderGmShopSection(){
-  const levels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
-  const jumpChips = levels.length>3 ? `<div class="cat-tabs">${levels.map(lv=>`<button class="cat-tab" data-scrollto="${anchorId('shoplvl',lv)}">${escapeHtml(lv)}</button>`).join('')}</div>` : '';
+  const allLevels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
+  const levels = (gmShopFilter && gmShopFilter.level) ? allLevels.filter(lv=>lv===gmShopFilter.level) : allLevels;
+  const jumpChips = allLevels.length>3 ? `<div class="cat-tabs">${allLevels.map(lv=>`<button class="cat-tab" data-scrollto="${anchorId('shoplvl',lv)}">${escapeHtml(lv)}</button>`).join('')}</div>` : '';
+  const filterNote = gmShopFilter ? `<div class="hint" style="color:var(--accent); margin-bottom:10px; font-weight:700;">🔍 篩選中：${gmShopFilter.level?escapeHtml(gmShopFilter.level):'全部等級'} / ${gmShopFilter.category?escapeHtml(gmShopFilter.category):'全部分類'}（點左下角🧭可清除）</div>` : '';
   const body = levels.map(lv=>{
     const itemsInLevel = state.shopCatalog.filter(it=>(it.level||'未分級')===lv);
     const isNone = lv==='未分級';
     const unlocked = isNone ? true : state.shopUnlockedLevels.includes(lv);
-    const cats = Array.from(new Set(itemsInLevel.map(it=>it.category||'未分類')));
+    const allCats = Array.from(new Set(itemsInLevel.map(it=>it.category||'未分類')));
+    const cats = (gmShopFilter && gmShopFilter.category) ? allCats.filter(c=>c===gmShopFilter.category) : allCats;
     const catBody = cats.map(cat=>{
       const items = itemsInLevel.filter(it=>(it.category||'未分類')===cat);
       return subSectionHTML('gmshop:'+lv+':'+cat, `${cat}（${items.length}）`, `<div class="shop-grid">${items.map(it=>catalogCardHTML(it,'shop')).join('')}</div>`);
@@ -1448,17 +1477,22 @@ function renderGmShopSection(){
   }).join('');
   return `
     <button class="btn primary" data-addcard="shop" style="width:100%; margin-bottom:10px;">＋ 新增商品</button>
-    <div class="hint" style="margin:0 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。同等級底下再依分類分組，各自可收合。</div>
+    <div class="hint" style="margin:0 0 12px;">設定名稱、分類、等級、價格、數量上限後會自動加進標籤庫；勾選等級即可開放到「商店系統」分頁（沒填等級的商品永遠開放）。同等級底下再依分類分組，各自可收合。點畫面左下角的 🧭 可以篩選只看特定等級+分類的組合，不用一直捲動。</div>
+    ${filterNote}
     ${jumpChips}
     ${body || `<div class="hint">還沒有商品。</div>`}
   `;
 }
 function renderGmSchoolSection(kind){
   const catalog = getCatalogArr(kind);
-  const schools = Array.from(new Set(catalog.map(it=>it.school||'未分類')));
-  const jumpChips = schools.length>3 ? `<div class="cat-tabs">${schools.map(s=>`<button class="cat-tab" data-scrollto="${anchorId(kind+'sch',s)}">${escapeHtml(s)}</button>`).join('')}</div>` : '';
+  const filter = gmSchoolFilter[kind];
+  const allSchools = Array.from(new Set(catalog.map(it=>it.school||'未分類')));
+  const schools = (filter && filter.school) ? allSchools.filter(s=>s===filter.school) : allSchools;
+  const jumpChips = allSchools.length>3 ? `<div class="cat-tabs">${allSchools.map(s=>`<button class="cat-tab" data-scrollto="${anchorId(kind+'sch',s)}">${escapeHtml(s)}</button>`).join('')}</div>` : '';
+  const filterNote = filter ? `<div class="hint" style="color:var(--accent); margin-bottom:10px; font-weight:700;">🔍 篩選中：${filter.school?escapeHtml(filter.school):'全部'} / ${filter.level?escapeHtml(filter.level):'全部等級'}（點左下角🧭可清除）</div>` : '';
   const body = schools.map(sch=>{
-    const levels = Array.from(new Set(catalog.filter(it=>(it.school||'未分類')===sch).map(it=>it.level||'未分級')));
+    const allLevels = Array.from(new Set(catalog.filter(it=>(it.school||'未分類')===sch).map(it=>it.level||'未分級')));
+    const levels = (filter && filter.level) ? allLevels.filter(lv=>lv===filter.level) : allLevels;
     const lvHTML = levels.map(lv=>{
       const items = catalog.filter(it=>(it.school||'未分類')===sch && (it.level||'未分級')===lv);
       return subSectionHTML(kind+'lv:'+sch+':'+lv, `${lv}（${items.length}）`, `<div class="shop-grid">${items.map(it=>catalogCardHTML(it,kind)).join('')}</div>`);
@@ -1467,7 +1501,8 @@ function renderGmSchoolSection(kind){
   }).join('');
   return `
     <button class="btn primary" data-addcard="${kind}" style="width:100%; margin-bottom:10px;">＋ 新增${kind==='skill'?'技能卡':'手牌'}</button>
-    <div class="hint" style="margin:0 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。同流派/角色底下再依等級分組，各自可收合，跟商店卡牌管理一樣。</div>
+    <div class="hint" style="margin:0 0 12px;">先填${kind==='skill'?'流派':'角色/總名稱'}與等級，設定名稱與數量上限後會自動加進標籤庫（分類為「${kind==='skill'?'技能':'手牌'}」）。同流派/角色底下再依等級分組，各自可收合，跟商店卡牌管理一樣。點畫面左下角的 🧭 可以篩選只看特定組合。</div>
+    ${filterNote}
     ${jumpChips}
     ${body || `<div class="hint">還沒有卡牌。</div>`}
   `;
@@ -1502,6 +1537,101 @@ function renderGmCategorySection(){
     ${rows}
   `;
 }
+let gmShopFilter = null; // {level, category} - either can be null meaning "any"
+let gmSchoolFilter = { skill:null, hand:null }; // each: {school, level} or null
+function openNavOverlay(){ renderNavOverlay(); $('#navOverlay').classList.add('show'); }
+function closeNavOverlay(){ $('#navOverlay').classList.remove('show'); }
+$('#navFab').addEventListener('click', openNavOverlay);
+$('#navCloseX').addEventListener('click', closeNavOverlay);
+$('#navOverlay').addEventListener('click', ev=>{ if(ev.target.id==='navOverlay') closeNavOverlay(); });
+function renderNavOverlay(){
+  const body = $('#navBody');
+  if(activeTab==='players'){
+    body.innerHTML = `
+      <h3>跳轉／篩選玩家</h3>
+      <div class="picker-list">
+        <button class="picker-btn" data-navplayerall="1">顯示全部</button>
+        ${state.players.map(p=>`<button class="picker-btn" data-navplayer="${p.id}">${escapeHtml(p.name)}</button>`).join('')}
+      </div>
+      ${!state.players.length ? `<div class="hint" style="margin-top:10px;">還沒有玩家。</div>` : ''}
+    `;
+  } else if(activeTab==='shop'){
+    const items = visibleShopItems();
+    const levels = Array.from(new Set(items.map(it=>it.level||'（無等級）')));
+    const cats = Array.from(new Set(items.filter(it=> !shopLevelFilter || (it.level||'（無等級）')===shopLevelFilter).map(it=>it.category||'未分類')));
+    body.innerHTML = `
+      <h3>篩選商店</h3>
+      <div class="hint" style="margin-bottom:6px; font-weight:700;">等級</div>
+      <div class="picker-list" style="margin-bottom:14px;">
+        <button class="picker-btn" data-navshoplvl="">全部等級</button>
+        ${levels.map(lv=>`<button class="picker-btn" data-navshoplvl="${escapeHtml(lv)}">${escapeHtml(lv)}</button>`).join('')}
+      </div>
+      <div class="hint" style="margin-bottom:6px; font-weight:700;">分類</div>
+      <div class="picker-list">
+        <button class="picker-btn" data-navshopcat="">全部分類</button>
+        ${cats.map(c=>`<button class="picker-btn" data-navshopcat="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('')}
+      </div>
+    `;
+  } else if(activeTab==='gm'){
+    const shopLevels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
+    const shopCats = Array.from(new Set(state.shopCatalog.filter(it=> !gmShopFilter||!gmShopFilter.level || (it.level||'未分級')===gmShopFilter.level).map(it=>it.category||'未分類')));
+    const skillSchools = Array.from(new Set(state.skillCatalog.map(it=>it.school||'未分類')));
+    const skillLevels = Array.from(new Set(state.skillCatalog.filter(it=> !gmSchoolFilter.skill||!gmSchoolFilter.skill.school || (it.school||'未分類')===gmSchoolFilter.skill.school).map(it=>it.level||'未分級')));
+    const handSchools = Array.from(new Set(state.handCatalog.map(it=>it.school||'未分類')));
+    const handLevels = Array.from(new Set(state.handCatalog.filter(it=> !gmSchoolFilter.hand||!gmSchoolFilter.hand.school || (it.school||'未分類')===gmSchoolFilter.hand.school).map(it=>it.level||'未分級')));
+    body.innerHTML = `
+      <h3>🏪 商店卡牌：篩選／跳轉</h3>
+      <div class="hint" style="margin-bottom:6px; font-weight:700;">等級</div>
+      <div class="picker-list" style="margin-bottom:10px;">${shopLevels.map(lv=>`<button class="picker-btn" data-gmnav="shoplvl" data-val="${escapeHtml(lv)}">${gmShopFilter&&gmShopFilter.level===lv?'✓ ':''}${escapeHtml(lv)}</button>`).join('')}</div>
+      <div class="hint" style="margin-bottom:6px; font-weight:700;">分類</div>
+      <div class="picker-list" style="margin-bottom:10px;">${shopCats.map(c=>`<button class="picker-btn" data-gmnav="shopcat" data-val="${escapeHtml(c)}">${gmShopFilter&&gmShopFilter.category===c?'✓ ':''}${escapeHtml(c)}</button>`).join('')}</div>
+      ${gmShopFilter ? `<button class="btn ghost sm" data-gmnav="shopclear" style="width:100%; margin-bottom:18px;">✕ 清除商店篩選</button>` : '<div style="margin-bottom:18px;"></div>'}
+
+      <h3>✨ 技能卡：篩選／跳轉</h3>
+      <div class="hint" style="margin-bottom:6px; font-weight:700;">流派</div>
+      <div class="picker-list" style="margin-bottom:10px;">${skillSchools.map(s=>`<button class="picker-btn" data-gmnav="skillsch" data-val="${escapeHtml(s)}">${gmSchoolFilter.skill&&gmSchoolFilter.skill.school===s?'✓ ':''}${escapeHtml(s)}</button>`).join('')}</div>
+      <div class="hint" style="margin-bottom:6px; font-weight:700;">等級</div>
+      <div class="picker-list" style="margin-bottom:10px;">${skillLevels.map(lv=>`<button class="picker-btn" data-gmnav="skilllv" data-val="${escapeHtml(lv)}">${gmSchoolFilter.skill&&gmSchoolFilter.skill.level===lv?'✓ ':''}${escapeHtml(lv)}</button>`).join('')}</div>
+      ${gmSchoolFilter.skill ? `<button class="btn ghost sm" data-gmnav="skillclear" style="width:100%; margin-bottom:18px;">✕ 清除技能篩選</button>` : '<div style="margin-bottom:18px;"></div>'}
+
+      <h3>🃏 手牌：篩選／跳轉</h3>
+      <div class="hint" style="margin-bottom:6px; font-weight:700;">角色/總名稱</div>
+      <div class="picker-list" style="margin-bottom:10px;">${handSchools.map(s=>`<button class="picker-btn" data-gmnav="handsch" data-val="${escapeHtml(s)}">${gmSchoolFilter.hand&&gmSchoolFilter.hand.school===s?'✓ ':''}${escapeHtml(s)}</button>`).join('')}</div>
+      <div class="hint" style="margin-bottom:6px; font-weight:700;">等級</div>
+      <div class="picker-list" style="margin-bottom:10px;">${handLevels.map(lv=>`<button class="picker-btn" data-gmnav="handlv" data-val="${escapeHtml(lv)}">${gmSchoolFilter.hand&&gmSchoolFilter.hand.level===lv?'✓ ':''}${escapeHtml(lv)}</button>`).join('')}</div>
+      ${gmSchoolFilter.hand ? `<button class="btn ghost sm" data-gmnav="handclear" style="width:100%;">✕ 清除手牌篩選</button>` : ''}
+    `;
+  }
+}
+$('#navBody').addEventListener('click', ev=>{
+  const navPlayerAll = ev.target.closest('[data-navplayerall]');
+  if(navPlayerAll){ state.playerFilter=null; renderPlayers(); closeNavOverlay(); return; }
+  const navPlayer = ev.target.closest('[data-navplayer]');
+  if(navPlayer){
+    const p = state.players.find(x=>x.id===navPlayer.dataset.navplayer);
+    if(p){ state.playerFilter=null; p.collapsed=false; renderPlayers(); closeNavOverlay(); requestAnimationFrame(()=>{ const el=document.getElementById('pcard-'+p.id); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); }); }
+    return;
+  }
+  const navShopLvl = ev.target.closest('[data-navshoplvl]');
+  if(navShopLvl){ shopLevelFilter = navShopLvl.dataset.navshoplvl; shopCatFilter=''; renderShop(); renderNavOverlay(); return; }
+  const navShopCat = ev.target.closest('[data-navshopcat]');
+  if(navShopCat){ shopCatFilter = navShopCat.dataset.navshopcat; renderShop(); renderNavOverlay(); return; }
+  const gmNav = ev.target.closest('[data-gmnav]');
+  if(gmNav){
+    const kind = gmNav.dataset.gmnav, val = gmNav.dataset.val;
+    if(kind==='shoplvl'){ gmShopFilter = {level:val, category:(gmShopFilter&&gmShopFilter.category)||null}; }
+    else if(kind==='shopcat'){ gmShopFilter = {level:(gmShopFilter&&gmShopFilter.level)||null, category:val}; }
+    else if(kind==='shopclear'){ gmShopFilter = null; }
+    else if(kind==='skillsch'){ gmSchoolFilter.skill = {school:val, level:(gmSchoolFilter.skill&&gmSchoolFilter.skill.level)||null}; }
+    else if(kind==='skilllv'){ gmSchoolFilter.skill = {school:(gmSchoolFilter.skill&&gmSchoolFilter.skill.school)||null, level:val}; }
+    else if(kind==='skillclear'){ gmSchoolFilter.skill = null; }
+    else if(kind==='handsch'){ gmSchoolFilter.hand = {school:val, level:(gmSchoolFilter.hand&&gmSchoolFilter.hand.level)||null}; }
+    else if(kind==='handlv'){ gmSchoolFilter.hand = {school:(gmSchoolFilter.hand&&gmSchoolFilter.hand.school)||null, level:val}; }
+    else if(kind==='handclear'){ gmSchoolFilter.hand = null; }
+    renderGM(); renderNavOverlay();
+    return;
+  }
+});
 function renderGM(){
   const wrap = $('#panel-gm');
   wrap.innerHTML = `
@@ -1543,6 +1673,17 @@ $('#panel-gm').addEventListener('click', ev=>{
       const moved = deleteGlobalCategoryAndMigrate(cid);
       markDirty(); renderGM();
       showToast(moved>0 ? `已刪除「${cat.name}」，${moved} 筆紀錄已改分類到「其他」` : `已刪除「${cat.name}」`);
+    }
+    return;
+  }
+  const forceLink = ev.target.closest('.gm-force-link');
+  if(forceLink){
+    const kind = forceLink.dataset.kind;
+    const item = getCatalogArr(kind).find(x=>x.id===forceLink.dataset.id);
+    if(item){
+      const counterpart = syncLinkedCounterpart(kind, item);
+      if(counterpart){ markDirty(); showToast(`已建立連動：${counterpart.name}`); renderGM(); }
+      else showToast('請先填寫「背面名稱」');
     }
     return;
   }
