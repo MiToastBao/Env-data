@@ -285,7 +285,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -1761,14 +1761,26 @@ $('#panel-gm').addEventListener('input', ev=>{
   else item[f] = ev.target.value;
   markDirty();
 });
+$('#panel-gm').addEventListener('focusin', ev=>{
+  if(ev.target.classList.contains('gm-f') && ev.target.dataset.f==='name'){
+    ev.target.dataset.origValue = ev.target.value;
+  }
+});
 $('#panel-gm').addEventListener('change', ev=>{
   if(ev.target.classList.contains('gm-f')){
     const {id, kind, f} = ev.target.dataset;
     const item = getCatalogArr(kind).find(x=>x.id===id);
     if(item){
       if(f==='name'){
-        const dupe = getCatalogArr(kind).find(x=>x.id!==item.id && x.name===item.name.trim() && item.name.trim());
-        if(dupe) showToast(`⚠️ 已經有一張同名的「${item.name.trim()}」了，請確認是否重複建立`);
+        const oldName = ev.target.dataset.origValue;
+        const newName = item.name.trim();
+        if(oldName && oldName!==newName && newName){
+          const ok = renameTagEverywhere(oldName, newName);
+          if(ok===false){ item.name = oldName; renderGM(); return; }
+          showToast(`已改名為「${newName}」，並同步更新所有位置（包含連動卡的背面名稱）`);
+        }
+        const dupe = getCatalogArr(kind).find(x=>x.id!==item.id && x.name===newName && newName);
+        if(dupe) showToast(`⚠️ 已經有一張同名的「${newName}」了，請確認是否重複建立`);
       }
       syncCatalogItemToLibrary(kind, item);
       if(f==='backName' || f==='backCategory'){
