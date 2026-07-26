@@ -13,6 +13,7 @@
     --accent:#C99A3C; --accent-soft:rgba(201,154,60,0.16);
     --danger:#B5533C; --line:rgba(237,230,214,0.12);
     --map:#6E9BB0; --equip:#C99A3C; --inv:#7C9473; --shop:#B5533C; --gm:#8B7BA8;
+    --bg-blur: rgba(23,29,24,0.96);
     --safe-t: env(safe-area-inset-top, 0px);
     --safe-b: env(safe-area-inset-bottom, 0px);
   }
@@ -21,6 +22,7 @@
     --ink:#2B2A25; --ink-dim:#736F62;
     --accent-soft:rgba(201,154,60,0.20);
     --line:rgba(43,42,37,0.14);
+    --bg-blur: rgba(243,240,232,0.96);
   }
   body, .section, .player-card, .shop-card, .taglib-item{ transition: background-color .2s, color .2s, border-color .2s; }
   .switch{position:relative; display:inline-block; width:46px; height:27px; flex-shrink:0;}
@@ -36,6 +38,9 @@
     background:var(--bg); color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Microsoft JhengHei',sans-serif;
   }
+  #customBgLayer{
+    position:fixed; inset:0; z-index:-1; background-size:cover; background-position:center; background-repeat:no-repeat;
+  }
   .serif{font-family:Georgia,'Noto Serif TC',serif;}
   .mono{font-family:'SFMono-Regular',Consolas,'Courier New',monospace;}
   button{font-family:inherit; cursor:pointer;}
@@ -46,7 +51,7 @@
   /* ---- Top bar ---- */
   #topbar{
     flex:0 0 auto; display:flex; align-items:center; gap:8px;
-    padding:calc(8px + var(--safe-t)) 10px 8px; background:rgba(23,29,24,0.96);
+    padding:calc(8px + var(--safe-t)) 10px 8px; background:var(--bg-blur);
     border-bottom:1px solid var(--line); backdrop-filter:blur(8px); z-index:20;
   }
   #topbar .tb-btn{
@@ -77,7 +82,7 @@
     font-size:24px; line-height:1; box-shadow:0 6px 18px rgba(0,0,0,.45);
   }
   #bottomnav{
-    flex:0 0 auto; display:flex; overflow-x:auto; background:rgba(23,29,24,0.97);
+    flex:0 0 auto; display:flex; overflow-x:auto; background:var(--bg-blur);
     border-top:1px solid var(--line); padding-bottom:var(--safe-b); -webkit-overflow-scrolling:touch;
   }
   #bottomnav button{
@@ -225,6 +230,7 @@
 </head>
 <body>
 
+<div id="customBgLayer"></div>
 <div id="loadingCover">載入存檔中…</div>
 
 <div id="app">
@@ -279,7 +285,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -438,6 +444,16 @@ function updateGoldChip(){ $('#goldChip').textContent = `💰 ${state.teamInvent
 function renameInArr(arr, oldName, newName){
   if(!arr) return;
   for(let i=0;i<arr.length;i++){ if(arr[i]===oldName) arr[i]=newName; }
+}
+function removeTagEverywhere(name){
+  state.players.forEach(p=>{
+    p.hand.tags = p.hand.tags.filter(t=>t!==name);
+    p.discard.tags = p.discard.tags.filter(t=>t!==name);
+    if(p.skill) p.skill.tags = p.skill.tags.filter(t=>t!==name);
+    Object.values(p.equipData||{}).forEach(c=>{ c.tags = c.tags.filter(t=>t!==name); });
+  });
+  Object.values(state.teamInventory.catData||{}).forEach(c=>{ c.tags = c.tags.filter(t=>t!==name); });
+  Object.values(state.teamInventory.removedCatData||{}).forEach(c=>{ c.cards = c.cards.filter(r=>r.name!==name); });
 }
 function renameTagEverywhere(oldName, newName){
   if(!newName || oldName===newName) return true;
@@ -1384,7 +1400,7 @@ $('#taglibBody').addEventListener('click', (ev)=>{
   const tlEdit = ev.target.closest('.tl-edit');
   if(tlEdit){ taglibTargetTag=tlEdit.dataset.tag; taglibMode='category'; renderTaglibOverlay(); return; }
   const tlDel = ev.target.closest('.tl-del');
-  if(tlDel){ if(confirm(`確定要永久刪除標籤「${tlDel.dataset.tag}」的定義嗎？（已經放在場上的標籤不會被移除，但之後就不會再有上限管制）`)){ state.tagLibrary=state.tagLibrary.filter(t=>t.name!==tlDel.dataset.tag); markDirty(); updateTaglibListBody(); } return; }
+  if(tlDel){ if(confirm(`確定要永久刪除標籤「${tlDel.dataset.tag}」的定義嗎？（已經放在場上的標籤不會被移除，但之後就不會再有上限管制）`)){ state.tagLibrary=state.tagLibrary.filter(t=>t.name!==tlDel.dataset.tag); state.tagLibrary.forEach(t=>{ if(t.linkedNames) t.linkedNames=t.linkedNames.filter(n=>n!==tlDel.dataset.tag); }); markDirty(); updateTaglibListBody(); } return; }
   const tlAssign = ev.target.closest('.tl-assign');
   if(tlAssign){ openAssignPicker(tlAssign.dataset.tag); return; }
   const tlGm = ev.target.closest('.tl-gm');
@@ -1709,12 +1725,29 @@ $('#panel-gm').addEventListener('click', ev=>{
   if(delCard){
     const kind = delCard.dataset.kind;
     const item = getCatalogArr(kind).find(x=>x.id===delCard.dataset.delcard);
-    if(item && confirm(`確定要刪除「${item.name}」這張卡牌嗎？（標籤庫裡對應的標籤定義也會一併刪除；已經放在玩家/團隊背包身上的同名標籤不會被移除，但之後就不會再有上限管制）`)){
-      const arr = getCatalogArr(kind).filter(x=>x.id!==item.id);
-      if(kind==='shop') state.shopCatalog=arr; else if(kind==='skill') state.skillCatalog=arr; else state.handCatalog=arr;
-      state.tagLibrary = state.tagLibrary.filter(t=>t.name!==item.name);
-      state.tagLibrary.forEach(t=>{ if(t.linkedNames) t.linkedNames = t.linkedNames.filter(n=>n!==item.name); });
-      markDirty(); renderGM();
+    if(item){
+      const group = getCardGroup(item.name); // includes item.name + any linked names
+      const others = group.filter(n=>n!==item.name);
+      const confirmMsg = others.length
+        ? `確定要刪除「${item.name}」嗎？它是雙面卡，連動的「${others.join('、')}」也會一併刪除——包含標籤庫定義，以及所有玩家/團隊背包/移除區裡已經放置的這些標籤，全部都會被移除。`
+        : `確定要刪除「${item.name}」這張卡牌嗎？（標籤庫裡對應的標籤定義也會一併刪除；已經放在玩家/團隊背包身上的同名標籤不會被移除，但之後就不會再有上限管制）`;
+      if(confirm(confirmMsg)){
+        if(others.length){
+          group.forEach(name=>{
+            state.shopCatalog = state.shopCatalog.filter(x=>x.name!==name);
+            state.skillCatalog = state.skillCatalog.filter(x=>x.name!==name);
+            state.handCatalog = state.handCatalog.filter(x=>x.name!==name);
+            state.tagLibrary = state.tagLibrary.filter(t=>t.name!==name);
+            removeTagEverywhere(name);
+          });
+        } else {
+          const arr = getCatalogArr(kind).filter(x=>x.id!==item.id);
+          if(kind==='shop') state.shopCatalog=arr; else if(kind==='skill') state.skillCatalog=arr; else state.handCatalog=arr;
+          state.tagLibrary = state.tagLibrary.filter(t=>t.name!==item.name);
+        }
+        state.tagLibrary.forEach(t=>{ if(t.linkedNames) t.linkedNames = t.linkedNames.filter(n=>!group.includes(n)); });
+        markDirty(); renderGM();
+      }
     }
     return;
   }
@@ -1842,6 +1875,15 @@ function renderSystem(){
         </div>
         ${!('wakeLock' in navigator) ? `<div class="hint" style="color:var(--danger); margin-top:6px;">這個瀏覽器不支援保持喚醒功能。</div>` : `<div class="hint" style="margin-top:6px;">切到其他App或手動鎖螢幕後會自動失效，回來時會自動嘗試重新啟用。</div>`}
       </div>
+      <div class="field" style="margin-top:14px;">
+        <label>自訂背景圖片（例如喜歡的角色圖，會顯示在畫面空隙處當底圖）</label>
+        <div class="row">
+          <button class="btn ghost grow" id="btnBgUpload">🖼 選擇圖片</button>
+          ${getStoredBg() ? `<button class="btn danger grow" id="btnBgRemove">✕ 移除背景圖</button>` : ''}
+        </div>
+        <input type="file" id="bgUploadInput" accept="image/*" style="display:none;">
+        <div class="hint" style="margin-top:6px;">圖片只存在這台裝置本機（不會存進遊戲存檔、也不會匯出），換裝置需要重新上傳。面板文字區塊仍是不透明的，圖片只會從縫隙間透出來，不影響閱讀。</div>
+      </div>
     `)}
     ${sectionHTML('sys:storage', `📊 佔用空間（${formatBytes(total)}）`, `
       ${quota}
@@ -1871,6 +1913,13 @@ $('#panel-system').addEventListener('click', ev=>{
 });
 $('#panel-system').addEventListener('change', ev=>{
   if(ev.target.id==='wakeLockToggle'){ setWakeLockEnabled(ev.target.checked); }
+  if(ev.target.id==='bgUploadInput' && ev.target.files[0]){
+    compressImage(ev.target.files[0], url=>{ setCustomBg(url); renderSystem(); showToast('已套用背景圖'); }, 1600, 0.8);
+  }
+});
+$('#panel-system').addEventListener('click', ev=>{
+  if(ev.target.closest('#btnBgUpload')){ $('#bgUploadInput').click(); return; }
+  if(ev.target.closest('#btnBgRemove')){ setCustomBg(''); renderSystem(); showToast('已移除背景圖'); return; }
 });
 
 /* ---- Theme (light/dark) ---- */
@@ -1880,6 +1929,20 @@ function applyTheme(theme){
   try{ localStorage.setItem('ttrpg-theme', theme); }catch(e){}
 }
 applyTheme(getStoredTheme());
+
+/* ---- Custom background image (device-only preference, not part of the game save) ---- */
+function getStoredBg(){ try{ return localStorage.getItem('ttrpg-bgimage') || ''; }catch(e){ return ''; } }
+function applyCustomBg(dataUrl){
+  const layer = document.getElementById('customBgLayer');
+  if(dataUrl){ layer.style.backgroundImage = `url(${dataUrl})`; }
+  else { layer.style.backgroundImage = ''; }
+}
+function setCustomBg(dataUrl){
+  try{ if(dataUrl) localStorage.setItem('ttrpg-bgimage', dataUrl); else localStorage.removeItem('ttrpg-bgimage'); }
+  catch(e){ showToast('圖片可能太大，裝置儲存空間放不下，請換一張較小的圖片'); return; }
+  applyCustomBg(dataUrl);
+}
+applyCustomBg(getStoredBg());
 
 /* ---- Wake lock (keep screen on) ---- */
 let wakeLock = null;
