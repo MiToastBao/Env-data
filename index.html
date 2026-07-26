@@ -282,7 +282,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.8.4';
+const APP_VERSION = '1.9.0';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -1870,8 +1870,8 @@ function renderSystem(){
     </div></div>
     ${sectionHTML('sys:excel', '📊 Excel 批次匯入卡牌（GM區）', `
       <div class="hint" style="margin-bottom:10px;">一次匯入商店卡、技能卡、手牌，欄位如下（第一列要是標題）：<br>
-      <span class="mono" style="font-size:11px;">類型｜名稱｜分類｜流派角色｜等級｜價格｜數量上限｜連動另一面名稱｜連動另一面分類</span><br><br>
-      「類型」填「商店」「技能」「手牌」或「**標籤**」四選一；「分類」只有商店卡/標籤需要（例如武器）；「流派角色」只有技能/手牌需要（技能填流派、手牌填角色/總名稱）。<br><br>
+      <span class="mono" style="font-size:11px;">類型｜名稱｜分類｜流派｜等級｜價格｜數量上限｜連動另一面名稱｜連動另一面分類</span><br><br>
+      「類型」填「商店」「技能」「手牌」或「**標籤**」四選一；「分類」只有商店卡/標籤需要（例如武器）；「流派」只有技能/手牌需要（技能填流派、手牌填角色/總名稱，用來區分這張手牌是哪個角色專屬的）。下載範例試算表後，裡面有一個「使用說明」分頁，逐欄位詳細解釋怎麼填、以及雙面卡的注意事項。<br><br>
       填「標籤」代表這筆只單純新增到標籤庫，不會出現在商店/技能/手牌任何一個總表裡——適合用來一次匯入大量冒險中會撿到、但不屬於這三種分類的雜項物品標籤。<br><br>
       雙面卡只需要填「正面」那一列：把背面的名稱填在「連動另一面名稱」、背面的分類填在「連動另一面分類」，系統會自動幫你建立背面那張卡並完成連動（「標籤」類型也支援雙面連動）。匯入後會自動同步進標籤庫。</div>
       <div class="row">
@@ -2104,25 +2104,45 @@ function repairOrphanedCategoryData(){
   return recovered;
 }
 /* ---------------- Excel bulk import (GM cards) ---------------- */
-function downloadExcelTemplate(){
-  const rows = [
-    ['類型','名稱','分類','流派角色','等級','價格','數量上限','連動另一面名稱','連動另一面分類'],
-    ['商店','飛彈魔杖','武器','','日常等級','50','1','神奇護甲','護甲'],
-    ['技能','火球術','','火系流派','1','','3','',''],
-    ['手牌','揮劍攻擊','','戰士','1','','2','',''],
-    ['標籤','神秘卷軸','素材','','','','','',''],
-  ];
-  const csv = rows.map(r=>r.map(cell=>{
-    const s = String(cell);
-    return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
-  }).join(',')).join('\r\n');
-  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8'});
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href=url; a.download='卡牌匯入範例.csv';
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
-  showToast('已下載範例，可用 Excel 打開編輯後另存為 .xlsx 再匯入');
+async function downloadExcelTemplate(){
+  showToast('準備範本中…');
+  try{
+    await ensureXLSXLoaded();
+    const templateRows = [
+      ['類型','名稱','分類','流派','等級','價格','數量上限','連動另一面名稱','連動另一面分類'],
+      ['商店','飛彈魔杖','武器','','日常等級','50','1','神奇護甲','護甲'],
+      ['技能','火球術','','火系流派','1','','3','',''],
+      ['手牌','揮劍攻擊','','戰士','1','','2','',''],
+      ['標籤','神秘卷軸','素材','','','','','',''],
+    ];
+    const helpRows = [
+      ['欄位', '說明'],
+      ['類型', '填「商店」「技能」「手牌」或「標籤」四選一（請直接複製這幾個字，不要自己改寫法，打錯字系統會辨識不出來、整列會被忽略）。決定這筆資料要放進哪個總表。'],
+      ['名稱', '卡牌/標籤名稱，必填。'],
+      ['分類', '只有「商店」和「標籤」類型需要，例如：武器、護甲、消耗品、素材。「技能」會自動分類為「技能」、「手牌」會自動分類為「手牌」，這兩種類型不用填這一欄。'],
+      ['流派', '「技能」類型：填流派名稱（例如：火系流派）。「手牌」類型：填角色/總名稱，用來區分這張手牌是哪個角色專屬的（例如：戰士、法師）。「商店」「標籤」這兩種類型不用填。'],
+      ['等級', '卡牌等級，例如：1、Lv1、日常等級，格式不拘，只要同一個等級的打法前後一致就好。'],
+      ['價格', '只有「商店」類型需要，填這件商品的售價。'],
+      ['數量上限', '這張卡/標籤在場上最多能同時存在幾張，留空代表沒有上限。'],
+      ['連動另一面名稱', '雙面卡專用，選填。只需要在「正面」那一列填寫，填另一面的名稱，系統會自動幫你建立背面那張卡並完成連動，讓正反兩面共用同一份庫存上限，不用另外再建一列給背面。'],
+      ['連動另一面分類', '雙面卡專用，選填，只有「商店」類型的連動需要搭配這一欄。填另一面的分類，例如正面是武器、背面是護甲。'],
+      ['', ''],
+      ['⚠️ 重要提醒', ''],
+      ['雙面卡不能同名', '連動的正反兩面「名稱」欄位不能完全一樣（例如兩面都叫「A」）。系統是用名稱去分辨每一張卡的，同名的話會沒辦法正確區分兩面各自的分類跟資料，也無法正常運作。建議取名時讓兩面名稱有些微差異，例如「潘神笛(武器)」跟「潘神笛(遺物)」這樣的寫法。'],
+    ];
+    const wb = XLSX.utils.book_new();
+    const ws1 = XLSX.utils.aoa_to_sheet(templateRows);
+    ws1['!cols'] = [{wch:8},{wch:16},{wch:10},{wch:14},{wch:10},{wch:8},{wch:10},{wch:16},{wch:14}];
+    XLSX.utils.book_append_sheet(wb, ws1, '範本');
+    const ws2 = XLSX.utils.aoa_to_sheet(helpRows);
+    ws2['!cols'] = [{wch:18},{wch:70}];
+    XLSX.utils.book_append_sheet(wb, ws2, '使用說明');
+    XLSX.writeFile(wb, '卡牌匯入範例.xlsx');
+    showToast('已下載範例（含「使用說明」分頁），用 Excel 打開編輯填好資料後即可匯入');
+  }catch(e){
+    console.error(e);
+    showToast('範本產生失敗，請檢查網路連線（第一次需要下載 Excel 套件）');
+  }
 }
 function ensureXLSXLoaded(){
   if(window.XLSX) return Promise.resolve(true);
@@ -2172,7 +2192,7 @@ function parseExcelRows(rows){
       if(!item){ item = {id:uid(), name, category, level, price, cap, linkedNames:[]}; arr.push(item); added.shop++; }
       else { item.category = category||item.category; item.level = level||item.level; if(price!=null) item.price=price; if(cap!=null) item.cap=cap; }
     } else {
-      const school = String(row['流派角色']||'').trim();
+      const school = String(row['流派']||'').trim();
       if(!item){ item = {id:uid(), name, school, level, cap, linkedNames:[]}; arr.push(item); added[kind]++; }
       else { item.school = school||item.school; item.level = level||item.level; if(cap!=null) item.cap=cap; }
     }
