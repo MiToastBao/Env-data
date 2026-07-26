@@ -110,14 +110,15 @@
   .grow{flex:1;}
 
   /* ---- Collapsible section ---- */
-  .section{border:1px solid var(--line); border-radius:12px; margin-bottom:12px; overflow:hidden; background:var(--panel);}
-  .section-head{width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; padding:15px 14px; text-align:left; min-height:52px;}
+  .section{border:1px solid var(--line); border-radius:12px; margin-bottom:12px; overflow:hidden; background:var(--panel); display:block;}
+  .section-head{list-style:none; cursor:pointer; width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; padding:15px 14px; text-align:left; min-height:52px;}
+  .section-head::-webkit-details-marker{display:none;}
+  .section-head::marker{content:'';}
+  .section-body{padding:12px; background:var(--panel-alt);}
+  .section[open] .chev{transform:rotate(90deg);}
+  .chev{transition:transform .15s; color:var(--ink-dim); font-size:14px;}
   .section-head .st{font-family:Georgia,serif; font-weight:700; font-size:17.5px;}
   .section-head .sc{color:var(--ink-dim); font-size:14px;}
-  .section-body{padding:12px; background:var(--panel-alt); display:none;}
-  .section.open .section-body{display:block;}
-  .section.open .chev{transform:rotate(90deg);}
-  .chev{transition:transform .15s; color:var(--ink-dim); font-size:14px;}
 
   /* ---- Photo grid (battlefield / player / catalog thumbs) ---- */
   .photo-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(96px,1fr)); gap:8px; margin-bottom:10px;}
@@ -278,7 +279,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -458,6 +459,7 @@ function renameTagEverywhere(oldName, newName){
     arr.forEach(it=>{
       if(it.name===oldName) it.name=newName;
       if(it.linkedNames) it.linkedNames = it.linkedNames.map(n=> n===oldName?newName:n);
+      if(it.backName===oldName) it.backName=newName;
     });
   });
   state.tagLibrary.forEach(t=>{
@@ -692,11 +694,26 @@ function withScrollPreserved(fn){
   fn();
   if(main) main.scrollTop = pos;
 }
+function syncDetailsState(container){
+  if(!container) return;
+  container.querySelectorAll('details[data-sec]').forEach(d=>{
+    d.addEventListener('toggle', ()=>{
+      const id = d.dataset.sec;
+      if(d.open) openSections.add(id); else openSections.delete(id);
+    });
+  });
+  container.querySelectorAll('details[data-subsec]').forEach(d=>{
+    d.addEventListener('toggle', ()=>{
+      const id = d.dataset.subsec;
+      if(d.open) closedSubSections.delete(id); else closedSubSections.add(id);
+    });
+  });
+}
 
 let openSections = new Set(['inv:cats']);
 function sectionHTML(id, title, bodyHtml){
   const open = openSections.has(id);
-  return `<div class="section ${open?'open':''}"><button class="section-head" data-sec="${id}"><span class="st">${title}</span><span class="chev">▸</span></button><div class="section-body">${bodyHtml}</div></div>`;
+  return `<details class="section" data-sec="${id}" ${open?'open':''}><summary class="section-head"><span class="st">${title}</span><span class="chev">▸</span></summary><div class="section-body">${bodyHtml}</div></details>`;
 }
 
 /* ============ Players tab ============ */
@@ -844,6 +861,7 @@ function renderInventory(){
     ${sectionHTML('inv:removed', `🗑 卡牌移除區（${removedCount}）`, removedHTML)}
   `;
   $('#invNote').addEventListener('input', e=>{ ti.note=e.target.value; markDirty(); });
+  syncDetailsState(wrap);
 }
 RENDER_FN.inventory = renderInventory;
 
@@ -863,9 +881,6 @@ function setGoldExact(target, playerId){
 }
 
 $('#main').addEventListener('click', (ev)=>{
-  const secHead = ev.target.closest('.section-head[data-sec]');
-  if(secHead){ const id=secHead.dataset.sec; if(openSections.has(id)) openSections.delete(id); else openSections.add(id); withScrollPreserved(rerenderActiveTab); return; }
-
   const tcx = ev.target.closest('.tcx');
   if(tcx){ const field=ev.target.closest('.tagfield'); openMovePicker(tcx.dataset.tag, resolveScope(field.dataset.loc)); return; }
 
@@ -1178,6 +1193,7 @@ function renderShop(){
     </div>
     ${body}
   `;
+  syncDetailsState(wrap);
 }
 RENDER_FN.shop = renderShop;
 $('#panel-shop').addEventListener('click', ev=>{
@@ -1453,7 +1469,7 @@ function catalogCardHTML(it, kind){
 let closedSubSections = new Set();
 function subSectionHTML(id, title, bodyHtml){
   const closed = closedSubSections.has(id);
-  return `<div class="section ${closed?'':'open'}" style="background:var(--panel-alt2);"><button class="section-head" data-subsec="${id}"><span class="st" style="font-size:14.5px;">${title}</span><span class="chev">▸</span></button><div class="section-body">${bodyHtml}</div></div>`;
+  return `<details class="section" data-subsec="${id}" style="background:var(--panel-alt2);" ${closed?'':'open'}><summary class="section-head"><span class="st" style="font-size:14.5px;">${title}</span><span class="chev">▸</span></summary><div class="section-body">${bodyHtml}</div></details>`;
 }
 function renderGmShopSection(){
   const allLevels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
@@ -1646,16 +1662,7 @@ function renderGM(){
     ${sectionHTML('gm:skill', `✨ 技能卡牌管理（${state.skillCatalog.length}）`, renderGmSchoolSection('skill'))}
     ${sectionHTML('gm:hand', `🃏 手牌管理（${state.handCatalog.length}）`, renderGmSchoolSection('hand'))}
   `;
-  // Direct listeners (not delegation) for the nested level/school collapse toggles,
-  // to rule out any possibility of event-bubbling interference between handlers.
-  wrap.querySelectorAll('.section-head[data-subsec]').forEach(btn=>{
-    btn.addEventListener('click', (ev)=>{
-      ev.preventDefault();
-      const id = btn.dataset.subsec;
-      if(closedSubSections.has(id)) closedSubSections.delete(id); else closedSubSections.add(id);
-      withScrollPreserved(renderGM);
-    });
-  });
+  syncDetailsState(wrap);
 }
 RENDER_FN.gm = renderGM;
 $('#panel-gm').addEventListener('click', ev=>{
@@ -1681,9 +1688,10 @@ $('#panel-gm').addEventListener('click', ev=>{
     const kind = forceLink.dataset.kind;
     const item = getCatalogArr(kind).find(x=>x.id===forceLink.dataset.id);
     if(item){
-      const counterpart = syncLinkedCounterpart(kind, item);
-      if(counterpart){ markDirty(); showToast(`已建立連動：${counterpart.name}`); renderGM(); }
-      else showToast('請先填寫「背面名稱」');
+      const backName = (item.backName||'').trim();
+      if(!backName) showToast('請先填寫「背面名稱」');
+      else if(backName===item.name) showToast('「背面名稱」不能跟這張卡自己的名稱一樣，請確認是不是打錯了');
+      else { const counterpart = syncLinkedCounterpart(kind, item); if(counterpart){ markDirty(); showToast(`已建立連動：${counterpart.name}`); renderGM(); } }
     }
     return;
   }
@@ -1700,9 +1708,12 @@ $('#panel-gm').addEventListener('click', ev=>{
   const delCard = ev.target.closest('[data-delcard]');
   if(delCard){
     const kind = delCard.dataset.kind;
-    if(confirm('確定要刪除這張卡牌嗎？')){
-      const arr = getCatalogArr(kind).filter(x=>x.id!==delCard.dataset.delcard);
+    const item = getCatalogArr(kind).find(x=>x.id===delCard.dataset.delcard);
+    if(item && confirm(`確定要刪除「${item.name}」這張卡牌嗎？（標籤庫裡對應的標籤定義也會一併刪除；已經放在玩家/團隊背包身上的同名標籤不會被移除，但之後就不會再有上限管制）`)){
+      const arr = getCatalogArr(kind).filter(x=>x.id!==item.id);
       if(kind==='shop') state.shopCatalog=arr; else if(kind==='skill') state.skillCatalog=arr; else state.handCatalog=arr;
+      state.tagLibrary = state.tagLibrary.filter(t=>t.name!==item.name);
+      state.tagLibrary.forEach(t=>{ if(t.linkedNames) t.linkedNames = t.linkedNames.filter(n=>n!==item.name); });
       markDirty(); renderGM();
     }
     return;
@@ -1849,6 +1860,7 @@ function renderSystem(){
   $('#excelInput').addEventListener('change', e=>{ if(e.target.files[0]) handleExcelImport(e.target.files[0]); e.target.value=''; });
   updateStatusHint();
   updateSystemVersionUI();
+  syncDetailsState(wrap);
 }
 RENDER_FN.system = renderSystem;
 $('#panel-system').addEventListener('click', ev=>{
