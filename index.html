@@ -265,7 +265,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -1516,7 +1516,9 @@ function renderGM(){
     btn.addEventListener('click', (ev)=>{
       ev.preventDefault();
       const id = btn.dataset.subsec;
-      if(closedSubSections.has(id)) closedSubSections.delete(id); else closedSubSections.add(id);
+      const titleText = btn.querySelector('.st') ? btn.querySelector('.st').textContent : id;
+      if(closedSubSections.has(id)){ closedSubSections.delete(id); showToast(`已展開：${titleText}`); }
+      else { closedSubSections.add(id); showToast(`已收合：${titleText}`); }
       renderGM();
     });
   });
