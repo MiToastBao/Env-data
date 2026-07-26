@@ -10,7 +10,7 @@
   :root{
     --bg:#171D18; --panel:#212A22; --panel-alt:#2A342B; --panel-alt2:#333F35;
     --ink:#EDE6D6; --ink-dim:#9FB0A2;
-    --accent:#C99A3C; --accent-soft:rgba(201,154,60,0.16);
+    --accent:#C99A3C; --accent-soft:rgba(201,154,60,0.16); --accent-text:#C99A3C;
     --danger:#B5533C; --line:rgba(237,230,214,0.12);
     --map:#6E9BB0; --equip:#C99A3C; --inv:#7C9473; --shop:#B5533C; --gm:#8B7BA8;
     --bg-blur: rgba(23,29,24,0.96);
@@ -19,10 +19,11 @@
   }
   :root[data-theme="light"]{
     --bg:#F3F0E8; --panel:#FFFFFF; --panel-alt:#F1EDE2; --panel-alt2:#E6E0D2;
-    --ink:#2B2A25; --ink-dim:#736F62;
-    --accent-soft:rgba(201,154,60,0.20);
-    --line:rgba(43,42,37,0.14);
+    --ink:#2B2A25; --ink-dim:#5A5648;
+    --accent-soft:rgba(150,105,10,0.18); --accent-text:#8A5F0C;
+    --line:rgba(43,42,37,0.16);
     --bg-blur: rgba(243,240,232,0.96);
+    --equip:#8A5F0C;
   }
   body, .section, .player-card, .shop-card, .taglib-item{ transition: background-color .2s, color .2s, border-color .2s; }
   .switch{position:relative; display:inline-block; width:46px; height:27px; flex-shrink:0;}
@@ -37,9 +38,6 @@
   body{
     background:var(--bg); color:var(--ink);
     font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang TC','Microsoft JhengHei',sans-serif;
-  }
-  #customBgLayer{
-    position:fixed; inset:0; z-index:-1; background-size:cover; background-position:center; background-repeat:no-repeat;
   }
   .serif{font-family:Georgia,'Noto Serif TC',serif;}
   .mono{font-family:'SFMono-Regular',Consolas,'Courier New',monospace;}
@@ -61,7 +59,7 @@
   #topbar .tb-btn:disabled{opacity:0.35;}
   #topbar .tb-title{flex:1; font-family:Georgia,serif; font-weight:700; font-size:17.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--ink-dim);}
   #goldChip{
-    flex:0 0 auto; background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent);
+    flex:0 0 auto; background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent-text);
     border-radius:20px; padding:7px 12px; font-weight:700; font-size:16.3px; font-family:monospace;
   }
 
@@ -141,9 +139,9 @@
   /* ---- Tag chips / fields ---- */
   .tagfield{margin-bottom:6px;}
   .tag-chips{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:7px;}
-  .tag-chip{display:inline-flex; align-items:center; gap:5px; background:var(--accent-soft); border:1px solid rgba(201,154,60,.4); color:var(--accent); font-size:15.2px; padding:5px 5px 5px 10px; border-radius:16px;}
+  .tag-chip{display:inline-flex; align-items:center; gap:5px; background:var(--accent-soft); border:1px solid rgba(201,154,60,.4); color:var(--accent-text); font-size:15.2px; padding:5px 5px 5px 10px; border-radius:16px;}
   .tag-chip .tcn{cursor:pointer;}
-  .tag-chip .tcx{background:none; border:none; color:var(--accent); opacity:.7; font-size:17px; padding:4px 6px; min-width:28px; min-height:28px;}
+  .tag-chip .tcx{background:none; border:none; color:var(--accent-text); opacity:.8; font-size:17px; padding:4px 6px; min-width:28px; min-height:28px;}
   .tag-empty{font-size:14.6px; color:var(--ink-dim); font-style:italic;}
   .tag-add-row{display:flex; gap:6px;}
   .tag-add-row input{flex:1; background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px; padding:10px 11px; color:var(--ink); font-size:15.8px; outline:none; min-height:44px;}
@@ -214,11 +212,11 @@
   .ti-name{font-size:16.9px; font-weight:700;}
   .ti-bottom{display:flex; gap:6px; margin-top:6px; flex-wrap:wrap;}
   .ti-badge{background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:13.4px; padding:3px 8px; border-radius:10px;}
-  .ti-action{background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent); font-size:13.4px; padding:8px 13px; border-radius:10px; font-weight:700; min-height:38px;}
+  .ti-action{background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent-text); font-size:13.4px; padding:8px 13px; border-radius:10px; font-weight:700; min-height:38px;}
   .ti-del{background:none; border:none; color:var(--danger); font-size:15px; padding:8px 12px; min-height:38px;}
   .cat-tabs{display:flex; gap:6px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px;}
   .cat-tab{flex-shrink:0; background:var(--panel-alt2); border:1px solid var(--line); color:var(--ink-dim); font-size:14.6px; padding:10px 15px; border-radius:16px; white-space:nowrap; min-height:40px;}
-  .cat-tab.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent); font-weight:700;}
+  .cat-tab.active{background:var(--accent-soft); border-color:var(--accent); color:var(--accent-text); font-weight:700;}
 
   .quota-row{display:flex; justify-content:space-between; align-items:center; font-size:14.6px; margin-bottom:5px; gap:8px;}
   .quota-bar{height:7px; border-radius:4px; background:var(--panel-alt2); overflow:hidden;}
@@ -230,7 +228,6 @@
 </head>
 <body>
 
-<div id="customBgLayer"></div>
 <div id="loadingCover">載入存檔中…</div>
 
 <div id="app">
@@ -285,7 +282,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.8.4';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -1491,7 +1488,7 @@ function renderGmShopSection(){
   const allLevels = Array.from(new Set(state.shopCatalog.map(it=>it.level||'未分級')));
   const levels = (gmShopFilter && gmShopFilter.level) ? allLevels.filter(lv=>lv===gmShopFilter.level) : allLevels;
   const jumpChips = allLevels.length>3 ? `<div class="cat-tabs">${allLevels.map(lv=>`<button class="cat-tab" data-scrollto="${anchorId('shoplvl',lv)}">${escapeHtml(lv)}</button>`).join('')}</div>` : '';
-  const filterNote = gmShopFilter ? `<div class="hint" style="color:var(--accent); margin-bottom:10px; font-weight:700;">🔍 篩選中：${gmShopFilter.level?escapeHtml(gmShopFilter.level):'全部等級'} / ${gmShopFilter.category?escapeHtml(gmShopFilter.category):'全部分類'}（點左下角🧭可清除）</div>` : '';
+  const filterNote = gmShopFilter ? `<div class="hint" style="color:var(--accent-text); margin-bottom:10px; font-weight:700;">🔍 篩選中：${gmShopFilter.level?escapeHtml(gmShopFilter.level):'全部等級'} / ${gmShopFilter.category?escapeHtml(gmShopFilter.category):'全部分類'}（點左下角🧭可清除）</div>` : '';
   const body = levels.map(lv=>{
     const itemsInLevel = state.shopCatalog.filter(it=>(it.level||'未分級')===lv);
     const isNone = lv==='未分級';
@@ -1521,7 +1518,7 @@ function renderGmSchoolSection(kind){
   const allSchools = Array.from(new Set(catalog.map(it=>it.school||'未分類')));
   const schools = (filter && filter.school) ? allSchools.filter(s=>s===filter.school) : allSchools;
   const jumpChips = allSchools.length>3 ? `<div class="cat-tabs">${allSchools.map(s=>`<button class="cat-tab" data-scrollto="${anchorId(kind+'sch',s)}">${escapeHtml(s)}</button>`).join('')}</div>` : '';
-  const filterNote = filter ? `<div class="hint" style="color:var(--accent); margin-bottom:10px; font-weight:700;">🔍 篩選中：${filter.school?escapeHtml(filter.school):'全部'} / ${filter.level?escapeHtml(filter.level):'全部等級'}（點左下角🧭可清除）</div>` : '';
+  const filterNote = filter ? `<div class="hint" style="color:var(--accent-text); margin-bottom:10px; font-weight:700;">🔍 篩選中：${filter.school?escapeHtml(filter.school):'全部'} / ${filter.level?escapeHtml(filter.level):'全部等級'}（點左下角🧭可清除）</div>` : '';
   const body = schools.map(sch=>{
     const allLevels = Array.from(new Set(catalog.filter(it=>(it.school||'未分類')===sch).map(it=>it.level||'未分級')));
     const levels = (filter && filter.level) ? allLevels.filter(lv=>lv===filter.level) : allLevels;
@@ -1762,7 +1759,7 @@ $('#panel-gm').addEventListener('input', ev=>{
   markDirty();
 });
 $('#panel-gm').addEventListener('focusin', ev=>{
-  if(ev.target.classList.contains('gm-f') && ev.target.dataset.f==='name'){
+  if(ev.target.classList.contains('gm-f') && (ev.target.dataset.f==='name' || ev.target.dataset.f==='backName')){
     ev.target.dataset.origValue = ev.target.value;
   }
 });
@@ -1781,6 +1778,21 @@ $('#panel-gm').addEventListener('change', ev=>{
         }
         const dupe = getCatalogArr(kind).find(x=>x.id!==item.id && x.name===newName && newName);
         if(dupe) showToast(`⚠️ 已經有一張同名的「${newName}」了，請確認是否重複建立`);
+      }
+      if(f==='backName'){
+        const oldBackName = (ev.target.dataset.origValue||'').trim();
+        const newBackName = item.backName.trim();
+        if(oldBackName && oldBackName!==newBackName && newBackName && item.linkedNames && item.linkedNames.includes(oldBackName)){
+          // A link to oldBackName already existed — this is a RENAME of the linked counterpart,
+          // not a request to link a second, separate card while leaving the old one behind.
+          const ok = renameTagEverywhere(oldBackName, newBackName);
+          if(ok===false){ item.backName = oldBackName; renderGM(); return; }
+          syncCatalogItemToLibrary(kind, item);
+          markDirty();
+          showToast(`已把連動的另一面從「${oldBackName}」改名為「${newBackName}」，兩面與場上所有位置都已同步`);
+          renderGM();
+          return;
+        }
       }
       syncCatalogItemToLibrary(kind, item);
       if(f==='backName' || f==='backCategory'){
@@ -1887,15 +1899,6 @@ function renderSystem(){
         </div>
         ${!('wakeLock' in navigator) ? `<div class="hint" style="color:var(--danger); margin-top:6px;">這個瀏覽器不支援保持喚醒功能。</div>` : `<div class="hint" style="margin-top:6px;">切到其他App或手動鎖螢幕後會自動失效，回來時會自動嘗試重新啟用。</div>`}
       </div>
-      <div class="field" style="margin-top:14px;">
-        <label>自訂背景圖片（例如喜歡的角色圖，會顯示在畫面空隙處當底圖）</label>
-        <div class="row">
-          <button class="btn ghost grow" id="btnBgUpload">🖼 選擇圖片</button>
-          ${getStoredBg() ? `<button class="btn danger grow" id="btnBgRemove">✕ 移除背景圖</button>` : ''}
-        </div>
-        <input type="file" id="bgUploadInput" accept="image/*" style="display:none;">
-        <div class="hint" style="margin-top:6px;">圖片只存在這台裝置本機（不會存進遊戲存檔、也不會匯出），換裝置需要重新上傳。面板文字區塊仍是不透明的，圖片只會從縫隙間透出來，不影響閱讀。</div>
-      </div>
     `)}
     ${sectionHTML('sys:storage', `📊 佔用空間（${formatBytes(total)}）`, `
       ${quota}
@@ -1925,13 +1928,6 @@ $('#panel-system').addEventListener('click', ev=>{
 });
 $('#panel-system').addEventListener('change', ev=>{
   if(ev.target.id==='wakeLockToggle'){ setWakeLockEnabled(ev.target.checked); }
-  if(ev.target.id==='bgUploadInput' && ev.target.files[0]){
-    compressImage(ev.target.files[0], url=>{ setCustomBg(url); renderSystem(); showToast('已套用背景圖'); }, 1600, 0.8);
-  }
-});
-$('#panel-system').addEventListener('click', ev=>{
-  if(ev.target.closest('#btnBgUpload')){ $('#bgUploadInput').click(); return; }
-  if(ev.target.closest('#btnBgRemove')){ setCustomBg(''); renderSystem(); showToast('已移除背景圖'); return; }
 });
 
 /* ---- Theme (light/dark) ---- */
@@ -1941,20 +1937,6 @@ function applyTheme(theme){
   try{ localStorage.setItem('ttrpg-theme', theme); }catch(e){}
 }
 applyTheme(getStoredTheme());
-
-/* ---- Custom background image (device-only preference, not part of the game save) ---- */
-function getStoredBg(){ try{ return localStorage.getItem('ttrpg-bgimage') || ''; }catch(e){ return ''; } }
-function applyCustomBg(dataUrl){
-  const layer = document.getElementById('customBgLayer');
-  if(dataUrl){ layer.style.backgroundImage = `url(${dataUrl})`; }
-  else { layer.style.backgroundImage = ''; }
-}
-function setCustomBg(dataUrl){
-  try{ if(dataUrl) localStorage.setItem('ttrpg-bgimage', dataUrl); else localStorage.removeItem('ttrpg-bgimage'); }
-  catch(e){ showToast('圖片可能太大，裝置儲存空間放不下，請換一張較小的圖片'); return; }
-  applyCustomBg(dataUrl);
-}
-applyCustomBg(getStoredBg());
 
 /* ---- Wake lock (keep screen on) ---- */
 let wakeLock = null;
