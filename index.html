@@ -265,7 +265,7 @@
 <script>
 /* ============ Utilities ============ */
 const $ = s => document.querySelector(s);
-const APP_VERSION = '1.4.8';
+const APP_VERSION = '1.5.0';
 let latestKnownVersion = null;
 async function checkForUpdate(showNoUpdateToast){
   try{
@@ -515,7 +515,16 @@ function canPlace(name){
   return used < cap;
 }
 function placeTag(tag, dest){
-  if(!canPlace(tag)){ showToast(`「${tag}」已達數量上限，無法再新增`); return false; }
+  if(!canPlace(tag)){
+    const group = getCardGroup(tag).filter(n=>n!==tag);
+    const placedElsewhere = group.filter(n=>countInPlay(n)>0);
+    if(placedElsewhere.length){
+      showToast(`「${tag}」已達數量上限——它跟「${placedElsewhere.join('、')}」是同一張雙面卡，目前已經以「${placedElsewhere.join('、')}」的名稱在場上了，請找那個名稱來移動它`);
+    } else {
+      showToast(`「${tag}」已達數量上限，無法再新增`);
+    }
+    return false;
+  }
   let arr;
   if(dest.type==='player'){
     const p = state.players.find(x=>x.id===dest.playerId); if(!p) return false;
@@ -549,11 +558,13 @@ function levelSortKey(lv){
   return [1, m?parseInt(m[0],10):999999, String(lv)];
 }
 function compareTagEntries(a,b){
+  const ca=a.category||'', cb=b.category||'';
+  if(ca!==cb) return ca.localeCompare(cb,'zh-Hant');
+  if(a.name.length!==b.name.length) return a.name.length-b.name.length;
   const la=levelSortKey(a.level), lb=levelSortKey(b.level);
   if(la[0]!==lb[0]) return la[0]-lb[0];
   if(la[1]!==lb[1]) return la[1]-lb[1];
   if(la[2]!==lb[2]) return la[2].localeCompare(lb[2]);
-  if(a.name.length!==b.name.length) return a.name.length-b.name.length;
   return a.name.localeCompare(b.name,'zh-Hant');
 }
 
@@ -764,25 +775,39 @@ function renderInventory(){
 
   wrap.innerHTML = `
     <div class="section open"><div class="section-body" style="display:block;">
-      <div class="gold-row">
-        <span>💰 團隊金庫</span>
-        <div class="gold-stepper">
-          <button class="gold-btn" data-gt="team" data-gd="-10">−10</button>
-          <button class="gold-btn" data-gt="team" data-gd="-1">−1</button>
-          <span class="gold-num gold-edit" data-gt="team">${ti.totalGold||0}</span>
-          <button class="gold-btn" data-gt="team" data-gd="1">+1</button>
-          <button class="gold-btn" data-gt="team" data-gd="10">+10</button>
+      <div class="gold-block" data-gt="team">
+        <div class="gold-row">
+          <span>💰 團隊金庫</span>
+          <div class="gold-stepper">
+            <button class="gold-btn" data-gt="team" data-gd="-10">−10</button>
+            <button class="gold-btn" data-gt="team" data-gd="-1">−1</button>
+            <span class="gold-num gold-edit" data-gt="team">${ti.totalGold||0}</span>
+            <button class="gold-btn" data-gt="team" data-gd="1">+1</button>
+            <button class="gold-btn" data-gt="team" data-gd="10">+10</button>
+          </div>
+        </div>
+        <div class="row" style="margin:0 0 10px;">
+          <input type="number" class="gold-custom-input" placeholder="輸入自訂數字" style="flex:1; background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px; padding:10px; color:var(--ink); min-height:44px;">
+          <button class="btn ghost sm" data-goldcustom="-1">− 減少</button>
+          <button class="btn primary sm" data-goldcustom="1">＋ 增加</button>
         </div>
       </div>
       ${state.players.map(p=>`
-      <div class="gold-row">
-        <span>${escapeHtml(p.name)}</span>
-        <div class="gold-stepper">
-          <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="-10">−10</button>
-          <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="-1">−1</button>
-          <span class="gold-num gold-edit" data-gt="player" data-gp="${p.id}">${ti.playerGold[p.id]||0}</span>
-          <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="1">+1</button>
-          <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="10">+10</button>
+      <div class="gold-block" data-gt="player" data-gp="${p.id}">
+        <div class="gold-row">
+          <span>${escapeHtml(p.name)}</span>
+          <div class="gold-stepper">
+            <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="-10">−10</button>
+            <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="-1">−1</button>
+            <span class="gold-num gold-edit" data-gt="player" data-gp="${p.id}">${ti.playerGold[p.id]||0}</span>
+            <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="1">+1</button>
+            <button class="gold-btn" data-gt="player" data-gp="${p.id}" data-gd="10">+10</button>
+          </div>
+        </div>
+        <div class="row" style="margin:0 0 10px;">
+          <input type="number" class="gold-custom-input" placeholder="輸入自訂數字" style="flex:1; background:var(--panel-alt2); border:1px solid var(--line); border-radius:8px; padding:10px; color:var(--ink); min-height:44px;">
+          <button class="btn ghost sm" data-goldcustom="-1">− 減少</button>
+          <button class="btn primary sm" data-goldcustom="1">＋ 增加</button>
         </div>
       </div>`).join('') || `<div class="hint" style="padding:6px 2px;">尚無玩家。</div>`}
     </div></div>
@@ -884,6 +909,17 @@ $('#main').addEventListener('click', (ev)=>{
   if(goldBtn){ adjustGold(goldBtn.dataset.gt, goldBtn.dataset.gp, parseInt(goldBtn.dataset.gd,10)); return; }
   const goldEdit = ev.target.closest('.gold-edit');
   if(goldEdit){ setGoldExact(goldEdit.dataset.gt, goldEdit.dataset.gp); return; }
+  const goldCustomBtn = ev.target.closest('[data-goldcustom]');
+  if(goldCustomBtn){
+    const block = goldCustomBtn.closest('.gold-block');
+    const input = block.querySelector('.gold-custom-input');
+    const amt = parseInt(input.value, 10);
+    if(isNaN(amt) || amt<0){ showToast('請先輸入有效的正整數'); return; }
+    const dir = parseInt(goldCustomBtn.dataset.goldcustom, 10);
+    adjustGold(block.dataset.gt, block.dataset.gp, dir*amt);
+    input.value = '';
+    return;
+  }
 });
 
 $('#main').addEventListener('input', (ev)=>{
@@ -949,7 +985,7 @@ function renderPicker(){
       <h3>${picker.mode==='buy'?'購買':(picker.mode==='move'?'處理':'指定')}「${escapeHtml(picker.tag)}」</h3>
       <div class="hint" style="margin-bottom:12px;">選擇要做什麼：</div>
       <div class="picker-list">
-        <button class="picker-btn" data-destteam="1">🎒 團隊背包（自動歸類）</button>
+        <button class="picker-btn" data-destteam="1">🎒 團隊背包</button>
         ${moveExtras}
         ${playerBtns}
       </div>
@@ -958,13 +994,25 @@ function renderPicker(){
     `;
   } else if(picker.step==='playerarea'){
     const p = state.players.find(x=>x.id===picker.playerId);
+    const suggested = findMatchingCategory(tagCategoryOf(picker.tag));
+    const catBtns = sortCatsOtherLast(state.globalCategories).map(c=>{
+      const isSug = c.id===suggested.id;
+      return `<button class="picker-btn" data-area="${c.id}">${isSug?'✨ ':''}${escapeHtml(c.name)}${isSug?'（建議）':''}</button>`;
+    }).join('');
     const areaBtns = [
       `<button class="picker-btn" data-area="hand">手牌區</button>`,
       `<button class="picker-btn" data-area="discard">棄牌區</button>`,
       `<button class="picker-btn" data-area="skill">技能區</button>`,
-      `<button class="picker-btn" data-area="equip">裝備區（自動依分類歸位）</button>`,
+      catBtns,
     ].join('');
-    body.innerHTML = `<h3>放到 ${escapeHtml(p.name)} 的哪裡？</h3><div class="picker-list">${areaBtns}</div><div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerBack">‹ 上一步</button></div>`;
+    body.innerHTML = `<h3>放到 ${escapeHtml(p.name)} 的哪裡？</h3><div class="hint" style="margin-bottom:10px;">標示「✨建議」的是系統依分類自動比對的位置，也可以自行選別的分類。</div><div class="picker-list">${areaBtns}</div><div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerBack">‹ 上一步</button></div>`;
+  } else if(picker.step==='teamcat'){
+    const suggested = findMatchingCategory(tagCategoryOf(picker.tag));
+    const catBtns = sortCatsOtherLast(state.globalCategories).map(c=>{
+      const isSug = c.id===suggested.id;
+      return `<button class="picker-btn" data-teamcat="${c.id}">${isSug?'✨ ':''}${escapeHtml(c.name)}${isSug?'（建議）':''}</button>`;
+    }).join('');
+    body.innerHTML = `<h3>放到團隊背包的哪個分類？</h3><div class="hint" style="margin-bottom:10px;">標示「✨建議」的是系統依分類自動比對的位置，也可以自行選別的分類。</div><div class="picker-list">${catBtns}</div><div class="row" style="margin-top:16px;"><button class="btn ghost grow" id="pickerBack">‹ 上一步</button></div>`;
   } else if(picker.step==='gmReturn'){
     body.innerHTML = `
       <h3>歸還「${escapeHtml(picker.tag)}」給 GM</h3>
@@ -977,16 +1025,14 @@ function renderPicker(){
     `;
   }
 }
-function doPlaceAtTeam(){
-  const cat = findMatchingCategory(tagCategoryOf(picker.tag));
-  const ok = placeTag(picker.tag, {type:'team', catId:cat.id}); if(!ok) return;
+function doPlaceAtTeamCat(catId){
+  const cat = state.globalCategories.find(c=>c.id===catId);
+  const ok = placeTag(picker.tag, {type:'team', catId}); if(!ok) return;
   if(picker.mode==='move' && picker.source) removeTagFromSource(picker.source, picker.tag);
-  markDirty(); showToast(`已把「${picker.tag}」放進團隊背包「${cat.name}」分類`); rerenderActiveTab(); finishPicker();
+  markDirty(); showToast(`已把「${picker.tag}」放進團隊背包「${cat?cat.name:''}」分類`); rerenderActiveTab(); finishPicker();
 }
 function doPlaceAtPlayerArea(area){
-  let realArea = area;
-  if(area==='equip'){ realArea = findMatchingCategory(tagCategoryOf(picker.tag)).id; }
-  const dest = {type:'player', playerId:picker.playerId, area:realArea};
+  const dest = {type:'player', playerId:picker.playerId, area};
   const ok = placeTag(picker.tag, dest); if(!ok) return;
   if(picker.mode==='move' && picker.source) removeTagFromSource(picker.source, picker.tag);
   markDirty();
@@ -1074,7 +1120,8 @@ function shopCardHTML(it){
   const canAfford = state.teamInventory.totalGold >= (it.price||0);
   const canBuy = !outOfStock && canAfford;
   return `
-  <div class="shop-card" data-id="${it.id}">
+  <div class="shop-card" data-id="${it.id}" style="position:relative;">
+    <button class="ti-del shop-unlist" data-id="${it.id}" style="position:absolute; top:4px; right:4px;" title="從商店下架">✕</button>
     <div class="shop-name" style="font-size:16px; padding:4px 0;">${escapeHtml(it.name||'未命名')}</div>
     <div class="shop-badge">${it.level?`Lv${escapeHtml(it.level)} · `:''}${it.price||0}💰${avail!=null?` · 剩${avail}`:''}</div>
     <div class="shop-actions"><button class="shop-buy" data-buy="${it.id}" ${canBuy?'':'disabled'}>${outOfStock?'已達上限':(!canAfford?'金庫不足':'購買')}</button></div>
@@ -1111,6 +1158,15 @@ function renderShop(){
 }
 RENDER_FN.shop = renderShop;
 $('#panel-shop').addEventListener('click', ev=>{
+  const unlistBtn = ev.target.closest('.shop-unlist');
+  if(unlistBtn){
+    const item = state.shopCatalog.find(x=>x.id===unlistBtn.dataset.id);
+    if(item && confirm(`確定要把「${item.name}」從商店下架嗎？（只是不再顯示於商店，不會影響已經在玩家/團隊背包身上的同名物品）`)){
+      state.shopCatalog = state.shopCatalog.filter(x=>x.id!==item.id);
+      markDirty(); renderShop(); showToast(`已下架「${item.name}」`);
+    }
+    return;
+  }
   const lvlTab = ev.target.closest('[data-shoplvl]');
   if(lvlTab){ shopLevelFilter = lvlTab.dataset.shoplvl; shopCatFilter=''; renderShop(); return; }
   const catTab = ev.target.closest('[data-shopcat]');
@@ -1141,7 +1197,11 @@ function taglibRowsHTML(items){
     const groupCap = getCap(t.name);
     const used = group.reduce((s,n)=> s + countInPlay(n) + countRemoved(n), 0);
     const capBadge = groupCap!=null ? `<span class="ti-badge">${used}/${groupCap}</span>` : '';
-    const linkBadge = group.length>1 ? `<span class="ti-badge" style="color:var(--danger);">🔗 雙面卡</span>` : '';
+    const otherNames = group.filter(n=>n!==t.name);
+    const linkBadge = otherNames.length ? `<span class="ti-badge" style="color:var(--danger);">🔗 連動：${otherNames.map(escapeHtml).join('、')}</span>` : '';
+    const myCount = countInPlay(t.name)+countRemoved(t.name);
+    const placedElsewhere = otherNames.filter(n=>countInPlay(n)>0);
+    const whereNote = (myCount===0 && placedElsewhere.length) ? `<div class="hint" style="color:var(--danger); margin-top:4px;">目前是以「${placedElsewhere.map(escapeHtml).join('、')}」的名稱在場上，要移動這張卡請找那個名稱。</div>` : '';
     return `
     <div class="taglib-item">
       <div class="ti-top"><span class="ti-name tl-edit" data-tag="${escapeHtml(t.name)}">${escapeHtml(t.name)} ✎</span><button class="ti-del tl-del" data-tag="${escapeHtml(t.name)}">刪除</button></div>
@@ -1154,6 +1214,7 @@ function taglibRowsHTML(items){
         <button class="ti-action tl-assign" data-tag="${escapeHtml(t.name)}">指定去哪 →</button>
         <button class="ti-action tl-gm" data-tag="${escapeHtml(t.name)}" style="background:rgba(139,123,168,.15); border-color:rgba(139,123,168,.5); color:var(--gm);">移出遊戲</button>
       </div>
+      ${whereNote}
     </div>`;
   }).join('');
 }
@@ -1221,8 +1282,20 @@ $('#taglibBody').addEventListener('click', (ev)=>{
   if(taglibMode==='picker'){
     if(ev.target.closest('#pickerCancel')){ closePicker(); return; }
     if(ev.target.closest('#pickerBack')){ picker.step='dest'; renderPicker(); return; }
-    if(ev.target.closest('[data-destteam]')){ if(picker.mode==='buy'){ doBuyToTeam(); } else { doPlaceAtTeam(); } return; }
-    if(ev.target.closest('[data-destsell]')){ sellTagFlow(picker.tag, picker.source); return; }
+    if(ev.target.closest('[data-destteam]')){ if(picker.mode==='buy'){ doBuyToTeam(); } else { picker.step='teamcat'; renderPicker(); } return; }
+    const teamcatBtn = ev.target.closest('[data-teamcat]');
+    if(teamcatBtn){ doPlaceAtTeamCat(teamcatBtn.dataset.teamcat); return; }
+    if(ev.target.closest('[data-destsell]')){
+      const existing = state.shopCatalog.find(x=>x.name===picker.tag);
+      if(!existing || existing.price==null){
+        if(confirm(`「${picker.tag}」目前沒有設定過售價，通常代表這不是要拿來賣錢的物品。\n\n要不要改成「刪除」（不計價，回收上架商店）？\n\n選「取消」則繼續原本的「賣到商店」流程（會請你輸入賣出金額）。`)){
+          removeAndShelve(picker.tag, picker.source);
+          return;
+        }
+      }
+      sellTagFlow(picker.tag, picker.source);
+      return;
+    }
     if(ev.target.closest('[data-destdelete]')){ removeAndShelve(picker.tag, picker.source); return; }
     if(ev.target.closest('[data-destremove]')){ removeToDiscardPile(picker.tag, picker.source); return; }
     if(ev.target.closest('[data-destgm]')){ picker.step='gmReturn'; renderPicker(); return; }
@@ -1437,11 +1510,19 @@ function renderGM(){
     ${sectionHTML('gm:skill', `✨ 技能卡牌管理（${state.skillCatalog.length}）`, renderGmSchoolSection('skill'))}
     ${sectionHTML('gm:hand', `🃏 手牌管理（${state.handCatalog.length}）`, renderGmSchoolSection('hand'))}
   `;
+  // Direct listeners (not delegation) for the nested level/school collapse toggles,
+  // to rule out any possibility of event-bubbling interference between handlers.
+  wrap.querySelectorAll('.section-head[data-subsec]').forEach(btn=>{
+    btn.addEventListener('click', (ev)=>{
+      ev.preventDefault();
+      const id = btn.dataset.subsec;
+      if(closedSubSections.has(id)) closedSubSections.delete(id); else closedSubSections.add(id);
+      renderGM();
+    });
+  });
 }
 RENDER_FN.gm = renderGM;
 $('#panel-gm').addEventListener('click', ev=>{
-  const subSec = ev.target.closest('.section-head[data-subsec]');
-  if(subSec){ const id=subSec.dataset.subsec; if(closedSubSections.has(id)) closedSubSections.delete(id); else closedSubSections.add(id); renderGM(); return; }
   const addGcat = ev.target.closest('[data-addgcat]');
   if(addGcat){ const name=prompt('新分類名稱，例如：武器、護甲…'); if(name&&name.trim()){ addGlobalCategory(name.trim()); markDirty(); renderGM(); } return; }
   const gcatRename = ev.target.closest('.gcat-rename');
