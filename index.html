@@ -14,6 +14,7 @@
   <header class="topbar">
     <div class="brand">📋 環評監測資料填報小工具</div>
     <div class="topbar-actions">
+      <button id="btnUnitCodeRef" class="btn btn-ghost" title="查詢單位代碼表">📖 單位代碼表</button>
       <button id="btnBackupExport" class="btn btn-ghost" title="將所有計畫資料匯出成一個備份檔（JSON），可用於換瀏覽器或分享">匯出備份</button>
       <button id="btnBackupImport" class="btn btn-ghost" title="匯入先前匯出的備份檔">匯入備份</button>
       <input type="file" id="backupFileInput" accept=".json" style="display:none">
@@ -73,9 +74,11 @@
         </table>
       </div>
       <p class="hint" id="importRowCount"></p>
+      <div id="genericImportItemsWrap"></div>
     </div>
     <div id="importStep3" class="hidden">
       <p class="hint" id="smartImportSummary"></p>
+      <div id="smartImportItemsWrap"></div>
       <div id="smartImportSitesWrap" class="mapping-table-wrap"></div>
       <p class="hint" id="smartImportSkipped"></p>
     </div>
@@ -96,6 +99,62 @@
     <div class="modal-actions">
       <button id="btnCoordCancel" class="btn btn-ghost">取消</button>
       <button id="btnCoordSave" class="btn btn-primary">儲存並套用</button>
+    </div>
+  </div>
+</div>
+
+<!-- Export Selection Modal -->
+<div id="exportSelectModal" class="modal-overlay hidden">
+  <div class="modal">
+    <h3>匯出全部類別</h3>
+    <p class="hint">請勾選要匯出的類別（僅列出目前有資料的類別），每個類別會各自下載一個 Excel 檔。</p>
+    <div id="exportSelectList" class="item-checklist" style="flex-direction:column;align-items:flex-start"></div>
+    <div class="modal-actions">
+      <button id="btnExportSelectCancel" class="btn btn-ghost">取消</button>
+      <button id="btnExportSelectConfirm" class="btn btn-primary">開始匯出</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import Batch History Modal -->
+<div id="batchHistoryModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>匯入紀錄管理</h3>
+    <p class="hint">列出這個類別過去每一次匯入的紀錄，可整批刪除某一次匯入的所有資料（手動新增／編輯的資料不在此列，請於表格中個別刪除）。</p>
+    <div id="batchHistoryWrap" class="mapping-table-wrap"></div>
+    <div class="modal-actions">
+      <button id="btnBatchHistoryClose" class="btn btn-primary">關閉</button>
+    </div>
+  </div>
+</div>
+
+<!-- Batch Import Modal -->
+<div id="batchImportModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>批次匯入監測報告</h3>
+    <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告），系統會自動判斷每個檔案（或檔案中每個工作表）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前僅噪音／水質／空氣品質三類支援自動判斷；地質／生態尚無法自動判斷，請於各分類頁面用一般匯入方式處理。</p>
+    <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv" multiple>
+    <div id="batchDetectStatus" class="hint" style="margin-top:12px"></div>
+    <div class="modal-actions">
+      <button id="btnBatchCancel" class="btn btn-ghost">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- Unit Code Reference Modal -->
+<div id="unitRefModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>單位代碼表</h3>
+    <p class="hint">輸入代碼或單位名稱關鍵字即可搜尋。系統自動判讀單位代碼時若不夠確定，會在匯入預覽畫面提醒您，建議在此查證後手動修正。</p>
+    <input type="text" id="unitRefSearch" placeholder="搜尋代碼或單位，例如 127 或 ug/m" style="width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;margin-bottom:10px;">
+    <div class="mapping-table-wrap" style="max-height:60vh">
+      <table class="mapping-table">
+        <thead><tr><th style="width:80px">代碼</th><th>單位</th></tr></thead>
+        <tbody id="unitRefBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button id="btnUnitRefClose" class="btn btn-primary">關閉</button>
     </div>
   </div>
 </div>

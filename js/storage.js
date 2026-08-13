@@ -44,6 +44,7 @@ const DataStore = {
     CATEGORY_ORDER.forEach(cat => {
       localStorage.removeItem(this._dataKey(id, cat));
       localStorage.removeItem(this._siteAliasKey(id, cat));
+      localStorage.removeItem(this._batchKey(id, cat));
     });
   },
 
@@ -55,6 +56,36 @@ const DataStore = {
   },
   _siteAliasKey(projectId, category) {
     return `envapp_sitealias_${projectId}_${category}`;
+  },
+  _batchKey(projectId, category) {
+    return `envapp_batches_${projectId}_${category}`;
+  },
+
+  // Import-batch registry: one entry per "import" action (a single-file import,
+  // or one category's slice of a multi-file batch import), so the person can see
+  // what was imported and remove a whole import in one step instead of hunting
+  // for individual rows. Manually-added/edited rows aren't tracked here.
+  getImportBatches(projectId, category) {
+    try {
+      return JSON.parse(localStorage.getItem(this._batchKey(projectId, category))) || [];
+    } catch (e) {
+      return [];
+    }
+  },
+  saveImportBatches(projectId, category, batches) {
+    localStorage.setItem(this._batchKey(projectId, category), JSON.stringify(batches));
+  },
+  addImportBatch(projectId, category, batchMeta) {
+    const batches = this.getImportBatches(projectId, category);
+    batches.push(batchMeta);
+    this.saveImportBatches(projectId, category, batches);
+  },
+  /** Remove a batch's rows from the data and remove it from the registry. */
+  deleteImportBatch(projectId, category, batchId) {
+    const rows = this.getData(projectId, category).filter(r => r._batchId !== batchId);
+    this.saveData(projectId, category, rows);
+    const batches = this.getImportBatches(projectId, category).filter(b => b.id !== batchId);
+    this.saveImportBatches(projectId, category, batches);
   },
 
   getSiteAliases(projectId, category) {
@@ -88,6 +119,10 @@ const DataStore = {
   },
   saveData(projectId, category, rows) {
     localStorage.setItem(this._dataKey(projectId, category), JSON.stringify(rows));
+  },
+  clearData(projectId, category) {
+    this.saveData(projectId, category, []);
+    this.saveImportBatches(projectId, category, []);
   },
 
   // Full export/import for backup/transfer between browsers

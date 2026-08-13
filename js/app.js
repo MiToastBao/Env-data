@@ -8,7 +8,9 @@ const state = {
   importParsed: null, // { headers, rows, ... } (generic import)
   importMode: null, // 'generic' | 'smart'
   smartResult: null, // { rows, matchedSheets, skippedSheets, sites } from SmartParse.parseWorkbook
-  smartOverrides: null, // { siteKey: { fieldKey: value, _remember: bool } }
+  itemSelection: null, // Set of currently-checked item values (both import modes)
+  batchQueue: null, // [{ catKey, result }] pending confirmation, when batch-importing
+  batchQueueTotal: 0,
 };
 
 // ---------- helpers ----------
@@ -55,12 +57,22 @@ function renderProjectList() {
   }
   list.innerHTML = projects.map(p => `
     <li class="project-item ${p.id === state.currentProjectId ? 'active' : ''}" data-id="${p.id}">
-      <div class="p-code">${escapeHtml(p.code)}</div>
-      <div class="p-name">${escapeHtml(p.name)}</div>
+      <div class="project-item-main">
+        <div class="p-code">${escapeHtml(p.code)}</div>
+        <div class="p-name">${escapeHtml(p.name)}</div>
+      </div>
+      <button class="project-del-btn" data-id="${p.id}" title="刪除此計畫">🗑</button>
     </li>
   `).join('');
-  list.querySelectorAll('.project-item').forEach(el => {
-    el.addEventListener('click', () => selectProject(el.dataset.id));
+  list.querySelectorAll('.project-item-main').forEach(el => {
+    el.addEventListener('click', () => selectProject(el.closest('.project-item').dataset.id));
+  });
+  list.querySelectorAll('.project-del-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const project = DataStore.getProjects().find(p => p.id === btn.dataset.id);
+      if (project) deleteProjectFlow(project);
+    });
   });
 }
 
@@ -98,6 +110,7 @@ function renderContent() {
       <div class="project-header-actions">
         <button class="btn btn-ghost btn-sm" id="btnEditProject">編輯計畫資訊</button>
         <button class="btn btn-danger btn-sm" id="btnDeleteProject">刪除計畫</button>
+        <button class="btn btn-ghost btn-sm" id="btnBatchImport">📦 批次匯入監測報告</button>
         <button class="btn btn-primary btn-sm" id="btnExportAll">匯出全部類別</button>
       </div>
     </div>
@@ -110,10 +123,11 @@ function renderContent() {
   });
   document.getElementById('btnEditProject').addEventListener('click', () => openProjectModal(project));
   document.getElementById('btnDeleteProject').addEventListener('click', () => deleteProjectFlow(project));
+  document.getElementById('btnBatchImport').addEventListener('click', openBatchImportModal);
   document.getElementById('btnExportAll').addEventListener('click', () => {
     const anyData = CATEGORY_ORDER.some(c => DataStore.getData(project.id, c).length > 0);
     if (!anyData) { alert('目前尚無任何監測資料可匯出，請先匯入或新增資料。'); return; }
-    ExportEngine.downloadAll(project);
+    openExportSelectModal(project);
   });
 
   if (state.currentTab === 'basic') renderBasicTab(project);
@@ -169,6 +183,7 @@ function renderBasicTab(project) {
 function renderCategoryTab(project, catKey) {
   const cat = CATEGORIES[catKey];
   const rows = DataStore.getData(project.id, catKey);
+  const batches = DataStore.getImportBatches(project.id, catKey);
   const body = document.getElementById('tabBody');
 
   body.innerHTML = `
@@ -177,13 +192,21 @@ function renderCategoryTab(project, catKey) {
         <button class="btn btn-primary btn-sm" id="btnImport">📥 匯入資料（Excel/PDF）</button>
         <button class="btn btn-ghost btn-sm" id="btnAddRow">＋ 新增一筆</button>
         <button class="btn btn-ghost btn-sm" id="btnCoordManager">📍 測站座標管理</button>
+        <button class="btn btn-ghost btn-sm" id="btnBatchHistory">📜 匯入紀錄${batches.length ? ` (${batches.length})` : ''}</button>
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）</button>
+        <button class="btn btn-danger btn-sm" id="btnClearCat" ${rows.length === 0 ? 'disabled' : ''}>🗑 清空此類別</button>
       </div>
       <div class="row-count">共 ${rows.length} 筆資料</div>
+    </div>
+    <div class="toolbar bulk-toolbar hidden" id="bulkToolbar">
+      <span id="bulkSelCount">已選取 0 筆</span>
+      <button class="btn btn-danger btn-sm" id="btnBulkDelete">🗑 刪除已選取</button>
+      <button class="btn btn-ghost btn-sm" id="btnBulkClear">取消選取</button>
     </div>
     <div class="table-wrap">
       <table class="data-grid">
         <thead><tr>
+          <th class="col-check"><input type="checkbox" id="checkAllRows" ${rows.length === 0 ? 'disabled' : ''}></th>
           <th>#</th>
           ${cat.fields.map(f => `<th${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
           <th>操作</th>
@@ -197,17 +220,105 @@ function renderCategoryTab(project, catKey) {
   document.getElementById('btnImport').addEventListener('click', () => openImportModal(catKey));
   document.getElementById('btnAddRow').addEventListener('click', () => addEmptyRow(project, catKey));
   document.getElementById('btnCoordManager').addEventListener('click', () => openCoordModal(project, catKey));
+  document.getElementById('btnBatchHistory').addEventListener('click', () => openBatchHistoryModal(project, catKey));
   document.getElementById('btnExportCat').addEventListener('click', () => {
     if (rows.length === 0) { alert('此類別尚無資料可匯出。'); return; }
     ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey);
   });
+  document.getElementById('btnClearCat').addEventListener('click', () => {
+    if (rows.length === 0) return;
+    if (!confirm(`確定要清空「${cat.label}」的全部 ${rows.length} 筆資料嗎？此操作無法復原。`)) return;
+    DataStore.clearData(project.id, catKey);
+    renderContent();
+  });
 
   wireGridEvents(project, catKey, cat);
+  wireBulkSelection(project, catKey, cat);
+}
+
+function wireBulkSelection(project, catKey, cat) {
+  const tbody = document.getElementById('gridBody');
+  const checkAll = document.getElementById('checkAllRows');
+  const bulkToolbar = document.getElementById('bulkToolbar');
+  const bulkCount = document.getElementById('bulkSelCount');
+
+  const getChecked = () => [...tbody.querySelectorAll('.row-check:checked')].map(cb => Number(cb.dataset.row));
+  const updateBulkUI = () => {
+    const n = getChecked().length;
+    bulkToolbar.classList.toggle('hidden', n === 0);
+    bulkCount.textContent = `已選取 ${n} 筆`;
+    if (checkAll) checkAll.checked = n > 0 && n === tbody.querySelectorAll('.row-check').length;
+  };
+
+  tbody.addEventListener('change', (e) => {
+    if (e.target.classList.contains('row-check')) updateBulkUI();
+  });
+  if (checkAll) {
+    checkAll.addEventListener('change', () => {
+      tbody.querySelectorAll('.row-check').forEach(cb => { cb.checked = checkAll.checked; });
+      updateBulkUI();
+    });
+  }
+  const bulkDeleteBtn = document.getElementById('btnBulkDelete');
+  if (bulkDeleteBtn) {
+    bulkDeleteBtn.addEventListener('click', () => {
+      const indices = new Set(getChecked());
+      if (indices.size === 0) return;
+      if (!confirm(`確定要刪除已選取的 ${indices.size} 筆資料嗎？此操作無法復原。`)) return;
+      const rows = DataStore.getData(project.id, catKey).filter((_, i) => !indices.has(i));
+      DataStore.saveData(project.id, catKey, rows);
+      renderContent();
+    });
+  }
+  const bulkClearBtn = document.getElementById('btnBulkClear');
+  if (bulkClearBtn) {
+    bulkClearBtn.addEventListener('click', () => {
+      tbody.querySelectorAll('.row-check').forEach(cb => { cb.checked = false; });
+      updateBulkUI();
+    });
+  }
+}
+
+// ---------- import batch history ----------
+function openBatchHistoryModal(project, catKey) {
+  const cat = CATEGORIES[catKey];
+  const batches = DataStore.getImportBatches(project.id, catKey);
+  const wrap = document.getElementById('batchHistoryWrap');
+
+  if (batches.length === 0) {
+    wrap.innerHTML = '<p class="hint" style="padding:14px">此類別目前沒有透過「匯入」建立的紀錄（手動新增的資料不會列在這裡）。</p>';
+  } else {
+    wrap.innerHTML = `<table class="mapping-table">
+      <thead><tr><th>匯入時間</th><th>來源檔案</th><th>方式</th><th>筆數</th><th>操作</th></tr></thead>
+      <tbody>
+        ${batches.slice().reverse().map(b => `
+          <tr data-batch-id="${escapeAttr(b.id)}">
+            <td>${new Date(b.timestamp).toLocaleString('zh-TW')}</td>
+            <td>${escapeHtml(b.sourceLabel)}</td>
+            <td>${b.mode === 'smart' ? '智慧解析' : '一般欄位比對'}</td>
+            <td>${b.rowCount}</td>
+            <td><button class="btn btn-danger btn-sm btn-delete-batch" data-batch-id="${escapeAttr(b.id)}">🗑 刪除此批次</button></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>`;
+    wrap.querySelectorAll('.btn-delete-batch').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const batchId = btn.dataset.batchId;
+        const row = batches.find(b => b.id === batchId);
+        if (!confirm(`確定要刪除這批匯入資料嗎？（來源：${row.sourceLabel}，共 ${row.rowCount} 筆）此操作無法復原。`)) return;
+        DataStore.deleteImportBatch(project.id, catKey, batchId);
+        openBatchHistoryModal(project, catKey); // refresh list in place
+        renderContent();
+      });
+    });
+  }
+  document.getElementById('batchHistoryModal').classList.remove('hidden');
 }
 
 function rowHtml(cat, row, idx) {
   const cells = cat.fields.map(f => `<td>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
-  return `<tr data-row="${idx}"><td>${idx + 1}</td>${cells}<td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td></tr>`;
+  return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td><td>${idx + 1}</td>${cells}<td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td></tr>`;
 }
 
 function fieldControlHTML(field, value, rowAttr) {
@@ -247,12 +358,52 @@ function fieldControlHTML(field, value, rowAttr) {
 
 function wireGridEvents(project, catKey, cat) {
   const tbody = document.getElementById('gridBody');
+  const COORD_FIELDS = ['座標系統', '採樣座標-經度 X', '採樣座標-緯度 Y'];
 
   const commit = (rowIdx, fieldKey, value) => {
     const rows = DataStore.getData(project.id, catKey);
     if (!rows[rowIdx]) return;
     rows[rowIdx][fieldKey] = value;
     DataStore.saveData(project.id, catKey, rows);
+  };
+
+  // If the person fills in coordinates for one row, carry them forward to any other
+  // row sharing the same 日期(起) that doesn't have that field filled in yet — so a
+  // multi-item report (e.g. water quality's several test items from one sampling
+  // event) only needs coordinates entered once. Never overwrites an existing value.
+  const propagateCoordsForDate = (rowIdx, fieldKey) => {
+    if (!COORD_FIELDS.includes(fieldKey)) return false;
+    const rows = DataStore.getData(project.id, catKey);
+    const source = rows[rowIdx];
+    if (!source || !source[fieldKey] || !source['日期(起)']) return false;
+    let changed = false;
+    rows.forEach((r, idx) => {
+      if (idx === rowIdx || r['日期(起)'] !== source['日期(起)']) return;
+      if (!r[fieldKey]) { r[fieldKey] = source[fieldKey]; changed = true; }
+    });
+    if (changed) DataStore.saveData(project.id, catKey, rows);
+    return changed;
+  };
+
+  // If the person corrects a date/time on one row, sync that same field to every
+  // other row that (a) came from the same import batch and (b) shares the same
+  // sampling location — e.g. correcting one test item's date in a multi-item water
+  // report updates the whole site's rows from that report, since they're really one
+  // sampling event. This overwrites (not just fills blanks), since it's a correction.
+  const DATE_TIME_FIELDS = ['日期(起)', '時間(起)', '日期(迄)', '時間(迄)'];
+  const syncDateTimeWithinBatch = (rowIdx, fieldKey) => {
+    if (!DATE_TIME_FIELDS.includes(fieldKey)) return false;
+    const rows = DataStore.getData(project.id, catKey);
+    const source = rows[rowIdx];
+    const locField = cat.locationField;
+    if (!source || !source._batchId || !source[locField]) return false;
+    let changed = false;
+    rows.forEach((r, idx) => {
+      if (idx === rowIdx || r._batchId !== source._batchId || r[locField] !== source[locField]) return;
+      if (r[fieldKey] !== source[fieldKey]) { r[fieldKey] = source[fieldKey]; changed = true; }
+    });
+    if (changed) DataStore.saveData(project.id, catKey, rows);
+    return changed;
   };
 
   tbody.addEventListener('input', (e) => {
@@ -266,9 +417,22 @@ function wireGridEvents(project, catKey, cat) {
   });
   tbody.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.dataset.field && t.tagName === 'SELECT') {
+    if (!t.dataset.field) return;
+    if (t.tagName === 'SELECT') {
       commit(Number(t.dataset.row), t.dataset.field, t.value);
+      if (propagateCoordsForDate(Number(t.dataset.row), t.dataset.field)) { renderContent(); return; }
+    } else if (t.type === 'date' || t.type === 'time') {
+      commit(Number(t.dataset.row), t.dataset.field, t.value);
+      if (syncDateTimeWithinBatch(Number(t.dataset.row), t.dataset.field)) renderContent();
     }
+  });
+  // use focusout (bubbles) rather than blur to catch this via delegation; only
+  // re-render on blur (not every keystroke) so typing isn't interrupted.
+  tbody.addEventListener('focusout', (e) => {
+    const t = e.target;
+    if (!t.dataset.field || t.tagName === 'SELECT') return;
+    if (propagateCoordsForDate(Number(t.dataset.row), t.dataset.field)) { renderContent(); return; }
+    if (syncDateTimeWithinBatch(Number(t.dataset.row), t.dataset.field)) renderContent();
   });
   tbody.addEventListener('click', (e) => {
     const btn = e.target.closest('.row-del-btn');
@@ -375,6 +539,49 @@ function saveCoordModal() {
   alert('已套用座標到符合的資料列。');
 }
 
+// ---------- unit code reference ----------
+function renderUnitRefTable(filterText) {
+  const body = document.getElementById('unitRefBody');
+  const q = (filterText || '').trim().toLowerCase();
+  const entries = Object.entries(UNIT_CODES).filter(([code, name]) =>
+    !q || code.toLowerCase().includes(q) || String(name).toLowerCase().includes(q)
+  );
+  body.innerHTML = entries.length
+    ? entries.map(([code, name]) => `<tr><td>${escapeHtml(code)}</td><td>${escapeHtml(name)}</td></tr>`).join('')
+    : '<tr><td colspan="2" class="hint">找不到符合的單位</td></tr>';
+}
+function openUnitRefModal() {
+  document.getElementById('unitRefSearch').value = '';
+  renderUnitRefTable('');
+  document.getElementById('unitRefModal').classList.remove('hidden');
+}
+
+// ---------- export selection (choose which categories to include) ----------
+function openExportSelectModal(project) {
+  const list = document.getElementById('exportSelectList');
+  const withData = CATEGORY_ORDER.filter(c => DataStore.getData(project.id, c).length > 0);
+  list.innerHTML = withData.map(c => `
+    <label class="item-check">
+      <input type="checkbox" data-export-cat value="${c}" checked>
+      ${CATEGORIES[c].label}（${DataStore.getData(project.id, c).length} 筆）
+    </label>
+  `).join('');
+  document.getElementById('exportSelectModal').dataset.projectId = project.id;
+  document.getElementById('exportSelectModal').classList.remove('hidden');
+}
+function closeExportSelectModal() {
+  document.getElementById('exportSelectModal').classList.add('hidden');
+}
+function confirmExportSelect() {
+  const modal = document.getElementById('exportSelectModal');
+  const project = getCurrentProject();
+  const checked = [...document.querySelectorAll('#exportSelectList [data-export-cat]:checked')].map(cb => cb.value);
+  if (checked.length === 0) { alert('請至少勾選一個類別。'); return; }
+  const basicInfo = DataStore.getBasicInfo(project.id);
+  checked.forEach(catKey => ExportEngine.downloadCategory(project, basicInfo, catKey));
+  closeExportSelectModal();
+}
+
 // ---------- project modal (create/edit) ----------
 function openProjectModal(project) {
   state.editingProjectId = project ? project.id : null;
@@ -411,13 +618,163 @@ function deleteProjectFlow(project) {
   renderContent();
 }
 
+// ---------- item-selection checklist (shared by smart and generic import) ----------
+// Different projects report different sets of monitoring items (e.g. an air-quality
+// report might contain SO2/NO2/NOx/NO/CO/O3/PM10/TSP/PM2.5, but a given filing may only
+// need a subset). Rather than hard-coding which items "belong" in a filing, the parser
+// extracts everything the report actually contains and this checklist lets the person
+// choose which ones to bring in.
+function renderItemChecklist(containerEl, rows, itemField, onChange) {
+  const counts = {};
+  rows.forEach(r => {
+    const v = (r[itemField] || '').trim() || '（未標示）';
+    counts[v] = (counts[v] || 0) + 1;
+  });
+  const items = Object.keys(counts);
+  if (items.length === 0) { containerEl.innerHTML = ''; return; }
+  if (!state.itemSelection) state.itemSelection = new Set(items);
+
+  containerEl.innerHTML = `
+    <p class="hint">此份報告偵測到以下監測項目，請勾選要匯入的項目（預設全選，可依實際需求取消勾選）：</p>
+    <div class="item-checklist">
+      ${items.map(item => `
+        <label class="item-check">
+          <input type="checkbox" data-item-check value="${escapeAttr(item)}" ${state.itemSelection.has(item) ? 'checked' : ''}>
+          ${escapeHtml(item)} <span class="hint">(${counts[item]})</span>
+        </label>
+      `).join('')}
+      <button type="button" class="btn btn-ghost btn-sm" id="btnItemSelectAll">全選</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="btnItemSelectNone">全不選</button>
+    </div>
+  `;
+  containerEl.querySelectorAll('[data-item-check]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) state.itemSelection.add(cb.value); else state.itemSelection.delete(cb.value);
+      if (onChange) onChange();
+    });
+  });
+  containerEl.querySelector('#btnItemSelectAll').addEventListener('click', () => {
+    items.forEach(i => state.itemSelection.add(i));
+    renderItemChecklist(containerEl, rows, itemField, onChange);
+    if (onChange) onChange();
+  });
+  containerEl.querySelector('#btnItemSelectNone').addEventListener('click', () => {
+    state.itemSelection.clear();
+    renderItemChecklist(containerEl, rows, itemField, onChange);
+    if (onChange) onChange();
+  });
+}
+
+function filterRowsBySelection(rows, itemField) {
+  if (!state.itemSelection) return rows;
+  return rows.filter(r => state.itemSelection.has((r[itemField] || '').trim() || '（未標示）'));
+}
+
+// ---------- batch import (multi-file, auto-detect category) ----------
+const AUTO_DETECT_CATEGORIES = ['noise', 'water', 'air']; // categories with smart-parsers capable of self-identifying
+
+function openBatchImportModal() {
+  document.getElementById('batchFileInput').value = '';
+  document.getElementById('batchDetectStatus').textContent = '';
+  document.getElementById('batchImportModal').classList.remove('hidden');
+}
+function closeBatchImportModal() {
+  document.getElementById('batchImportModal').classList.add('hidden');
+}
+
+async function handleBatchFiles(fileList) {
+  const files = [...fileList];
+  if (files.length === 0) return;
+  const statusEl = document.getElementById('batchDetectStatus');
+  statusEl.textContent = `正在判讀 ${files.length} 個檔案...`;
+
+  // perCategory[catKey] = { rows: [], matchedSheets: [], skippedSheets: [], sourceFiles: Set }
+  const perCategory = {};
+  AUTO_DETECT_CATEGORIES.forEach(c => { perCategory[c] = { rows: [], matchedSheets: [], skippedSheets: [], sourceFiles: new Set() }; });
+  const unrecognizedFiles = [];
+
+  for (const file of files) {
+    let grids;
+    try {
+      grids = await ImportEngine.readWorkbookGrids(file);
+    } catch (err) {
+      unrecognizedFiles.push(`${file.name}（讀取失敗：${err.message}）`);
+      continue;
+    }
+    let anyMatchInFile = false;
+    for (const [sheetName, grid] of Object.entries(grids)) {
+      let matchedCat = null;
+      for (const catKey of AUTO_DETECT_CATEGORIES) {
+        const rows = SmartParse.parseSheet(catKey, sheetName, grid);
+        if (rows && rows.length) {
+          perCategory[catKey].rows.push(...rows);
+          perCategory[catKey].matchedSheets.push(`${file.name} / ${sheetName}`);
+          perCategory[catKey].sourceFiles.add(file.name);
+          matchedCat = catKey;
+          anyMatchInFile = true;
+          break; // a sheet belongs to exactly one category
+        }
+      }
+      if (!matchedCat) {
+        // don't list every unrecognized junk sheet individually across all files; tallied below instead
+      }
+    }
+    if (!anyMatchInFile) unrecognizedFiles.push(file.name);
+  }
+
+  // build per-category "sites" groupings the same way parseWorkbook does
+  AUTO_DETECT_CATEGORIES.forEach(catKey => {
+    const rows = perCategory[catKey].rows;
+    const sites = {};
+    rows.forEach((row, i) => {
+      const key = row._siteCode || row._rawLocation || `row${i}`;
+      if (!sites[key]) sites[key] = { siteCode: row._siteCode || '', rawLocation: row._rawLocation || '', rowIndices: [] };
+      sites[key].rowIndices.push(i);
+    });
+    perCategory[catKey].sites = sites;
+  });
+
+  const queue = AUTO_DETECT_CATEGORIES
+    .filter(c => perCategory[c].rows.length > 0)
+    .map(c => ({ catKey: c, result: perCategory[c] }));
+
+  const summary = queue.map(q => `${CATEGORIES[q.catKey].label}：${q.result.rows.length} 筆`).join('、');
+  statusEl.textContent = queue.length
+    ? `判讀完成：${summary}。${unrecognizedFiles.length ? `無法判斷類別的檔案／工作表：${unrecognizedFiles.join('、')}` : ''}`
+    : `無法從所選檔案中辨識出任何已支援的報告格式。${unrecognizedFiles.length ? `（${unrecognizedFiles.join('、')}）` : ''}`;
+
+  if (queue.length === 0) return;
+
+  state.batchQueue = queue;
+  state.batchQueueTotal = queue.length;
+  closeBatchImportModal();
+  processNextBatchItem();
+}
+
+function processNextBatchItem() {
+  if (!state.batchQueue || state.batchQueue.length === 0) {
+    state.batchQueue = null;
+    return;
+  }
+  const next = state.batchQueue[0];
+  const doneCount = state.batchQueueTotal - state.batchQueue.length;
+  state.importCatKey = next.catKey;
+  state.importMode = 'smart';
+  state.smartResult = next.result;
+  state.currentImportSourceLabel = next.result.sourceFiles ? [...next.result.sourceFiles].join('、') : '批次匯入';
+  document.getElementById('importModalTitle').textContent =
+    `批次匯入（${doneCount + 1}/${state.batchQueueTotal}）：${CATEGORIES[next.catKey].label}`;
+  document.getElementById('importModal').classList.remove('hidden');
+  renderSmartImportPreview();
+}
+
 // ---------- import modal ----------
 function openImportModal(catKey) {
   state.importCatKey = catKey;
   state.importParsed = null;
   state.importMode = null;
   state.smartResult = null;
-  state.smartOverrides = null;
+  state.itemSelection = null;
   document.getElementById('importModalTitle').textContent = `匯入${CATEGORIES[catKey].label}監測資料`;
   document.getElementById('importFileInput').value = '';
   document.getElementById('importStep1').classList.remove('hidden');
@@ -429,6 +786,11 @@ function openImportModal(catKey) {
 }
 function closeImportModal() {
   document.getElementById('importModal').classList.add('hidden');
+  if (state.batchQueue) {
+    const remaining = state.batchQueue.length;
+    state.batchQueue = null;
+    if (remaining > 0) alert(`已取消批次匯入，還有 ${remaining} 個類別未匯入。`);
+  }
 }
 
 const SMART_PARSE_CATEGORIES = ['noise', 'water', 'air'];
@@ -437,6 +799,7 @@ async function handleImportFile(file) {
   if (!file) return;
   const catKey = state.importCatKey;
   const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
+  state.currentImportSourceLabel = file.name;
 
   try {
     // Try the smart form-parser first for categories/report types it understands.
@@ -446,7 +809,6 @@ async function handleImportFile(file) {
       if (result.rows.length > 0) {
         state.importMode = 'smart';
         state.smartResult = result;
-        state.smartOverrides = {};
         renderSmartImportPreview();
         return;
       }
@@ -490,23 +852,63 @@ function renderMappingStep() {
   document.getElementById('importStep2').classList.remove('hidden');
   document.getElementById('importStep3').classList.add('hidden');
   document.getElementById('btnImportConfirm').classList.remove('hidden');
+  document.getElementById('btnImportConfirm').textContent = '確認匯入';
+
+  const refreshGenericItemChecklist = () => {
+    state.itemSelection = null; // re-seed from scratch when the mapped column changes
+    const itemSel = tbody.querySelector(`select[data-target-field="${cat.itemField}"]`);
+    const mappedHeader = itemSel ? itemSel.value : '';
+    const wrap = document.getElementById('genericImportItemsWrap');
+    if (!mappedHeader) { wrap.innerHTML = ''; return; }
+    const shimRows = rows.map(r => ({ [cat.itemField]: r[mappedHeader] }));
+    renderItemChecklist(wrap, shimRows, cat.itemField, null);
+  };
+  refreshGenericItemChecklist();
+  const itemSel = tbody.querySelector(`select[data-target-field="${cat.itemField}"]`);
+  if (itemSel) itemSel.addEventListener('change', refreshGenericItemChecklist);
 }
 
 // ---------- smart import (report-form parser) preview ----------
 function renderSmartImportPreview() {
   const project = getCurrentProject();
   const catKey = state.importCatKey;
+  const cat = CATEGORIES[catKey];
   const result = state.smartResult;
   const profileFields = SmartParse.SITE_PROFILE_FIELDS[catKey] || [];
   const savedAliases = DataStore.getSiteAliases(project.id, catKey);
 
   const siteEntries = Object.entries(result.sites); // [key, {siteCode, rawLocation, rowIndices}]
+  state.itemSelection = null; // reset so renderItemChecklist re-seeds with "all checked"
 
-  document.getElementById('smartImportSummary').textContent =
-    `系統辨識出 ${siteEntries.length} 個測站、共 ${result.rows.length} 筆資料（來自 ${result.matchedSheets.length} 個工作表）。`
-    + ` 部分欄位無法從報告本身取得，請在下方為每個測站補充一次，之後匯入同一測站會自動套用。`;
+  const updateCounts = () => {
+    const selectedTotal = filterRowsBySelection(result.rows, cat.itemField).length;
+    document.getElementById('smartImportSummary').textContent =
+      `系統辨識出 ${siteEntries.length} 個測站、共 ${result.rows.length} 筆資料（來自 ${result.matchedSheets.length} 個工作表），目前已勾選 ${selectedTotal} 筆將匯入。`
+      + ` 部分欄位無法從報告本身取得，請在下方為每個測站補充一次，之後匯入同一測站會自動套用。`;
+    siteEntries.forEach(([key, site]) => {
+      const n = filterRowsBySelection(site.rowIndices.map(i => result.rows[i]), cat.itemField).length;
+      const cell = document.querySelector(`#smartSitesBody tr[data-site-key="${CSS.escape(key)}"] .site-row-count`);
+      if (cell) cell.textContent = n;
+    });
+    document.getElementById('btnImportConfirm').textContent = `確認匯入 ${selectedTotal} 筆資料`;
+  };
 
-  const locField = catKey === 'noise' ? '監測地點' : '採樣地點';
+  renderItemChecklist(document.getElementById('smartImportItemsWrap'), result.rows, cat.itemField, updateCounts);
+
+  const uncertainCount = result.rows.filter(r => r._uncertainUnit).length;
+  const existingWarning = document.getElementById('smartImportUnitWarning');
+  if (existingWarning) existingWarning.remove();
+  if (uncertainCount > 0) {
+    const warn = document.createElement('div');
+    warn.id = 'smartImportUnitWarning';
+    warn.className = 'warning';
+    const items = [...new Set(result.rows.filter(r => r._uncertainUnit).map(r => r[cat.itemField]))];
+    warn.innerHTML = `⚠️ 有 ${uncertainCount} 筆資料（${escapeHtml(items.join('、'))}）的單位代碼是系統自動比對、非完全確定，匯入後請至「單位代碼表」核對並視需要手動修正。 <button type="button" class="btn btn-ghost btn-sm" id="btnOpenUnitRefFromWarning">開啟單位代碼表</button>`;
+    document.getElementById('smartImportItemsWrap').after(warn);
+    document.getElementById('btnOpenUnitRefFromWarning').addEventListener('click', openUnitRefModal);
+  }
+
+  const locField = cat.locationField;
 
   const wrap = document.getElementById('smartImportSitesWrap');
   wrap.innerHTML = `<table class="mapping-table">
@@ -530,7 +932,7 @@ function renderSmartImportPreview() {
             }
             return `<td><input type="text" data-site-field="${f.key}" value="${escapeAttr(val)}"></td>`;
           }).join('')}
-          <td>${site.rowIndices.length}</td>
+          <td class="site-row-count">${site.rowIndices.length}</td>
           <td style="text-align:center"><input type="checkbox" data-site-remember checked></td>
         </tr>`;
       }).join('')}
@@ -545,7 +947,7 @@ function renderSmartImportPreview() {
   document.getElementById('importStep3').classList.remove('hidden');
   const confirmBtn = document.getElementById('btnImportConfirm');
   confirmBtn.classList.remove('hidden');
-  confirmBtn.textContent = `確認匯入 ${result.rows.length} 筆資料`;
+  updateCounts();
 }
 
 function confirmSmartImport() {
@@ -575,15 +977,42 @@ function confirmSmartImport() {
   });
   DataStore.saveSiteAliases(project.id, catKey, savedAliases);
 
-  // strip internal metadata fields before saving into the schema data
-  const cleanRows = result.rows.map(r => {
-    const out = {};
+  const selectedRows = filterRowsBySelection(result.rows, cat.itemField);
+  if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
+
+  // tag rows with a shared batch id so the grid can later offer "same file, same
+  // site" sync when the person corrects a date/time on one row (see wireGridEvents)
+  const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+
+  // strip internal metadata fields before saving into the schema data (keep _batchId)
+  const cleanRows = selectedRows.map(r => {
+    const out = { _batchId: batchId };
     cat.fields.forEach(f => { out[f.key] = r[f.key] || ''; });
     return out;
   });
 
   const existing = DataStore.getData(project.id, catKey);
   DataStore.saveData(project.id, catKey, existing.concat(cleanRows));
+  DataStore.addImportBatch(project.id, catKey, {
+    id: batchId,
+    timestamp: new Date().toISOString(),
+    sourceLabel: state.currentImportSourceLabel || '（未知來源）',
+    mode: 'smart',
+    rowCount: cleanRows.length,
+  });
+
+  if (state.batchQueue && state.batchQueue.length > 0) {
+    state.batchQueue.shift();
+    renderContent();
+    if (state.batchQueue.length > 0) {
+      processNextBatchItem();
+    } else {
+      state.batchQueue = null;
+      document.getElementById('importModal').classList.add('hidden');
+      alert(`批次匯入完成，共匯入 ${state.batchQueueTotal} 個類別的資料，請至各分類頁面核對內容。`);
+    }
+    return;
+  }
 
   closeImportModal();
   renderContent();
@@ -602,13 +1031,24 @@ function confirmImport() {
   });
 
   const newRows = ImportEngine.applyMapping(state.importParsed.rows, mapping, cat.fields);
+  const selectedRows = filterRowsBySelection(newRows, cat.itemField);
+  if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
+  const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  selectedRows.forEach(r => { r._batchId = batchId; });
   const existing = DataStore.getData(project.id, catKey);
-  const merged = existing.concat(newRows);
+  const merged = existing.concat(selectedRows);
   DataStore.saveData(project.id, catKey, merged);
+  DataStore.addImportBatch(project.id, catKey, {
+    id: batchId,
+    timestamp: new Date().toISOString(),
+    sourceLabel: state.currentImportSourceLabel || '（未知來源）',
+    mode: 'generic',
+    rowCount: selectedRows.length,
+  });
 
   closeImportModal();
   renderContent();
-  alert(`已匯入 ${newRows.length} 筆資料到「${cat.label}」。請於表格中核對內容是否正確。`);
+  alert(`已匯入 ${selectedRows.length} 筆資料到「${cat.label}」。請於表格中核對內容是否正確。`);
 }
 
 // ---------- backup export/import ----------
@@ -661,6 +1101,34 @@ function init() {
 
   document.getElementById('btnCoordCancel').addEventListener('click', closeCoordModal);
   document.getElementById('btnCoordSave').addEventListener('click', saveCoordModal);
+
+  document.getElementById('btnUnitCodeRef').addEventListener('click', openUnitRefModal);
+  document.getElementById('btnUnitRefClose').addEventListener('click', () => document.getElementById('unitRefModal').classList.add('hidden'));
+  document.getElementById('unitRefSearch').addEventListener('input', (e) => renderUnitRefTable(e.target.value));
+
+  document.getElementById('batchFileInput').addEventListener('change', (e) => handleBatchFiles(e.target.files));
+  document.getElementById('btnBatchCancel').addEventListener('click', closeBatchImportModal);
+
+  document.getElementById('btnBatchHistoryClose').addEventListener('click', () => document.getElementById('batchHistoryModal').classList.add('hidden'));
+
+  document.getElementById('btnExportSelectCancel').addEventListener('click', closeExportSelectModal);
+  document.getElementById('btnExportSelectConfirm').addEventListener('click', confirmExportSelect);
+
+  // Universal modal escape hatch: clicking the dark overlay outside the modal box,
+  // or pressing Escape, closes whichever modal is currently open. This is a safety
+  // net independent of each modal's own Cancel/Close button, so a modal can never
+  // become a dead end.
+  document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) overlay.classList.add('hidden');
+    });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    document.querySelectorAll('.modal-overlay').forEach(overlay => {
+      if (!overlay.classList.contains('hidden')) overlay.classList.add('hidden');
+    });
+  });
 }
 
 document.addEventListener('DOMContentLoaded', init);

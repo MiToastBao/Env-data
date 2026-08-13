@@ -139,21 +139,32 @@ const SmartParse = {
 
   UNIT_ALIASES: {
     '度': '161', 'pH': '161',
+    'μg/m3': '127', 'ug/m3': '127', 'μg/m^3': '127', 'ug/m^3': '127',
+    'μg/L': '126', 'ug/L': '126',
+    'mg/L': '47', 'MG/L': '47',
   },
-  /** Reverse-lookup a unit code from a free-text unit symbol (as printed on a lab report). */
+  /** Reverse-lookup a unit code from a free-text unit symbol (as printed on a lab report).
+   * Returns { code, confident }. confident=false means either no exact match was found
+   * (an alias/fallback was used or nothing matched at all) or more than one official code
+   * shares the same printed symbol (e.g. "ug/m^3" and "μg/m3" are both valid officially-listed
+   * unit codes for the same physical unit) — these cases should be flagged for human review
+   * rather than silently trusted, since an environmental filing with the wrong unit code is a
+   * meaningful error. */
   reverseUnitLookup(text) {
-    if (!text) return '';
+    if (!text) return { code: '', confident: false };
     const clean = String(text).trim();
-    if (this.UNIT_ALIASES[clean]) return this.UNIT_ALIASES[clean];
-    for (const [code, name] of Object.entries(UNIT_CODES)) {
-      if (name === clean) return code;
-    }
+    const exactMatches = Object.entries(UNIT_CODES).filter(([, name]) => name === clean);
+    if (exactMatches.length === 1) return { code: exactMatches[0][0], confident: true };
+    if (exactMatches.length > 1) return { code: exactMatches[0][0], confident: false }; // ambiguous: multiple official codes print identically
+
+    if (this.UNIT_ALIASES[clean]) return { code: this.UNIT_ALIASES[clean], confident: false };
+
     // loose fallback: case-insensitive
     const lower = clean.toLowerCase();
-    for (const [code, name] of Object.entries(UNIT_CODES)) {
-      if (String(name).toLowerCase() === lower) return code;
-    }
-    return '';
+    const looseMatches = Object.entries(UNIT_CODES).filter(([, name]) => String(name).toLowerCase() === lower);
+    if (looseMatches.length >= 1) return { code: looseMatches[0][0], confident: false };
+
+    return { code: '', confident: false };
   },
 
   /** 樣品特性 free text -> 檢測類別 enum used by the water template. */
@@ -342,10 +353,17 @@ const SmartParse = {
   /**
    * 24hr ambient air-quality report (continuous analyzers + TSP/PM2.5 side table).
    * Column positions are anchored by header-label text, not fixed indices, since a
-   * merged-cell layout otherwise shifts. Only emits the 7 items that Taiwan filings
-   * conventionally report from this report type: SO2, NO2, CO, O3, PM10, TSP, PM2.5.
+   * merged-cell layout otherwise shifts. Extracts EVERY pollutant column actually
+   * present in the report (not a fixed list) — which items end up in the filing is
+   * a decision the person makes via the item-selection checklist in the import UI,
+   * since different projects/plans report different sets of items.
    */
-  AIR_POLLUTANT_UNITS: { SO2: '113', NO2: '113', CO: '113', O3: '113', PM10: '127', TSP: '127', 'PM2.5': '127' },
+  AIR_POLLUTANT_DEFS: [
+    { key: 'SO2', unit: '113' }, { key: 'NO2', unit: '113', methodFrom: 'NOX' }, { key: 'NOx', unit: '113' },
+    { key: 'NO', unit: '113' }, { key: 'CO', unit: '113' }, { key: 'O3', unit: '113' },
+    { key: 'CH4', unit: '113' }, { key: 'NMHC', unit: '113' }, { key: 'THC', unit: '113' },
+    { key: 'PM10', unit: '127' },
+  ],
 
   parseAirQualitySheet(grid) {
     const title = this.cellStr(grid[1]?.[0] || '') + this.cellStr(grid[1]?.[18] || '');
@@ -355,18 +373,14 @@ const SmartParse = {
     if (!headerRowHit) return null;
     const headerRow = headerRowHit.r; // row 13 in the sample: pollutant column headers
     const colOf = (regex) => {
-      const hit = this.findCell(grid.slice(headerRow, headerRow + 1).map((r, i) => r), regex);
-      // findCell expects a full grid; reuse by scanning just this row directly instead
       const row = grid[headerRow];
       for (let c = 0; c < row.length; c++) if (regex.test(this.cellStr(row[c]))) return c;
       return -1;
     };
-    const cols = {
-      SO2: colOf(/^SO2$/), NO2: colOf(/^NO2$/), NOX: colOf(/^NOx$/i), CO: colOf(/^CO$/), O3: colOf(/^O3$/),
-      PM10: colOf(/^PM10$/), TSP: colOf(/^TSP$/),
-      method: colOf(/^檢測方法$/), location: colOf(/^監測地點$/), timeRange: colOf(/^監測時間$/),
-      pm25: colOf(/PM2\.5濃度/), standard: colOf(/^空氣品質標準$/),
-    };
+    const cols = { TSP: colOf(/^TSP$/), method: colOf(/^檢測方法$/), location: colOf(/^監測地點$/),
+      timeRange: colOf(/^監測時間$/), pm25: colOf(/PM2\.5濃度/), standard: colOf(/^空氣品質標準$/) };
+    // dynamically locate whichever pollutant columns this report actually has
+    this.AIR_POLLUTANT_DEFS.forEach(def => { cols[def.key] = colOf(new RegExp(`^${def.key}$`, 'i')); });
 
     // hourly data block: rows after the unit row (headerRow+2) up to the "日平均值或" row
     const unitRow = headerRow + 2;
@@ -430,26 +444,21 @@ const SmartParse = {
       _siteCode: siteCode, _rawLocation: location,
     };
 
-    const items = [
-      { key: 'SO2', col: cols.SO2, method: methodMap.SO2 },
-      { key: 'NO2', col: cols.NO2, method: methodMap.NOX }, // NO2 reported off the NOx analyzer method
-      { key: 'CO', col: cols.CO, method: methodMap.CO },
-      { key: 'O3', col: cols.O3, method: methodMap.O3 },
-      { key: 'PM10', col: cols.PM10, method: methodMap.PM10 },
-    ];
     const rows = [];
-    items.forEach(it => {
-      if (it.col < 0) return;
-      const v = this.cellStr(avgRow[it.col]);
+    this.AIR_POLLUTANT_DEFS.forEach(def => {
+      const col = cols[def.key];
+      if (col < 0) return;
+      const v = this.cellStr(avgRow[col]);
       if (v === '' || isNaN(parseFloat(v))) return;
+      const methodKey = (def.methodFrom || def.key).toUpperCase();
       rows.push({
-        ...baseRow, '檢測項目': it.key, '檢測濃度/質量單位': this.AIR_POLLUTANT_UNITS[it.key],
-        '檢測數值': this.formatNumber(v, 3), '檢測方法': it.method || '',
+        ...baseRow, '檢測項目': def.key, '檢測濃度/質量單位': def.unit,
+        '檢測數值': this.formatNumber(v, 3), '檢測方法': methodMap[methodKey] || '',
       });
     });
     if (tspVal) {
       rows.push({
-        ...baseRow, '檢測項目': 'TSP', '檢測濃度/質量單位': this.AIR_POLLUTANT_UNITS.TSP,
+        ...baseRow, '檢測項目': 'TSP', '檢測濃度/質量單位': '127',
         '檢測數值': this.formatNumber(tspVal, 3), '檢測方法': methodMap.TSP || '',
       });
     }
@@ -457,7 +466,7 @@ const SmartParse = {
       const pm25Val = this.cellStr(grid[unitRow]?.[cols.pm25]);
       if (pm25Val !== '' && !isNaN(parseFloat(pm25Val))) {
         rows.push({
-          ...baseRow, '檢測項目': 'PM2.5', '檢測濃度/質量單位': this.AIR_POLLUTANT_UNITS['PM2.5'],
+          ...baseRow, '檢測項目': 'PM2.5', '檢測濃度/質量單位': '127',
           '檢測數值': this.formatNumber(pm25Val, 3), '檢測方法': pm25Method,
         });
       }
@@ -512,7 +521,7 @@ const SmartParse = {
       if (cells[idx] && /^NIEA/i.test(cells[idx])) { methodText = cells[idx]; idx++; }
 
       const { cmp, val } = this.parseValueCell(valueRaw);
-      const unitCode = unitText ? this.reverseUnitLookup(unitText) : '';
+      const unitLookup = unitText ? this.reverseUnitLookup(unitText) : { code: '', confident: true };
       const valFormatted = /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val;
       const limitFormatted = /^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : limitRaw;
 
@@ -521,11 +530,12 @@ const SmartParse = {
         '採樣地點': location, '座標系統': '', '採樣座標-經度 X': '', '採樣座標-緯度 Y': '',
         '採樣深度(公尺)': '', '採樣水深(公尺)': '', '管制編號': '',
         '檢測類別': category, '檢測項目': itemName,
-        '檢測濃度/質量單位': unitCode, '其他檢測濃度/質量單位': unitCode ? '' : unitText,
+        '檢測濃度/質量單位': unitLookup.code, '其他檢測濃度/質量單位': unitLookup.code ? '' : unitText,
         '比較關係': cmp, '檢測數值': valFormatted, '檢測極限': limitFormatted,
         '檢測方法': this.extractMethodCode(methodText) || defaultMethod,
         '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
         _siteCode: siteCode, _rawLocation: location,
+        _uncertainUnit: unitText && !unitLookup.confident,
       });
     }
     return rows.length ? rows : null;

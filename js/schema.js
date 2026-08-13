@@ -33,6 +33,7 @@ const CATEGORIES = {
   air: {
     key: 'air',
     locationField: '採樣地點',
+    itemField: '檢測項目',
     label: '空氣品質',
     sourceFile: '空氣品質監測填寫.xlsx',
     dataSheetName: '空品檢測項目',
@@ -69,6 +70,7 @@ const CATEGORIES = {
   water: {
     key: 'water',
     locationField: '採樣地點',
+    itemField: '檢測項目',
     label: '水質',
     sourceFile: '水質檢測資料填寫.xlsx',
     dataSheetName: '水質檢測項目',
@@ -103,6 +105,7 @@ const CATEGORIES = {
   geo: {
     key: 'geo',
     locationField: '採樣地點',
+    itemField: '檢測項目',
     label: '地質',
     sourceFile: '地質檢測資料填寫.xlsx',
     dataSheetName: '地質檢測項目',
@@ -136,6 +139,7 @@ const CATEGORIES = {
   noise: {
     key: 'noise',
     locationField: '監測地點',
+    itemField: '音源發聲特性',
     label: '噪音',
     sourceFile: '噪音監測資料填寫.xlsx',
     dataSheetName: '噪音檢測項目',
@@ -171,6 +175,7 @@ const CATEGORIES = {
   eco: {
     key: 'eco',
     locationField: '調查地點',
+    itemField: '調查項目',
     label: '生態',
     sourceFile: '生態調查資料填寫.xlsx',
     dataSheetName: '生態檢測項目',
