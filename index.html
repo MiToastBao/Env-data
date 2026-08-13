@@ -103,6 +103,19 @@
   </div>
 </div>
 
+<!-- Method Manager Modal -->
+<div id="methodModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>檢測方法管理</h3>
+    <p class="hint">依「測項」列出目前資料中出現過的所有項目。原始報告若沒有提供某項目的檢測方法，或系統無法確定單位代碼，會在這裡標示提醒；填寫後系統會記住，之後（含下一季）匯入同一測項時自動帶入。</p>
+    <div id="methodItemsWrap" class="mapping-table-wrap"></div>
+    <div class="modal-actions">
+      <button id="btnMethodCancel" class="btn btn-ghost">取消</button>
+      <button id="btnMethodSave" class="btn btn-primary">儲存並套用</button>
+    </div>
+  </div>
+</div>
+
 <!-- Changelog Modal -->
 <div id="changelogModal" class="modal-overlay hidden">
   <div class="modal modal-wide">

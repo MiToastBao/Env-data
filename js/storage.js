@@ -45,6 +45,7 @@ const DataStore = {
       localStorage.removeItem(this._dataKey(id, cat));
       localStorage.removeItem(this._siteAliasKey(id, cat));
       localStorage.removeItem(this._batchKey(id, cat));
+      localStorage.removeItem(this._methodMemoryKey(id, cat));
     });
   },
 
@@ -59,6 +60,36 @@ const DataStore = {
   },
   _batchKey(projectId, category) {
     return `envapp_batches_${projectId}_${category}`;
+  },
+  _methodMemoryKey(projectId, category) {
+    return `envapp_methodmem_${projectId}_${category}`;
+  },
+
+  // Item memory: remembers, per (project, category, item name), the last-confirmed
+  // unit code and test method — independent of which quarter/file it came from. This
+  // is what lets next season's import default to what was already established this
+  // season, without needing the person to track which period supplied which value.
+  getItemMemory(projectId, category) {
+    try {
+      return JSON.parse(localStorage.getItem(this._methodMemoryKey(projectId, category))) || {};
+    } catch (e) {
+      return {};
+    }
+  },
+  saveItemMemory(projectId, category, memory) {
+    localStorage.setItem(this._methodMemoryKey(projectId, category), JSON.stringify(memory));
+  },
+  /** Merge in newly-confirmed per-item values (only overwrites a field if the new value is non-empty). */
+  updateItemMemory(projectId, category, itemUpdates) {
+    const memory = this.getItemMemory(projectId, category);
+    Object.entries(itemUpdates).forEach(([itemName, fields]) => {
+      memory[itemName] = memory[itemName] || {};
+      Object.entries(fields).forEach(([key, val]) => {
+        if (val) memory[itemName][key] = val;
+      });
+      memory[itemName]._updatedAt = new Date().toISOString();
+    });
+    this.saveItemMemory(projectId, category, memory);
   },
 
   // Import-batch registry: one entry per "import" action (a single-file import,
@@ -130,9 +161,10 @@ const DataStore = {
     const projects = this.getProjects();
     const out = { projects: [] };
     projects.forEach(p => {
-      const entry = { ...p, basicInfo: this.getBasicInfo(p.id), data: {} };
+      const entry = { ...p, basicInfo: this.getBasicInfo(p.id), data: {}, itemMemory: {} };
       CATEGORY_ORDER.forEach(cat => {
         entry.data[cat] = this.getData(p.id, cat);
+        entry.itemMemory[cat] = this.getItemMemory(p.id, cat);
       });
       out.projects.push(entry);
     });
@@ -152,6 +184,7 @@ const DataStore = {
       this.saveBasicInfo(newId, entry.basicInfo || {});
       CATEGORY_ORDER.forEach(cat => {
         this.saveData(newId, cat, (entry.data && entry.data[cat]) || []);
+        if (entry.itemMemory && entry.itemMemory[cat]) this.saveItemMemory(newId, cat, entry.itemMemory[cat]);
       });
     });
     this.saveProjects(projects);

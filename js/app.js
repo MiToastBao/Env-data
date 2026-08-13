@@ -26,12 +26,35 @@ function toDateInputValue(v) {
   if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
   return '';
 }
+/** ISO "YYYY-MM-DD" (internal storage/export format, unchanged) -> "YYYY/MM/DD" for display. */
+function toDateDisplayValue(v) {
+  const iso = toDateInputValue(v);
+  return iso ? iso.replace(/-/g, '/') : '';
+}
+/** Accepts "2026/5/12", "2026-5-12", "20260512" typed free-hand and normalizes to the
+ *  canonical ISO "YYYY-MM-DD" used for storage/export/date-math. Returns '' if it
+ *  doesn't look like a date at all, rather than silently keeping garbage. */
+function normalizeDateString(raw) {
+  const s = String(raw ?? '').trim();
+  if (s === '') return '';
+  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = s.match(/^(\d{4})(\d{2})(\d{2})$/); // 20260512
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  return s; // unrecognized — leave as typed so the person can see and fix it
+}
 function toTimeInputValue(v) {
   if (!v) return '';
   const s = String(v);
   const m = s.match(/(\d{1,2}):(\d{2})(:(\d{2}))?/);
   if (m) return `${m[1].padStart(2, '0')}:${m[2]}:${m[4] || '00'}`;
   return '';
+}
+/** HH:MM:SS (internal storage/export format, unchanged) -> HH:MM for display — the
+ *  official template's own time format is "h:mm" with no seconds shown anyway. */
+function toTimeDisplayValue(v) {
+  const full = toTimeInputValue(v);
+  return full ? full.slice(0, 5) : '';
 }
 /** Accepts "1430", "14:30", "14:30:00", "143000" typed free-hand and normalizes to HH:MM:SS.
  *  Returns the original trimmed string unchanged if it doesn't look like a time at all,
@@ -159,7 +182,7 @@ function renderBasicTab(project) {
     if (f.type === 'select') {
       control = `<select data-field="${f.key}">${f.options.map(o => `<option value="${escapeAttr(o)}" ${o === val ? 'selected' : ''}>${o || '（未選擇）'}</option>`).join('')}</select>`;
     } else if (f.type === 'date') {
-      control = `<input type="date" data-field="${f.key}" value="${escapeAttr(toDateInputValue(val))}">`;
+      control = `<input type="text" data-field="${f.key}" value="${escapeAttr(toDateDisplayValue(val))}" class="date-input" placeholder="YYYY/MM/DD" inputmode="numeric" maxlength="10">`;
     } else if (f.type === 'textarea') {
       control = `<textarea data-field="${f.key}" rows="2">${escapeHtml(val)}</textarea>`;
     } else {
@@ -190,6 +213,16 @@ function renderBasicTab(project) {
       info[el.dataset.field] = el.value;
       DataStore.saveBasicInfo(project.id, info);
     });
+    if (el.classList.contains('date-input')) {
+      el.addEventListener('focusout', () => {
+        const normalized = normalizeDateString(el.value);
+        el.value = toDateDisplayValue(normalized) || normalized;
+        const info = DataStore.getBasicInfo(project.id);
+        info[el.dataset.field] = normalized;
+        DataStore.saveBasicInfo(project.id, info);
+      });
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); el.blur(); } });
+    }
   });
 }
 
@@ -206,6 +239,7 @@ function renderCategoryTab(project, catKey) {
         <button class="btn btn-primary btn-sm" id="btnImport">📥 匯入資料（Excel/PDF）</button>
         <button class="btn btn-ghost btn-sm" id="btnAddRow">＋ 新增一筆</button>
         <button class="btn btn-ghost btn-sm" id="btnCoordManager">📍 測站座標管理</button>
+        ${cat.methodField ? `<button class="btn btn-ghost btn-sm" id="btnMethodManager">🧪 檢測方法管理</button>` : ''}
         <button class="btn btn-ghost btn-sm" id="btnBatchHistory">📜 匯入紀錄${batches.length ? ` (${batches.length})` : ''}</button>
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）</button>
         <button class="btn btn-danger btn-sm" id="btnClearCat" ${rows.length === 0 ? 'disabled' : ''}>🗑 清空此類別</button>
@@ -223,7 +257,7 @@ function renderCategoryTab(project, catKey) {
           <th class="col-check"><input type="checkbox" id="checkAllRows" ${rows.length === 0 ? 'disabled' : ''}></th>
           <th>操作</th>
           <th>#</th>
-          ${cat.fields.map(f => `<th${f.key === cat.itemField ? ' class="col-item"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
+          ${cat.fields.map(f => `<th${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
         </tr></thead>
         <tbody id="gridBody">${rows.map((r, idx) => rowHtml(cat, r, idx)).join('')}</tbody>
       </table>
@@ -234,6 +268,9 @@ function renderCategoryTab(project, catKey) {
   document.getElementById('btnImport').addEventListener('click', () => openImportModal(catKey));
   document.getElementById('btnAddRow').addEventListener('click', () => addEmptyRow(project, catKey));
   document.getElementById('btnCoordManager').addEventListener('click', () => openCoordModal(project, catKey));
+  if (cat.methodField) {
+    document.getElementById('btnMethodManager').addEventListener('click', () => openMethodModal(project, catKey));
+  }
   document.getElementById('btnBatchHistory').addEventListener('click', () => openBatchHistoryModal(project, catKey));
   document.getElementById('btnExportCat').addEventListener('click', () => {
     if (rows.length === 0) { alert('此類別尚無資料可匯出。'); return; }
@@ -331,7 +368,7 @@ function openBatchHistoryModal(project, catKey) {
 }
 
 function rowHtml(cat, row, idx) {
-  const cells = cat.fields.map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : ''}>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
+  const cells = cat.fields.map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
   return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td><td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td>${idx + 1}</td>${cells}</tr>`;
 }
 
@@ -348,13 +385,17 @@ function fieldControlHTML(field, value, rowAttr) {
       return `<select ${base}${titleAttr}>${opts}</select>`;
     }
     case 'date':
-      return `<input type="date" ${base} value="${escapeAttr(toDateInputValue(value))}">`;
+      // Plain text rather than a native <input type=date>: native date pickers render
+      // according to browser/OS locale and can't be forced to show "YYYY/MM/DD" —
+      // typing "2026/5/12" or "2026-5-12" both work, normalized on blur.
+      return `<input type="text" ${base} value="${escapeAttr(toDateDisplayValue(value))}" class="date-input" placeholder="YYYY/MM/DD" inputmode="numeric" maxlength="10">`;
     case 'time':
       // Plain text rather than a native <input type=time>: native time pickers on many
       // devices show a scroll-wheel that's fiddly to land on an exact second, and on
       // some mobile browsers don't reliably fire change events at all. Typing "1430",
-      // "14:30", or "14:30:00" all work — normalized to HH:MM:SS on blur.
-      return `<input type="text" ${base} value="${escapeAttr(toTimeInputValue(value))}" class="time-input" placeholder="HH:MM:SS" inputmode="numeric" maxlength="8">`;
+      // "14:30", or "14:30:00" all work — normalized to HH:MM on blur (the official
+      // template's own time format has no seconds either).
+      return `<input type="text" ${base} value="${escapeAttr(toTimeDisplayValue(value))}" class="time-input" placeholder="HH:MM" inputmode="numeric" maxlength="8">`;
     case 'suggest': {
       const listId = `suggest-${field.key.replace(/[^a-zA-Z0-9]/g, '')}`;
       if (!document.getElementById(listId)) {
@@ -445,6 +486,33 @@ function wireGridEvents(project, catKey, cat) {
     return true;
   };
 
+  // 檢測類別 sync follows the same rule as coordinates (per the person's own
+  // clarification): same batch (file) + same site + same sampling date. Unlike
+  // date/time sync, this must NOT cross dates — a site's category classification for
+  // one visit shouldn't silently overwrite a different visit's classification.
+  const offerCategorySync = (rowIdx) => {
+    const rows = DataStore.getData(project.id, catKey);
+    const source = rows[rowIdx];
+    const locField = cat.locationField;
+    if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
+    const matches = rows
+      .map((r, idx) => ({ r, idx }))
+      .filter(({ r, idx }) => idx !== rowIdx && r._batchId === source._batchId
+        && r[locField] === source[locField] && r['日期(起)'] === source['日期(起)']);
+    if (matches.length === 0) return false;
+    const anyDiff = matches.some(({ r }) => r['檢測類別'] !== source['檢測類別']);
+    if (!anyDiff) return false;
+    const ok = confirm(
+      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
+      `是否要將這些資料的檢測類別一併同步更新為「${source['檢測類別']}」？\n\n` +
+      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
+    );
+    if (!ok) return false;
+    matches.forEach(({ r }) => { r['檢測類別'] = source['檢測類別']; });
+    DataStore.saveData(project.id, catKey, rows);
+    return true;
+  };
+
   tbody.addEventListener('input', (e) => {
     const t = e.target;
     if (!t.dataset.field) return;
@@ -460,6 +528,7 @@ function wireGridEvents(project, catKey, cat) {
     if (t.tagName === 'SELECT') {
       commit(Number(t.dataset.row), t.dataset.field, t.value);
       if (COORD_FIELDS.includes(t.dataset.field) && offerCoordSync(Number(t.dataset.row))) { renderContent(); return; }
+      if (t.dataset.field === '檢測類別' && offerCategorySync(Number(t.dataset.row))) { renderContent(); return; }
     }
   });
   // use focusout (bubbles) rather than blur to catch this via delegation; only
@@ -471,8 +540,13 @@ function wireGridEvents(project, catKey, cat) {
     const fieldKey = t.dataset.field;
 
     if (t.classList.contains('time-input')) {
-      const normalized = normalizeTimeString(t.value);
-      t.value = normalized;
+      const normalized = normalizeTimeString(t.value); // full HH:MM:SS for storage
+      t.value = normalized.slice(0, 5); // HH:MM for display
+      commit(rowIdx, fieldKey, normalized);
+    }
+    if (t.classList.contains('date-input')) {
+      const normalized = normalizeDateString(t.value); // ISO YYYY-MM-DD for storage
+      t.value = toDateDisplayValue(normalized) || normalized; // YYYY/MM/DD for display
       commit(rowIdx, fieldKey, normalized);
     }
 
@@ -599,6 +673,94 @@ function saveCoordModal() {
   closeCoordModal();
   renderContent();
   alert('已套用座標到符合的資料列（僅限相同測站＋相同採樣日期的資料）。');
+}
+
+// ---------- method manager (test method + unit code, remembered across seasons) ----------
+function openMethodModal(project, catKey) {
+  const cat = CATEGORIES[catKey];
+  const rows = DataStore.getData(project.id, catKey);
+  const memory = DataStore.getItemMemory(project.id, catKey);
+  const itemField = cat.itemField;
+
+  const groups = {}; // itemName -> { indices, method, unitCode }
+  rows.forEach((row, idx) => {
+    const item = (row[itemField] || '').trim() || '（未命名項目）';
+    if (!groups[item]) {
+      groups[item] = {
+        indices: [],
+        method: row[cat.methodField] || (memory[item] && memory[item].method) || '',
+        unitCode: cat.unitField ? (row[cat.unitField] || (memory[item] && memory[item].unitCode) || '') : null,
+      };
+    }
+    groups[item].indices.push(idx);
+    if (!groups[item].method && row[cat.methodField]) groups[item].method = row[cat.methodField];
+    if (cat.unitField && !groups[item].unitCode && row[cat.unitField]) groups[item].unitCode = row[cat.unitField];
+  });
+
+  const entries = Object.entries(groups);
+  const wrap = document.getElementById('methodItemsWrap');
+  if (entries.length === 0) {
+    wrap.innerHTML = '<p class="hint" style="padding:14px">目前此類別尚無資料，請先新增或匯入資料後再使用檢測方法管理。</p>';
+  } else {
+    wrap.innerHTML = `<table class="mapping-table">
+      <thead><tr>
+        <th>測項</th><th>檢測方法</th>${cat.unitField ? '<th>單位代碼</th>' : ''}<th>筆數</th>
+      </tr></thead>
+      <tbody id="methodItemsBody">
+        ${entries.map(([item, g]) => `<tr data-item="${escapeAttr(item)}">
+          <td>${escapeHtml(item)}${!g.method ? ' <span class="req" title="尚未有檢測方法">＊</span>' : ''}</td>
+          <td><input type="text" data-method-field="method" value="${escapeAttr(g.method)}" placeholder="例：NIEA W417"></td>
+          ${cat.unitField ? `<td><input type="text" data-method-field="unitCode" value="${escapeAttr(g.unitCode || '')}" class="code-input" data-codetype="unit" title="${escapeAttr(lookupUnit(g.unitCode))}" placeholder="代碼"></td>` : ''}
+          <td>${g.indices.length}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+    wrap.querySelectorAll('.code-input').forEach(inp => {
+      inp.addEventListener('input', () => { inp.title = lookupUnit(inp.value); });
+    });
+  }
+
+  document.getElementById('methodModal').dataset.projectId = project.id;
+  document.getElementById('methodModal').dataset.catKey = catKey;
+  document.getElementById('btnMethodSave').classList.toggle('hidden', entries.length === 0);
+  document.getElementById('methodModal').classList.remove('hidden');
+}
+
+function closeMethodModal() {
+  document.getElementById('methodModal').classList.add('hidden');
+}
+
+function saveMethodModal() {
+  const modal = document.getElementById('methodModal');
+  const projectId = modal.dataset.projectId;
+  const catKey = modal.dataset.catKey;
+  const cat = CATEGORIES[catKey];
+  const rows = DataStore.getData(projectId, catKey);
+  const itemField = cat.itemField;
+  const memoryUpdates = {};
+
+  document.querySelectorAll('#methodItemsBody tr').forEach(tr => {
+    const item = tr.dataset.item;
+    const values = {};
+    tr.querySelectorAll('[data-method-field]').forEach(el => {
+      const targetField = el.dataset.methodField === 'method' ? cat.methodField : cat.unitField;
+      if (targetField) values[targetField] = el.value;
+    });
+    rows.forEach(row => {
+      const rowItem = (row[itemField] || '').trim() || '（未命名項目）';
+      if (rowItem === item) Object.assign(row, values);
+    });
+    const memFields = {};
+    if (values[cat.methodField]) memFields.method = values[cat.methodField];
+    if (cat.unitField && values[cat.unitField]) memFields.unitCode = values[cat.unitField];
+    if (Object.keys(memFields).length) memoryUpdates[item] = memFields;
+  });
+
+  DataStore.saveData(projectId, catKey, rows);
+  if (Object.keys(memoryUpdates).length) DataStore.updateItemMemory(projectId, catKey, memoryUpdates);
+  closeMethodModal();
+  renderContent();
+  alert('已套用檢測方法／單位代碼到符合的資料列，並記住這些設定供下次（含下一季）匯入同一測項時自動帶入。');
 }
 
 // ---------- version / changelog ----------
@@ -789,6 +951,7 @@ async function handleBatchFiles(fileList) {
       for (const catKey of AUTO_DETECT_CATEGORIES) {
         const rows = SmartParse.parseSheet(catKey, sheetName, grid);
         if (rows && rows.length) {
+          rows.forEach(r => { r._sourceFile = file.name; });
           perCategory[catKey].rows.push(...rows);
           perCategory[catKey].matchedSheets.push(`${file.name} / ${sheetName}`);
           perCategory[catKey].sourceFiles.add(file.name);
@@ -912,6 +1075,7 @@ async function handleImportFile(fileOrFiles) {
         for (const [sheetName, grid] of Object.entries(grids)) {
           const rows = SmartParse.parseSheet(catKey, sheetName, grid);
           if (rows && rows.length) {
+            rows.forEach(r => { r._sourceFile = file.name; });
             aggregate.rows.push(...rows);
             aggregate.matchedSheets.push(`${file.name} / ${sheetName}`);
             aggregate.sourceFiles.add(file.name);
@@ -1005,6 +1169,24 @@ function renderSmartImportPreview() {
   const profileFields = SmartParse.SITE_PROFILE_FIELDS[catKey] || [];
   const savedAliases = DataStore.getSiteAliases(project.id, catKey);
 
+  // Fill in method/unit from this project's remembered values (learned from past
+  // confirmed imports, any season) wherever the report itself didn't supply one —
+  // done once per parsed result, not on every checklist toggle re-render.
+  if (!result._memoryApplied && (cat.methodField || cat.unitField)) {
+    const memory = DataStore.getItemMemory(project.id, catKey);
+    result.rows.forEach(row => {
+      const mem = memory[row[cat.itemField]];
+      if (!mem) return;
+      if (cat.methodField && !row[cat.methodField] && mem.method) {
+        row[cat.methodField] = mem.method; row._methodFromMemory = true;
+      }
+      if (cat.unitField && !row[cat.unitField] && mem.unitCode) {
+        row[cat.unitField] = mem.unitCode; row._unitFromMemory = true;
+      }
+    });
+    result._memoryApplied = true;
+  }
+
   const siteEntries = Object.entries(result.sites); // [key, {siteCode, rawLocation, rowIndices}]
   state.itemSelection = null; // reset so renderItemChecklist re-seeds with "all checked"
 
@@ -1022,6 +1204,19 @@ function renderSmartImportPreview() {
   };
 
   renderItemChecklist(document.getElementById('smartImportItemsWrap'), result.rows, cat.itemField, updateCounts);
+
+  const existingMethodWarning = document.getElementById('smartImportMethodWarning');
+  if (existingMethodWarning) existingMethodWarning.remove();
+  if (cat.methodField) {
+    const missingMethodItems = [...new Set(result.rows.filter(r => !r[cat.methodField]).map(r => r[cat.itemField]))];
+    if (missingMethodItems.length > 0) {
+      const warn = document.createElement('div');
+      warn.id = 'smartImportMethodWarning';
+      warn.className = 'warning';
+      warn.innerHTML = `⚠️ 以下項目報告中未提供檢測方法、系統也沒有先前記憶的資料，匯入後請至「🧪 檢測方法管理」補充：${escapeHtml(missingMethodItems.join('、'))}`;
+      document.getElementById('smartImportItemsWrap').after(warn);
+    }
+  }
 
   const existingPdfWarning = document.getElementById('smartImportPdfWarning');
   if (existingPdfWarning) existingPdfWarning.remove();
@@ -1092,6 +1287,53 @@ function renderSmartImportPreview() {
   updateCounts();
 }
 
+// ---------- duplicate detection ----------
+// ---------- cross-season item memory (unit code / test method, remembered per project) ----------
+function learnItemMemoryFromRows(projectId, catKey, cat, rows) {
+  if (!cat.methodField && !cat.unitField) return;
+  const updates = {};
+  rows.forEach(r => {
+    const itemName = r[cat.itemField];
+    if (!itemName) return;
+    const fields = {};
+    if (cat.methodField && r[cat.methodField]) fields.method = r[cat.methodField];
+    if (cat.unitField && r[cat.unitField]) fields.unitCode = r[cat.unitField];
+    if (Object.keys(fields).length) updates[itemName] = { ...(updates[itemName] || {}), ...fields };
+  });
+  if (Object.keys(updates).length) DataStore.updateItemMemory(projectId, catKey, updates);
+}
+
+// A row counts as a duplicate of existing data when its date + time + location + item
+// all match exactly — e.g. re-importing the same report twice, or two files that
+// happen to cover an overlapping period for the same site.
+function findDuplicateIndices(existingRows, newRows, cat) {
+  const locField = cat.locationField;
+  const itemField = cat.itemField;
+  const existingKeys = new Set(existingRows.map(r =>
+    [r['日期(起)'], r['時間(起)'], r[locField], r[itemField]].join('\u0001')));
+  const dupIndices = [];
+  newRows.forEach((r, i) => {
+    const key = [r['日期(起)'], r['時間(起)'], r[locField], r[itemField]].join('\u0001');
+    if (existingKeys.has(key)) dupIndices.push(i);
+  });
+  return dupIndices;
+}
+/** Returns the rows to actually import after checking for duplicates against what's
+ *  already in this category, prompting the person if any are found. Returns null if
+ *  the whole import should be aborted (not currently used, but keeps the door open). */
+function resolveDuplicatesForImport(project, catKey, cat, candidateRows) {
+  const existing = DataStore.getData(project.id, catKey);
+  const dupIndices = findDuplicateIndices(existing, candidateRows, cat);
+  if (dupIndices.length === 0) return candidateRows;
+  const dupSet = new Set(dupIndices);
+  const exclude = confirm(
+    `偵測到 ${dupIndices.length} 筆資料的採樣日期／時間／地點／測項都跟目前已有的資料完全相同，可能是重複匯入。\n\n` +
+    `按「確定」＝排除這些重複資料，只匯入其餘不重複的部分。\n` +
+    `按「取消」＝仍然全部匯入（含重複資料）。`
+  );
+  return exclude ? candidateRows.filter((_, i) => !dupSet.has(i)) : candidateRows;
+}
+
 function confirmSmartImport() {
   const project = getCurrentProject();
   const catKey = state.importCatKey;
@@ -1119,28 +1361,46 @@ function confirmSmartImport() {
   });
   DataStore.saveSiteAliases(project.id, catKey, savedAliases);
 
-  const selectedRows = filterRowsBySelection(result.rows, cat.itemField);
+  let selectedRows = filterRowsBySelection(result.rows, cat.itemField);
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
+  selectedRows = resolveDuplicatesForImport(project, catKey, cat, selectedRows);
+  if (selectedRows.length === 0) { alert('排除重複資料後已無資料可匯入。'); return; }
 
-  // tag rows with a shared batch id so the grid can later offer "same file, same
-  // site" sync when the person corrects a date/time on one row (see wireGridEvents)
-  const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  // Tag rows with a batch id PER SOURCE FILE, not one shared id for the whole confirm
+  // action — a multi-file import (e.g. three months' reports for the same site
+  // selected together) must not let the "same file, same site" sync logic treat all
+  // three months as one sampling event just because they were imported in one go.
+  const batchIdByFile = {};
+  const getBatchIdFor = (sourceFile) => {
+    const key = sourceFile || '(單一檔案)';
+    if (!batchIdByFile[key]) batchIdByFile[key] = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    return batchIdByFile[key];
+  };
 
   // strip internal metadata fields before saving into the schema data (keep _batchId)
   const cleanRows = selectedRows.map(r => {
-    const out = { _batchId: batchId };
+    const out = { _batchId: getBatchIdFor(r._sourceFile) };
     cat.fields.forEach(f => { out[f.key] = r[f.key] || ''; });
     return out;
   });
 
   const existing = DataStore.getData(project.id, catKey);
   DataStore.saveData(project.id, catKey, existing.concat(cleanRows));
-  DataStore.addImportBatch(project.id, catKey, {
-    id: batchId,
-    timestamp: new Date().toISOString(),
-    sourceLabel: state.currentImportSourceLabel || '（未知來源）',
-    mode: 'smart',
-    rowCount: cleanRows.length,
+  learnItemMemoryFromRows(project.id, catKey, cat, cleanRows);
+
+  // One import-history entry per source file (matching the per-file batch id above),
+  // so "刪除此批次" in the history list correctly removes exactly one file's rows.
+  const rowCountByBatchId = {};
+  cleanRows.forEach(r => { rowCountByBatchId[r._batchId] = (rowCountByBatchId[r._batchId] || 0) + 1; });
+  const fileNameByBatchId = Object.fromEntries(Object.entries(batchIdByFile).map(([file, id]) => [id, file]));
+  Object.entries(rowCountByBatchId).forEach(([id, rowCount]) => {
+    DataStore.addImportBatch(project.id, catKey, {
+      id,
+      timestamp: new Date().toISOString(),
+      sourceLabel: fileNameByBatchId[id] || state.currentImportSourceLabel || '（未知來源）',
+      mode: 'smart',
+      rowCount,
+    });
   });
 
   if (state.batchQueue && state.batchQueue.length > 0) {
@@ -1173,13 +1433,25 @@ function confirmImport() {
   });
 
   const newRows = ImportEngine.applyMapping(state.importParsed.rows, mapping, cat.fields);
-  const selectedRows = filterRowsBySelection(newRows, cat.itemField);
+  if (cat.methodField || cat.unitField) {
+    const memory = DataStore.getItemMemory(project.id, catKey);
+    newRows.forEach(row => {
+      const mem = memory[row[cat.itemField]];
+      if (!mem) return;
+      if (cat.methodField && !row[cat.methodField] && mem.method) row[cat.methodField] = mem.method;
+      if (cat.unitField && !row[cat.unitField] && mem.unitCode) row[cat.unitField] = mem.unitCode;
+    });
+  }
+  let selectedRows = filterRowsBySelection(newRows, cat.itemField);
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
+  selectedRows = resolveDuplicatesForImport(project, catKey, cat, selectedRows);
+  if (selectedRows.length === 0) { alert('排除重複資料後已無資料可匯入。'); return; }
   const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
   selectedRows.forEach(r => { r._batchId = batchId; });
   const existing = DataStore.getData(project.id, catKey);
   const merged = existing.concat(selectedRows);
   DataStore.saveData(project.id, catKey, merged);
+  learnItemMemoryFromRows(project.id, catKey, cat, selectedRows);
   DataStore.addImportBatch(project.id, catKey, {
     id: batchId,
     timestamp: new Date().toISOString(),
@@ -1247,6 +1519,9 @@ function init() {
 
   document.getElementById('btnCoordCancel').addEventListener('click', closeCoordModal);
   document.getElementById('btnCoordSave').addEventListener('click', saveCoordModal);
+
+  document.getElementById('btnMethodCancel').addEventListener('click', closeMethodModal);
+  document.getElementById('btnMethodSave').addEventListener('click', saveMethodModal);
 
   document.getElementById('btnUnitCodeRef').addEventListener('click', openUnitRefModal);
   document.getElementById('btnUnitRefClose').addEventListener('click', () => document.getElementById('unitRefModal').classList.add('hidden'));

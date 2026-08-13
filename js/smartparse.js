@@ -19,6 +19,7 @@ const SmartParse = {
   SITE_PROFILE_FIELDS: {
     noise: [
       { key: '監測地點', label: '正式監測站名', type: 'text' },
+      { key: '檢測類別', label: '檢測類別（系統判讀，可調整）', type: 'select', options: ['', ...CATEGORY_TYPE_OPTIONS.noise] },
       { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'],
         optionLabels: { '2': '2：WGS84（全球座標）', '3': '3：TWD97-TM2（投影座標系）' } },
       { key: '採樣座標-經度 X', label: '座標X', type: 'text' },
@@ -28,6 +29,7 @@ const SmartParse = {
     ],
     water: [
       { key: '採樣地點', label: '正式採樣地點', type: 'text' },
+      { key: '檢測類別', label: '檢測類別（系統判讀，可調整）', type: 'select', options: ['', ...CATEGORY_TYPE_OPTIONS.water] },
       { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'],
         optionLabels: { '2': '2：WGS84（全球座標）', '3': '3：TWD97-TM2（投影座標系）' } },
       { key: '採樣座標-經度 X', label: '座標X', type: 'text' },
@@ -36,6 +38,7 @@ const SmartParse = {
     ],
     air: [
       { key: '採樣地點', label: '正式採樣地點', type: 'text' },
+      { key: '檢測類別', label: '檢測類別（系統判讀，可調整）', type: 'select', options: ['', ...CATEGORY_TYPE_OPTIONS.air] },
       { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'],
         optionLabels: { '2': '2：WGS84（全球座標）', '3': '3：TWD97-TM2（投影座標系）' } },
       { key: '採樣座標-經度 X', label: '座標X', type: 'text' },
@@ -146,6 +149,13 @@ const SmartParse = {
     'μg/L': '126', 'ug/L': '126',
     'mg/L': '47', 'MG/L': '47',
   },
+  // Some lab reports print a chemically-precise unit (e.g. "mg P/L" for phosphorus-as-P)
+  // that is a real, valid code in the table, but doesn't match this filing's convention
+  // of using the plain "mg/L" code for that item. Confirmed reporting-convention
+  // override, not a guess — applied regardless of what unit text the report shows.
+  ITEM_UNIT_OVERRIDES: {
+    '總磷': '47',
+  },
   /** Reverse-lookup a unit code from a free-text unit symbol (as printed on a lab report).
    * Returns { code, confident }. confident=false means either no exact match was found
    * (an alias/fallback was used or nothing matched at all) or more than one official code
@@ -153,7 +163,10 @@ const SmartParse = {
    * unit codes for the same physical unit) — these cases should be flagged for human review
    * rather than silently trusted, since an environmental filing with the wrong unit code is a
    * meaningful error. */
-  reverseUnitLookup(text) {
+  reverseUnitLookup(text, itemName) {
+    if (itemName && this.ITEM_UNIT_OVERRIDES[itemName]) {
+      return { code: this.ITEM_UNIT_OVERRIDES[itemName], confident: true };
+    }
     if (!text) return { code: '', confident: false };
     const clean = String(text).trim();
     const exactMatches = Object.entries(UNIT_CODES).filter(([, name]) => name === clean);
@@ -368,6 +381,82 @@ const SmartParse = {
     { key: 'PM10', unit: '127' },
   ],
 
+  /**
+   * 落塵量 (dustfall) style report: unlike the 24hr hourly table, this is a simple
+   * vertical list with ONE ROW PER SITE (not per hour), all reporting the same single
+   * item. Detected by the distinctive column combination 測點編號+監測地點+監測日期
+   * all present as separate header columns, which the hourly table format doesn't have.
+   */
+  parseAirDustfallSheet(grid) {
+    const headerHit = this.findCell(grid, /^監測項目$/);
+    if (!headerHit) return null;
+    const headerRow = grid[headerHit.r];
+    const colOf = (regex) => {
+      for (let c = 0; c < headerRow.length; c++) if (regex.test(this.cellStr(headerRow[c]))) return c;
+      return -1;
+    };
+    const cols = {
+      item: headerHit.c,
+      siteCode: colOf(/^測點編號$/),
+      location: colOf(/^監測地點$/),
+      dateRange: colOf(/^監測日期$/),
+      value: colOf(/濃度/),
+    };
+    if (cols.siteCode < 0 || cols.location < 0 || cols.dateRange < 0 || cols.value < 0) return null;
+
+    const valueHeaderText = this.cellStr(headerRow[cols.value]);
+    const unitMatch = valueHeaderText.match(/濃度\s*(.+)$/);
+    const unitText = unitMatch ? unitMatch[1].trim() : '';
+    const unitLookup = unitText ? this.reverseUnitLookup(unitText) : { code: '', confident: false };
+
+    const receiveDateRaw = this.labelValueSameCell(grid, /收樣日期[:：]/) || this.labelValueSameCell(grid, /報告日期[:：]/);
+    const rocYearMatch = String(receiveDateRaw || '').match(/(\d{2,3})年/);
+    const rocYear = rocYearMatch ? parseInt(rocYearMatch[1], 10) : null;
+
+    const methodRaw = this.labelValueSameCell(grid, /採樣方法[:：]/);
+    const method = this.extractMethodCode(methodRaw);
+    const agencyRaw = this.labelValueSameCell(grid, /採樣單位[:：]/);
+    const agencyCode = this.reverseAgencyLookup(agencyRaw);
+
+    const rows = [];
+    for (let r = headerHit.r + 1; r < grid.length; r++) {
+      const row = grid[r];
+      const itemName = this.cellStr(row[cols.item]);
+      const location = this.cellStr(row[cols.location]);
+      if (!itemName && !location) continue;
+      if (/以下空白/.test(row.map(c => this.cellStr(c)).join(''))) break;
+      const siteCode = this.cellStr(row[cols.siteCode]);
+      const dateRangeRaw = this.cellStr(row[cols.dateRange]);
+      const valRaw = this.cellStr(row[cols.value]);
+      if (!location || valRaw === '') continue;
+
+      let dateStart = '', dateEnd = '';
+      const trMatch = dateRangeRaw.match(/(\d{1,2})\/(\d{1,2})\s*~\s*(\d{1,2})\/(\d{1,2})/);
+      if (trMatch && rocYear) {
+        const y = rocYear + 1911;
+        const pad = n => String(n).padStart(2, '0');
+        const [, m1, d1, m2, d2] = trMatch;
+        dateStart = `${y}-${pad(m1)}-${pad(d1)}`;
+        const y2 = parseInt(m2, 10) < parseInt(m1, 10) ? y + 1 : y;
+        dateEnd = `${y2}-${pad(m2)}-${pad(d2)}`;
+      }
+
+      const { cmp, val } = this.parseValueCell(valRaw);
+      rows.push({
+        '日期(起)': dateStart, '時間(起)': '', '日期(迄)': dateEnd, '時間(迄)': '',
+        '採樣地點': location, '座標系統': '', '採樣座標-經度 X': '', '採樣座標-緯度 Y': '',
+        '場所編號': '', '採樣地點高度(公尺)': '', '污染物採樣高度(公尺)': '', '管制編號': '', '煙道編號': '',
+        '檢測類別': '周界空氣品質', '檢測項目': itemName || '落塵量',
+        '檢測濃度/質量單位': unitLookup.code, '其他檢測濃度/質量單位': unitLookup.code ? '' : unitText,
+        '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
+        '檢測方法': method, '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
+        _siteCode: siteCode, _rawLocation: location,
+        _uncertainUnit: !!unitText && !unitLookup.confident,
+      });
+    }
+    return rows.length ? rows : null;
+  },
+
   parseAirQualitySheet(grid) {
     const title = this.cellStr(grid[1]?.[0] || '') + this.cellStr(grid[1]?.[18] || '');
     if (!/空氣品質檢測報告/.test(title) && !this.findCell(grid, /空氣品質檢測報告/)) return null;
@@ -448,30 +537,42 @@ const SmartParse = {
     };
 
     const rows = [];
+    // Use the same ND/"< X" parser as the water-table reader — a daily average like
+    // "< 0.3" (below detection limit) must never be silently dropped just because
+    // parseFloat can't read the "<" prefix; every pollutant column can show this.
     this.AIR_POLLUTANT_DEFS.forEach(def => {
       const col = cols[def.key];
       if (col < 0) return;
       const v = this.cellStr(avgRow[col]);
-      if (v === '' || isNaN(parseFloat(v))) return;
+      if (v === '') return;
+      const { cmp, val } = this.parseValueCell(v);
+      if (val === '' || (cmp === '' && isNaN(parseFloat(val)))) return;
       const methodKey = (def.methodFrom || def.key).toUpperCase();
       rows.push({
         ...baseRow, '檢測項目': def.key, '檢測濃度/質量單位': def.unit,
-        '檢測數值': this.formatNumber(v, 3), '檢測方法': methodMap[methodKey] || '',
+        '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
+        '檢測方法': methodMap[methodKey] || '',
       });
     });
     if (tspVal) {
+      const { cmp, val } = this.parseValueCell(tspVal);
       rows.push({
         ...baseRow, '檢測項目': 'TSP', '檢測濃度/質量單位': '127',
-        '檢測數值': this.formatNumber(tspVal, 3), '檢測方法': methodMap.TSP || '',
+        '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
+        '檢測方法': methodMap.TSP || '',
       });
     }
     if (cols.pm25 >= 0) {
-      const pm25Val = this.cellStr(grid[unitRow]?.[cols.pm25]);
-      if (pm25Val !== '' && !isNaN(parseFloat(pm25Val))) {
-        rows.push({
-          ...baseRow, '檢測項目': 'PM2.5', '檢測濃度/質量單位': '127',
-          '檢測數值': this.formatNumber(pm25Val, 3), '檢測方法': pm25Method,
-        });
+      const pm25Raw = this.cellStr(grid[unitRow]?.[cols.pm25]);
+      if (pm25Raw !== '') {
+        const { cmp, val } = this.parseValueCell(pm25Raw);
+        if (val !== '' && !(cmp === '' && isNaN(parseFloat(val)))) {
+          rows.push({
+            ...baseRow, '檢測項目': 'PM2.5', '檢測濃度/質量單位': '127',
+            '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
+            '檢測方法': pm25Method,
+          });
+        }
       }
     }
     return rows.length ? rows : null;
@@ -527,7 +628,7 @@ const SmartParse = {
       // No unit column at all for this item (e.g. pH is dimensionless) means "無" —
       // official unit code 161 — not a blank/unknown unit. Only missing/unmatched
       // unit *text* (unitText present but not found in the code table) is uncertain.
-      const unitLookup = unitText ? this.reverseUnitLookup(unitText) : { code: '161', confident: true };
+      const unitLookup = unitText ? this.reverseUnitLookup(unitText, itemName) : (this.ITEM_UNIT_OVERRIDES[itemName] ? { code: this.ITEM_UNIT_OVERRIDES[itemName], confident: true } : { code: '161', confident: true });
       const valFormatted = /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val;
       const limitFormatted = /^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : limitRaw;
 
@@ -557,7 +658,7 @@ const SmartParse = {
       return this.parseWaterTableSheet(grid);
     }
     if (category === 'air') {
-      return this.parseAirQualitySheet(grid);
+      return this.parseAirDustfallSheet(grid) || this.parseAirQualitySheet(grid);
     }
     return null;
   },

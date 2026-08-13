@@ -127,17 +127,21 @@ body {
 }
 table.data-grid th.col-check, table.data-grid td.col-check,
 table.data-grid th.col-actions, table.data-grid td.col-actions,
+table.data-grid th.col-loc, table.data-grid td.col-loc,
 table.data-grid th.col-item, table.data-grid td.col-item {
   position: sticky; z-index: 3; background: #fff;
 }
-table.data-grid th.col-check, table.data-grid th.col-actions, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
+table.data-grid th.col-check, table.data-grid th.col-actions, table.data-grid th.col-loc, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
 table.data-grid td.col-check, table.data-grid th.col-check { left: 0; }
 table.data-grid .col-actions { width: 44px; }
 table.data-grid td.col-actions, table.data-grid th.col-actions { left: 34px; }
-/* pinned so the measurement item stays visible while scrolling right to check values —
-   sits right after the checkbox+delete columns; the boundary shadow moves here since
-   this is now the last pinned column before normally-scrolling content. */
-table.data-grid td.col-item, table.data-grid th.col-item { left: 78px; min-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
+/* 採樣地點 (or equivalent per category) sits right after checkbox+delete, since it
+   comes before the item column in every category's field order — pinned so you know
+   which site a row belongs to while scrolling right. */
+table.data-grid td.col-loc, table.data-grid th.col-loc { left: 78px; width: 140px; min-width: 140px; }
+/* 檢測項目 (or equivalent) pinned right after 採樣地點 — the boundary shadow sits here
+   since this is the last pinned column before normally-scrolling content. */
+table.data-grid td.col-item, table.data-grid th.col-item { left: 218px; min-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
 
 .table-wrap {
   overflow: auto; max-width: 100%; max-height: 65vh;
