@@ -1362,6 +1362,17 @@ function renderSmartImportPreview() {
 
   renderItemChecklist(document.getElementById('smartImportItemsWrap'), result.rows, cat.itemField, updateCounts);
 
+  const existingSkippedWarning = document.getElementById('smartImportSkippedItemsWarning');
+  if (existingSkippedWarning) existingSkippedWarning.remove();
+  const skippedItems = [...new Set(result.rows.flatMap(r => r._skippedPlaceholderItems || []))];
+  if (skippedItems.length > 0) {
+    const warn = document.createElement('div');
+    warn.id = 'smartImportSkippedItemsWarning';
+    warn.className = 'warning';
+    warn.innerHTML = `ℹ️ 系統判斷這個測站可能沒有安裝碳氫化合物分析儀（CH4 整天讀數固定顯示遠低於大氣中甲烷本底濃度的極低值，物理上不太可能是真實測值），已自動略過未匯入：${escapeHtml(skippedItems.join('、'))}。如果您確認這個測站其實有測這些項目，請直接用「＋新增一筆」手動補上。`;
+    document.getElementById('smartImportItemsWrap').after(warn);
+  }
+
   const existingMethodWarning = document.getElementById('smartImportMethodWarning');
   if (existingMethodWarning) existingMethodWarning.remove();
   if (cat.methodField) {

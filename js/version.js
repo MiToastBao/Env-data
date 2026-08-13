@@ -3,9 +3,17 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v2.3';
+const APP_VERSION = 'v2.4';
 
 const CHANGELOG = [
+  {
+    version: 'v2.4',
+    date: '2026-08-13',
+    notes: [
+      '修正空氣品質判讀：部分測站因為沒有安裝碳氫化合物分析儀，報告版面仍固定保留 CH4/NMHC/THC 欄位、填入統一的佔位符文字（如整天都是「< 0.10」），先前會被誤判成有效測值一併匯入。現在系統會判斷 CH4 是否整天讀數完全相同且遠低於大氣中甲烷本底濃度（物理上不合理），是的話自動略過這三項並跳出提醒；若該測站其實真的有安裝儀器（逐時讀數有實際變化），則正常判讀不受影響',
+      '同時修正另一個潛在誤判風險：先前的判斷邏輯若套用到所有污染物，會誤傷 SO2、O3 等本來就可能整天合理地低於偵測極限的資料，已收斂為只針對 CH4 這組儀器做特殊判斷，不影響其他污染物的正常判讀',
+    ],
+  },
   {
     version: 'v2.3',
     date: '2026-08-13',

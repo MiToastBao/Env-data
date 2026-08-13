@@ -537,12 +537,41 @@ const SmartParse = {
     };
 
     const rows = [];
+    const skippedPlaceholderItems = [];
+    // Deliberately narrow, not a general rule: SO2/O3/etc. can legitimately read
+    // "< X" for every single hour when the air is genuinely clean and the detection
+    // limit is low — that's a real, common result and must NOT be discarded (that was
+    // tried and caused a real false-negative on SO2/O3 in a verified report). CH4 is
+    // different: ambient background CH4 is ~1.8–2.0 ppm essentially everywhere on
+    // Earth, so a report showing "< 1.0 ppm" for every hour of the day is physically
+    // implausible — it means this site's hydrocarbon analyzer (which reports CH4,
+    // NMHC, and THC together as one instrument) isn't actually installed, and the
+    // report template just carries the three columns with a placeholder value.
+    // Confirmed against a verified ground-truth filing where this exact pattern
+    // corresponds to CH4/NMHC/THC being correctly absent from the official submission.
+    const isImplausiblyLowCH4 = (col) => {
+      const vals = [];
+      for (let r = unitRow + 1; r < avgHit.r; r++) {
+        const v = this.cellStr(grid[r]?.[col]);
+        if (v !== '') vals.push(v);
+      }
+      if (vals.length < 3 || new Set(vals).size !== 1) return false; // not a flat-all-day pattern
+      const m = vals[0].match(/^<\s*([\d.]+)$/);
+      return !!m && parseFloat(m[1]) < 1.0; // far below real-world CH4 background levels
+    };
+    let hydrocarbonAnalyzerMissing = false;
+    if (cols.CH4 >= 0 && isImplausiblyLowCH4(cols.CH4)) {
+      hydrocarbonAnalyzerMissing = true;
+      skippedPlaceholderItems.push('CH4', 'NMHC', 'THC');
+    }
+
     // Use the same ND/"< X" parser as the water-table reader — a daily average like
     // "< 0.3" (below detection limit) must never be silently dropped just because
     // parseFloat can't read the "<" prefix; every pollutant column can show this.
     this.AIR_POLLUTANT_DEFS.forEach(def => {
       const col = cols[def.key];
       if (col < 0) return;
+      if (hydrocarbonAnalyzerMissing && ['CH4', 'NMHC', 'THC'].includes(def.key)) return;
       const v = this.cellStr(avgRow[col]);
       if (v === '') return;
       const { cmp, val } = this.parseValueCell(v);
@@ -574,6 +603,12 @@ const SmartParse = {
           });
         }
       }
+    }
+    // tag every row with which columns this sheet skipped as likely-unmonitored
+    // placeholders, so the import UI can tell the person what was left out and why
+    // (rather than silently never showing those items at all).
+    if (skippedPlaceholderItems.length) {
+      rows.forEach(r => { r._skippedPlaceholderItems = skippedPlaceholderItems; });
     }
     return rows.length ? rows : null;
   },
