@@ -1699,7 +1699,16 @@ function init() {
   // or pressing Escape, closes whichever modal is currently open. This is a safety
   // net independent of each modal's own Cancel/Close button, so a modal can never
   // become a dead end.
+  //
+  // The import modal is deliberately EXCLUDED: importing is a multi-step flow where
+  // the person may have already picked a period, adjusted site names/categories, or
+  // checked/unchecked items — an accidental click just outside the modal (easy to do,
+  // since the modal doesn't fill the screen) would silently discard all of that. Now
+  // that the Cancel button itself is reliably visible, there's no longer a need for
+  // this safety net there; closing the import modal requires the explicit Cancel
+  // button (or finishing/cancelling a batch import via its own controls).
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    if (overlay.id === 'importModal') return;
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) overlay.classList.add('hidden');
     });
@@ -1707,6 +1716,7 @@ function init() {
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
+      if (overlay.id === 'importModal') return;
       if (!overlay.classList.contains('hidden')) overlay.classList.add('hidden');
     });
   });

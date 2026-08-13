@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v2.2';
+const APP_VERSION = 'v2.3';
 
 const CHANGELOG = [
+  {
+    version: 'v2.3',
+    date: '2026-08-13',
+    notes: [
+      '修正匯入視窗被誤觸背景就整個關閉、導致匯入中的設定（期別、測站資訊、監測項目勾選等）全部遺失的問題：匯入視窗現在只能透過「取消」按鈕關閉，不會再因為點到旁邊空白處或按 Esc 鍵而意外關閉；其他彈出視窗（座標管理、方法管理、單位代碼表等，操作風險較低）仍保留點擊背景／Esc 即可關閉的便利性',
+    ],
+  },
   {
     version: 'v2.2',
     date: '2026-08-13',
