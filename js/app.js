@@ -176,6 +176,7 @@ function renderCategoryTab(project, catKey) {
       <div class="toolbar-left">
         <button class="btn btn-primary btn-sm" id="btnImport">📥 匯入資料（Excel/PDF）</button>
         <button class="btn btn-ghost btn-sm" id="btnAddRow">＋ 新增一筆</button>
+        <button class="btn btn-ghost btn-sm" id="btnCoordManager">📍 測站座標管理</button>
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）</button>
       </div>
       <div class="row-count">共 ${rows.length} 筆資料</div>
@@ -184,7 +185,7 @@ function renderCategoryTab(project, catKey) {
       <table class="data-grid">
         <thead><tr>
           <th>#</th>
-          ${cat.fields.map(f => `<th>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}</th>`).join('')}
+          ${cat.fields.map(f => `<th${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
           <th>操作</th>
         </tr></thead>
         <tbody id="gridBody">${rows.map((r, idx) => rowHtml(cat, r, idx)).join('')}</tbody>
@@ -195,6 +196,7 @@ function renderCategoryTab(project, catKey) {
 
   document.getElementById('btnImport').addEventListener('click', () => openImportModal(catKey));
   document.getElementById('btnAddRow').addEventListener('click', () => addEmptyRow(project, catKey));
+  document.getElementById('btnCoordManager').addEventListener('click', () => openCoordModal(project, catKey));
   document.getElementById('btnExportCat').addEventListener('click', () => {
     if (rows.length === 0) { alert('此類別尚無資料可匯出。'); return; }
     ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey);
@@ -217,7 +219,8 @@ function fieldControlHTML(field, value, rowAttr) {
         const label = (field.optionLabels && field.optionLabels[o]) || o || '（未選擇）';
         return `<option value="${escapeAttr(o)}" ${o === value ? 'selected' : ''}>${escapeHtml(label)}</option>`;
       }).join('');
-      return `<select ${base}>${opts}</select>`;
+      const titleAttr = field.help ? ` title="${escapeAttr(field.help)}"` : '';
+      return `<select ${base}${titleAttr}>${opts}</select>`;
     }
     case 'date':
       return `<input type="date" ${base} value="${escapeAttr(toDateInputValue(value))}">`;
@@ -289,6 +292,87 @@ function addEmptyRow(project, catKey) {
   // scroll to bottom of table
   const wrap = document.querySelector('.table-wrap');
   if (wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
+// ---------- coordinate manager (bulk-fill site coordinates, e.g. for handwritten/scanned reports) ----------
+function openCoordModal(project, catKey) {
+  const cat = CATEGORIES[catKey];
+  const rows = DataStore.getData(project.id, catKey);
+  const locField = cat.locationField;
+
+  // group row indices by site name text
+  const groups = {}; // locationText -> { indices: [...], coordSystem, x, y }
+  rows.forEach((row, idx) => {
+    const loc = (row[locField] || '').trim() || '（未命名測站）';
+    if (!groups[loc]) {
+      groups[loc] = {
+        indices: [],
+        coordSystem: row['座標系統'] || '',
+        x: row['採樣座標-經度 X'] || '',
+        y: row['採樣座標-緯度 Y'] || '',
+      };
+    }
+    groups[loc].indices.push(idx);
+    // prefer an already-filled value if this group doesn't have one yet
+    if (!groups[loc].x && row['採樣座標-經度 X']) groups[loc].x = row['採樣座標-經度 X'];
+    if (!groups[loc].y && row['採樣座標-緯度 Y']) groups[loc].y = row['採樣座標-緯度 Y'];
+    if (!groups[loc].coordSystem && row['座標系統']) groups[loc].coordSystem = row['座標系統'];
+  });
+
+  const entries = Object.entries(groups);
+  const wrap = document.getElementById('coordSitesWrap');
+  if (entries.length === 0) {
+    wrap.innerHTML = '<p class="hint" style="padding:14px">目前此類別尚無資料，請先新增或匯入資料後再使用測站座標管理。</p>';
+  } else {
+    wrap.innerHTML = `<table class="mapping-table">
+      <thead><tr><th>測站名稱</th><th title="2：WGS84（全球座標，例如經度 120.681，緯度 24.147）／3：TWD97-TM2（投影座標系，例如 X=193150, Y=2670900）">座標系統 ℹ️</th><th>經度 X</th><th>緯度 Y</th><th>筆數</th></tr></thead>
+      <tbody id="coordSitesBody">
+        ${entries.map(([loc, g]) => `<tr data-loc="${escapeAttr(loc)}">
+          <td>${escapeHtml(loc)}</td>
+          <td><select data-coord-field="座標系統" title="2：WGS84（全球座標，例如經度 120.681，緯度 24.147）／3：TWD97-TM2（投影座標系，例如 X=193150, Y=2670900）">
+            <option value="" ${g.coordSystem === '' ? 'selected' : ''}>（未選擇）</option>
+            <option value="2" ${g.coordSystem === '2' ? 'selected' : ''}>2：WGS84（全球座標）</option>
+            <option value="3" ${g.coordSystem === '3' ? 'selected' : ''}>3：TWD97-TM2（投影座標系）</option>
+          </select></td>
+          <td><input type="text" data-coord-field="採樣座標-經度 X" value="${escapeAttr(g.x)}" placeholder="例：120.681 或 193150"></td>
+          <td><input type="text" data-coord-field="採樣座標-緯度 Y" value="${escapeAttr(g.y)}" placeholder="例：24.147 或 2670900"></td>
+          <td>${g.indices.length}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  }
+
+  document.getElementById('coordModal').dataset.projectId = project.id;
+  document.getElementById('coordModal').dataset.catKey = catKey;
+  document.getElementById('btnCoordSave').classList.toggle('hidden', entries.length === 0);
+  document.getElementById('coordModal').classList.remove('hidden');
+}
+
+function closeCoordModal() {
+  document.getElementById('coordModal').classList.add('hidden');
+}
+
+function saveCoordModal() {
+  const modal = document.getElementById('coordModal');
+  const projectId = modal.dataset.projectId;
+  const catKey = modal.dataset.catKey;
+  const rows = DataStore.getData(projectId, catKey);
+  const locField = CATEGORIES[catKey].locationField;
+
+  document.querySelectorAll('#coordSitesBody tr').forEach(tr => {
+    const loc = tr.dataset.loc;
+    const values = {};
+    tr.querySelectorAll('[data-coord-field]').forEach(el => { values[el.dataset.coordField] = el.value; });
+    rows.forEach(row => {
+      const rowLoc = (row[locField] || '').trim() || '（未命名測站）';
+      if (rowLoc === loc) Object.assign(row, values);
+    });
+  });
+
+  DataStore.saveData(projectId, catKey, rows);
+  closeCoordModal();
+  renderContent();
+  alert('已套用座標到符合的資料列。');
 }
 
 // ---------- project modal (create/edit) ----------
@@ -574,6 +658,9 @@ function init() {
   document.getElementById('importFileInput').addEventListener('change', (e) => handleImportFile(e.target.files[0]));
   document.getElementById('btnImportCancel').addEventListener('click', closeImportModal);
   document.getElementById('btnImportConfirm').addEventListener('click', confirmImport);
+
+  document.getElementById('btnCoordCancel').addEventListener('click', closeCoordModal);
+  document.getElementById('btnCoordSave').addEventListener('click', saveCoordModal);
 }
 
 document.addEventListener('DOMContentLoaded', init);

@@ -86,6 +86,20 @@
   </div>
 </div>
 
+<!-- Coordinate Manager Modal -->
+<div id="coordModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>測站座標管理</h3>
+    <p class="hint">掃描版報告上的座標常是手寫、不適合自動判讀。請在下方為每個測站輸入一次座標，按「儲存並套用」後，會自動套用到該測站目前所有資料列；之後新增/匯入同名測站的資料也可以再回來這裡統一補充。</p>
+    <p class="hint coord-legend">座標系統：<b>2</b>＝WGS84（全球座標，例如經度 120.681，緯度 24.147）／<b>3</b>＝TWD97-TM2（投影座標系，例如 X=193150, Y=2670900）</p>
+    <div id="coordSitesWrap" class="mapping-table-wrap"></div>
+    <div class="modal-actions">
+      <button id="btnCoordCancel" class="btn btn-ghost">取消</button>
+      <button id="btnCoordSave" class="btn btn-primary">儲存並套用</button>
+    </div>
+  </div>
+</div>
+
 <script src="js/schema.js"></script>
 <script src="js/codes.js"></script>
 <script src="js/storage.js"></script>
