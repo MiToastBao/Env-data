@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>環評監測資料填報小工具</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <div class="brand">📋 環評監測資料填報小工具</div>
+    <div class="topbar-actions">
+      <button id="btnBackupExport" class="btn btn-ghost" title="將所有計畫資料匯出成一個備份檔（JSON），可用於換瀏覽器或分享">匯出備份</button>
+      <button id="btnBackupImport" class="btn btn-ghost" title="匯入先前匯出的備份檔">匯入備份</button>
+      <input type="file" id="backupFileInput" accept=".json" style="display:none">
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>我的計畫</h2>
+        <button id="btnNewProject" class="btn btn-primary btn-sm">＋ 新增計畫</button>
+      </div>
+      <ul id="projectList" class="project-list"></ul>
+    </aside>
+
+    <main class="content" id="content">
+      <div class="empty-state">
+        <p>👈 請先在左側建立或選擇一個計畫</p>
+      </div>
+    </main>
+  </div>
+
+</div>
+
+<!-- New / Edit Project Modal -->
+<div id="projectModal" class="modal-overlay hidden">
+  <div class="modal">
+    <h3 id="projectModalTitle">新增計畫</h3>
+    <label>計畫代碼<span class="req">*</span>
+      <input id="projectCodeInput" type="text" placeholder="例如 E-2173">
+    </label>
+    <label>計畫名稱<span class="req">*</span>
+      <input id="projectNameInput" type="text" placeholder="例如 花東地區鐵路雙軌電氣化計畫">
+    </label>
+    <div class="modal-actions">
+      <button id="btnProjectCancel" class="btn btn-ghost">取消</button>
+      <button id="btnProjectSave" class="btn btn-primary">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Import Modal -->
+<div id="importModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3 id="importModalTitle">匯入監測資料</h3>
+    <div id="importStep1">
+      <p class="hint">支援 Excel（.xlsx / .xls / .csv）；PDF 為輔助解析，建議上傳 Excel 以獲得最佳結果。</p>
+      <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf">
+      <div id="importPdfWarning" class="warning hidden">⚠️ PDF 為自動判讀表格內容，準確度有限，請務必於下方逐欄核對後再匯入。</div>
+    </div>
+    <div id="importStep2" class="hidden">
+      <p class="hint">系統已自動比對欄位，請確認或修正每個目標欄位對應到您檔案中的哪一欄，再按「確認匯入」。</p>
+      <div class="mapping-table-wrap">
+        <table class="mapping-table">
+          <thead><tr><th>目標欄位</th><th>對應到您檔案中的欄位</th></tr></thead>
+          <tbody id="mappingTableBody"></tbody>
+        </table>
+      </div>
+      <p class="hint" id="importRowCount"></p>
+    </div>
+    <div id="importStep3" class="hidden">
+      <p class="hint" id="smartImportSummary"></p>
+      <div id="smartImportSitesWrap" class="mapping-table-wrap"></div>
+      <p class="hint" id="smartImportSkipped"></p>
+    </div>
+    <div class="modal-actions">
+      <button id="btnImportCancel" class="btn btn-ghost">取消</button>
+      <button id="btnImportConfirm" class="btn btn-primary hidden">確認匯入</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/schema.js"></script>
+<script src="js/codes.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/import.js"></script>
+<script src="js/smartparse.js"></script>
+<script src="js/export.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
