@@ -33,6 +33,20 @@ function toTimeInputValue(v) {
   if (m) return `${m[1].padStart(2, '0')}:${m[2]}:${m[4] || '00'}`;
   return '';
 }
+/** Accepts "1430", "14:30", "14:30:00", "143000" typed free-hand and normalizes to HH:MM:SS.
+ *  Returns the original trimmed string unchanged if it doesn't look like a time at all,
+ *  so an in-progress or unrecognized entry isn't silently discarded. */
+function normalizeTimeString(raw) {
+  const s = String(raw ?? '').trim();
+  if (s === '') return '';
+  let m = s.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
+  if (m) return `${m[1].padStart(2, '0')}:${m[2].padStart(2, '0')}:${(m[3] || '00').padStart(2, '0')}`;
+  m = s.match(/^(\d{2})(\d{2})(\d{2})$/); // 143000
+  if (m) return `${m[1]}:${m[2]}:${m[3]}`;
+  m = s.match(/^(\d{1,2})(\d{2})$/); // 1430 or 930
+  if (m) return `${m[1].padStart(2, '0')}:${m[2]}:00`;
+  return s;
+}
 function lookupUnit(code) {
   if (!code) return '';
   return UNIT_CODES[String(code).trim()] ? `代碼 ${code}：${UNIT_CODES[String(code).trim()]}` : '（找不到對應單位代碼，請確認）';
@@ -207,9 +221,9 @@ function renderCategoryTab(project, catKey) {
       <table class="data-grid">
         <thead><tr>
           <th class="col-check"><input type="checkbox" id="checkAllRows" ${rows.length === 0 ? 'disabled' : ''}></th>
+          <th>操作</th>
           <th>#</th>
           ${cat.fields.map(f => `<th${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
-          <th>操作</th>
         </tr></thead>
         <tbody id="gridBody">${rows.map((r, idx) => rowHtml(cat, r, idx)).join('')}</tbody>
       </table>
@@ -318,7 +332,7 @@ function openBatchHistoryModal(project, catKey) {
 
 function rowHtml(cat, row, idx) {
   const cells = cat.fields.map(f => `<td>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
-  return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td><td>${idx + 1}</td>${cells}<td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td></tr>`;
+  return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td><td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td>${idx + 1}</td>${cells}</tr>`;
 }
 
 function fieldControlHTML(field, value, rowAttr) {
@@ -336,7 +350,11 @@ function fieldControlHTML(field, value, rowAttr) {
     case 'date':
       return `<input type="date" ${base} value="${escapeAttr(toDateInputValue(value))}">`;
     case 'time':
-      return `<input type="time" step="1" ${base} value="${escapeAttr(toTimeInputValue(value))}">`;
+      // Plain text rather than a native <input type=time>: native time pickers on many
+      // devices show a scroll-wheel that's fiddly to land on an exact second, and on
+      // some mobile browsers don't reliably fire change events at all. Typing "1430",
+      // "14:30", or "14:30:00" all work — normalized to HH:MM:SS on blur.
+      return `<input type="text" ${base} value="${escapeAttr(toTimeInputValue(value))}" class="time-input" placeholder="HH:MM:SS" inputmode="numeric" maxlength="8">`;
     case 'suggest': {
       const listId = `suggest-${field.key.replace(/[^a-zA-Z0-9]/g, '')}`;
       if (!document.getElementById(listId)) {
@@ -385,25 +403,35 @@ function wireGridEvents(project, catKey, cat) {
     return changed;
   };
 
-  // If the person corrects a date/time on one row, sync that same field to every
-  // other row that (a) came from the same import batch and (b) shares the same
-  // sampling location — e.g. correcting one test item's date in a multi-item water
-  // report updates the whole site's rows from that report, since they're really one
-  // sampling event. This overwrites (not just fills blanks), since it's a correction.
+  // If the person corrects a date/time on one row, offer to sync all four date/time
+  // fields to every other row that (a) came from the same import batch and (b) shares
+  // the same sampling location — e.g. correcting one test item's date in a multi-item
+  // water report should usually update the whole site's rows from that report, since
+  // they're really one sampling event. This always asks first rather than silently
+  // overwriting, both to avoid surprising edits and because some browsers/devices
+  // don't reliably fire events for native time pickers, which made a silent version
+  // of this hard to trust.
   const DATE_TIME_FIELDS = ['日期(起)', '時間(起)', '日期(迄)', '時間(迄)'];
-  const syncDateTimeWithinBatch = (rowIdx, fieldKey) => {
-    if (!DATE_TIME_FIELDS.includes(fieldKey)) return false;
+  const offerDateTimeSync = (rowIdx) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
     if (!source || !source._batchId || !source[locField]) return false;
-    let changed = false;
-    rows.forEach((r, idx) => {
-      if (idx === rowIdx || r._batchId !== source._batchId || r[locField] !== source[locField]) return;
-      if (r[fieldKey] !== source[fieldKey]) { r[fieldKey] = source[fieldKey]; changed = true; }
-    });
-    if (changed) DataStore.saveData(project.id, catKey, rows);
-    return changed;
+    const matches = rows
+      .map((r, idx) => ({ r, idx }))
+      .filter(({ r, idx }) => idx !== rowIdx && r._batchId === source._batchId && r[locField] === source[locField]);
+    if (matches.length === 0) return false;
+    const anyDiff = matches.some(({ r }) => DATE_TIME_FIELDS.some(f => r[f] !== source[f]));
+    if (!anyDiff) return false;
+    const ok = confirm(
+      `偵測到同一份檔案、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
+      `是否要將這些資料的採樣日期／時間一併同步更新為與這一筆相同？\n\n` +
+      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
+    );
+    if (!ok) return false;
+    matches.forEach(({ r }) => { DATE_TIME_FIELDS.forEach(f => { r[f] = source[f]; }); });
+    DataStore.saveData(project.id, catKey, rows);
+    return true;
   };
 
   tbody.addEventListener('input', (e) => {
@@ -421,9 +449,6 @@ function wireGridEvents(project, catKey, cat) {
     if (t.tagName === 'SELECT') {
       commit(Number(t.dataset.row), t.dataset.field, t.value);
       if (propagateCoordsForDate(Number(t.dataset.row), t.dataset.field)) { renderContent(); return; }
-    } else if (t.type === 'date' || t.type === 'time') {
-      commit(Number(t.dataset.row), t.dataset.field, t.value);
-      if (syncDateTimeWithinBatch(Number(t.dataset.row), t.dataset.field)) renderContent();
     }
   });
   // use focusout (bubbles) rather than blur to catch this via delegation; only
@@ -431,8 +456,17 @@ function wireGridEvents(project, catKey, cat) {
   tbody.addEventListener('focusout', (e) => {
     const t = e.target;
     if (!t.dataset.field || t.tagName === 'SELECT') return;
-    if (propagateCoordsForDate(Number(t.dataset.row), t.dataset.field)) { renderContent(); return; }
-    if (syncDateTimeWithinBatch(Number(t.dataset.row), t.dataset.field)) renderContent();
+    const rowIdx = Number(t.dataset.row);
+    const fieldKey = t.dataset.field;
+
+    if (t.classList.contains('time-input')) {
+      const normalized = normalizeTimeString(t.value);
+      t.value = normalized;
+      commit(rowIdx, fieldKey, normalized);
+    }
+
+    if (propagateCoordsForDate(rowIdx, fieldKey)) { renderContent(); return; }
+    if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx)) renderContent();
   });
   tbody.addEventListener('click', (e) => {
     const btn = e.target.closest('.row-del-btn');
@@ -537,6 +571,23 @@ function saveCoordModal() {
   closeCoordModal();
   renderContent();
   alert('已套用座標到符合的資料列。');
+}
+
+// ---------- version / changelog ----------
+function renderVersionBadge() {
+  const badge = document.getElementById('versionBadge');
+  badge.textContent = APP_VERSION;
+}
+function openChangelogModal() {
+  document.getElementById('changelogCurrentVersion').textContent = APP_VERSION;
+  const list = document.getElementById('changelogList');
+  list.innerHTML = CHANGELOG.map(entry => `
+    <div class="changelog-entry">
+      <div class="changelog-header"><strong>${escapeHtml(entry.version)}</strong> <span class="hint">${escapeHtml(entry.date)}</span></div>
+      <ul>${entry.notes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>
+    </div>
+  `).join('');
+  document.getElementById('changelogModal').classList.remove('hidden');
 }
 
 // ---------- unit code reference ----------
@@ -1084,8 +1135,12 @@ async function backupImport(file) {
 
 // ---------- init ----------
 function init() {
+  renderVersionBadge();
   renderProjectList();
   renderContent();
+
+  document.getElementById('versionBadge').addEventListener('click', openChangelogModal);
+  document.getElementById('btnChangelogClose').addEventListener('click', () => document.getElementById('changelogModal').classList.add('hidden'));
 
   document.getElementById('btnNewProject').addEventListener('click', () => openProjectModal(null));
   document.getElementById('btnProjectCancel').addEventListener('click', closeProjectModal);

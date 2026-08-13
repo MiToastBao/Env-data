@@ -33,6 +33,16 @@ body {
   flex-shrink: 0;
 }
 .brand { font-weight: 700; font-size: 16px; }
+.version-badge {
+  font-size: 11px; font-weight: 600; background: rgba(255,255,255,0.18); color: #fff;
+  padding: 2px 8px; border-radius: 10px; cursor: pointer; vertical-align: middle; margin-left: 4px;
+}
+.version-badge:hover { background: rgba(255,255,255,0.3); }
+.changelog-entry { padding: 10px 0; border-bottom: 1px solid var(--border); }
+.changelog-entry:last-child { border-bottom: none; }
+.changelog-header { margin-bottom: 4px; }
+.changelog-entry ul { margin: 4px 0 0 0; padding-left: 20px; font-size: 13px; }
+.changelog-entry li { margin-bottom: 3px; }
 .topbar-actions { display: flex; gap: 8px; }
 
 .layout { display: flex; flex: 1; min-height: 0; }
@@ -112,6 +122,13 @@ body {
 }
 .bulk-toolbar.hidden { display: none; }
 .col-check { width: 34px; text-align: center; }
+table.data-grid th.col-check, table.data-grid td.col-check,
+table.data-grid th.col-actions, table.data-grid td.col-actions {
+  position: sticky; z-index: 3; background: #fff;
+}
+table.data-grid th.col-check, table.data-grid th.col-actions { z-index: 4; background: #eef3f1; }
+table.data-grid td.col-check, table.data-grid th.col-check { left: 0; }
+table.data-grid td.col-actions, table.data-grid th.col-actions { left: 34px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
 
 .table-wrap { overflow: auto; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
 table.data-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12.5px; }
@@ -135,7 +152,7 @@ table.data-grid td.col-actions { text-align: center; }
 .btn-primary:hover { background: var(--primary-dark); }
 .btn-ghost { background: rgba(255,255,255,0.12); color: #fff; }
 .topbar .btn-ghost { background: rgba(255,255,255,0.14); }
-.content .btn-ghost { background: #eef1f0; color: var(--text); }
+.content .btn-ghost, .modal .btn-ghost { background: #eef1f0; color: var(--text); }
 .btn-ghost:hover { filter: brightness(0.95); }
 .btn-danger { background: #fdecea; color: var(--danger); }
 .btn-sm { padding: 6px 10px; font-size: 12px; }

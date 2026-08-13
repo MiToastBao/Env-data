@@ -12,7 +12,7 @@
 <div id="app">
 
   <header class="topbar">
-    <div class="brand">📋 環評監測資料填報小工具</div>
+    <div class="brand">📋 環評監測資料填報小工具 <span class="version-badge" id="versionBadge" title="點擊查看版本紀錄"></span></div>
     <div class="topbar-actions">
       <button id="btnUnitCodeRef" class="btn btn-ghost" title="查詢單位代碼表">📖 單位代碼表</button>
       <button id="btnBackupExport" class="btn btn-ghost" title="將所有計畫資料匯出成一個備份檔（JSON），可用於換瀏覽器或分享">匯出備份</button>
@@ -103,6 +103,18 @@
   </div>
 </div>
 
+<!-- Changelog Modal -->
+<div id="changelogModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>版本紀錄</h3>
+    <p class="hint">目前版本：<strong id="changelogCurrentVersion"></strong>。若更新後畫面沒有變化，請確認版本號是否已變成最新，並嘗試強制重新整理瀏覽器（Ctrl/Cmd+Shift+R）清除快取。</p>
+    <div id="changelogList" style="max-height:60vh;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button id="btnChangelogClose" class="btn btn-primary">關閉</button>
+    </div>
+  </div>
+</div>
+
 <!-- Export Selection Modal -->
 <div id="exportSelectModal" class="modal-overlay hidden">
   <div class="modal">
@@ -159,6 +171,7 @@
   </div>
 </div>
 
+<script src="js/version.js"></script>
 <script src="js/schema.js"></script>
 <script src="js/codes.js"></script>
 <script src="js/storage.js"></script>
