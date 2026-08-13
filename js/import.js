@@ -73,13 +73,28 @@ const ImportEngine = {
    * Read every sheet of an xlsx/xls workbook as a raw grid (array of rows,
    * blanks preserved as ''), for the smart form-parsers in smartparse.js
    * which need to scan label/value positions rather than a header row.
+   *
+   * Also attaches a `_hiddenCols` Set (0-indexed column numbers) to each grid.
+   * This matters for reports like the 24hr air-quality table: a lab may reuse
+   * one shared spreadsheet template across sites that don't all monitor the
+   * same pollutants, and simply hide the columns for items that site doesn't
+   * measure — the cells still contain placeholder text, but the column itself
+   * is marked hidden. `cellStyles: true` is required for SheetJS to populate
+   * `!cols[i].hidden` at all; without it the hidden flag is silently dropped.
    */
   async readWorkbookGrids(file) {
     const buf = await file.arrayBuffer();
-    const wb = XLSX.read(buf, { type: 'array', cellDates: false });
+    const wb = XLSX.read(buf, { type: 'array', cellDates: false, cellStyles: true });
     const grids = {};
     wb.SheetNames.forEach(name => {
-      grids[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '', raw: true });
+      const ws = wb.Sheets[name];
+      const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+      const hiddenCols = new Set();
+      if (ws['!cols']) {
+        ws['!cols'].forEach((c, i) => { if (c && c.hidden) hiddenCols.add(i); });
+      }
+      grid._hiddenCols = hiddenCols;
+      grids[name] = grid;
     });
     return grids;
   },

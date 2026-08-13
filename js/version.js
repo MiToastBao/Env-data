@@ -3,9 +3,18 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v2.4';
+const APP_VERSION = 'v2.5';
 
 const CHANGELOG = [
+  {
+    version: 'v2.5',
+    date: '2026-08-13',
+    notes: [
+      '修正空氣品質判讀邏輯：改為直接讀取 Excel 檔案本身的「欄位隱藏」設定來判斷測站有沒有監測某個污染物，不再用資料規律去猜測。這比 v2.4 的方法更準確可靠——連原本沒注意到的「O3 欄位被隱藏」案例也一併正確處理，且不會有誤判 SO2/O3 等本來就可能整天低於偵測極限的合法資料的風險',
+      '修正匯入資料同步（座標／日期時間／檢測類別）後畫面被強制捲回最頂端的問題：現在同步完成後會停留在原本的捲動位置，方便繼續往下確認其他資料，不用每次都重新捲回原本的地方',
+      '新增「<10.0(6.9)」格式的檢測值判讀：正確填入比較關係「<」與檢測數值「10.0」，括號內的儀器原始讀值不納入檢測數值欄位',
+    ],
+  },
   {
     version: 'v2.4',
     date: '2026-08-13',

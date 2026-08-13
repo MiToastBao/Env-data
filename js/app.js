@@ -38,6 +38,26 @@ function getKnownPeriods(project, catKey) {
   return periods.sort();
 }
 
+/**
+ * Re-renders the current tab but keeps the data table's scroll position where it
+ * was — used after a sync confirmation (coordinates/date-time/category) so the
+ * person doesn't get bounced back to the top of a long table and lose their place
+ * while working through the rest of the rows.
+ */
+function renderContentPreservingScroll() {
+  const oldWrap = document.querySelector('.table-wrap');
+  const scrollTop = oldWrap ? oldWrap.scrollTop : 0;
+  const scrollLeft = oldWrap ? oldWrap.scrollLeft : 0;
+  const pageScrollY = window.scrollY;
+  renderContent();
+  const newWrap = document.querySelector('.table-wrap');
+  if (newWrap) {
+    newWrap.scrollTop = scrollTop;
+    newWrap.scrollLeft = scrollLeft;
+  }
+  window.scrollTo(0, pageScrollY);
+}
+
 function renderPeriodPicker(containerId, rows) {
   const guess = guessPeriodFromRows(rows);
   if (!state.importPeriod) state.importPeriod = guess;
@@ -640,8 +660,8 @@ function wireGridEvents(project, catKey, cat) {
     if (!t.dataset.field) return;
     if (t.tagName === 'SELECT') {
       commit(Number(t.dataset.row), t.dataset.field, t.value);
-      if (COORD_FIELDS.includes(t.dataset.field) && offerCoordSync(Number(t.dataset.row))) { renderContent(); return; }
-      if (t.dataset.field === '檢測類別' && offerCategorySync(Number(t.dataset.row))) { renderContent(); return; }
+      if (COORD_FIELDS.includes(t.dataset.field) && offerCoordSync(Number(t.dataset.row))) { renderContentPreservingScroll(); return; }
+      if (t.dataset.field === '檢測類別' && offerCategorySync(Number(t.dataset.row))) { renderContentPreservingScroll(); return; }
     }
   });
   // use focusout (bubbles) rather than blur to catch this via delegation; only
@@ -663,8 +683,8 @@ function wireGridEvents(project, catKey, cat) {
       commit(rowIdx, fieldKey, normalized);
     }
 
-    if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContent(); return; }
-    if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx)) renderContent();
+    if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
+    if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx)) renderContentPreservingScroll();
   });
   tbody.addEventListener('click', (e) => {
     const btn = e.target.closest('.row-del-btn');
@@ -1369,7 +1389,7 @@ function renderSmartImportPreview() {
     const warn = document.createElement('div');
     warn.id = 'smartImportSkippedItemsWarning';
     warn.className = 'warning';
-    warn.innerHTML = `ℹ️ 系統判斷這個測站可能沒有安裝碳氫化合物分析儀（CH4 整天讀數固定顯示遠低於大氣中甲烷本底濃度的極低值，物理上不太可能是真實測值），已自動略過未匯入：${escapeHtml(skippedItems.join('、'))}。如果您確認這個測站其實有測這些項目，請直接用「＋新增一筆」手動補上。`;
+    warn.innerHTML = `ℹ️ 偵測到報告 Excel 檔案裡以下欄位被設定為「隱藏」（欄寬為0），代表這個測站實際上沒有監測這些項目，報告只是沿用共用範本、保留欄位但不對外顯示，已自動略過未匯入：${escapeHtml(skippedItems.join('、'))}。如果您確認這個測站其實有測這些項目，請直接用「＋新增一筆」手動補上。`;
     document.getElementById('smartImportItemsWrap').after(warn);
   }
 

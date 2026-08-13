@@ -217,7 +217,13 @@ const SmartParse = {
     if (s === '') return { cmp: '', val: '' };
     if (/^ND$/i.test(s)) return { cmp: 'ND', val: 'ND' };
     if (/^(NA|未檢測|N\.A\.?)$/i.test(s)) return { cmp: '未檢測', val: '未檢測' };
-    let m = s.match(/^([<>])\s*([\d.]+)$/);
+    // "<10.0(6.9)" style: the instrument actually read 6.9, but that's below the
+    // report's required first calibration-curve point (a different threshold from
+    // the plain detection limit), so the filing must show "<10.0" — the parenthetical
+    // raw reading is informational only and is intentionally dropped, not stored.
+    let m = s.match(/^([<>])\s*([\d.]+)\s*\(\s*[\d.]+\s*\)$/);
+    if (m) return { cmp: m[1], val: m[2] };
+    m = s.match(/^([<>])\s*([\d.]+)$/);
     if (m) return { cmp: m[1], val: m[2] };
     // e.g. "6.0×104" meaning 6.0×10^4 (single trailing exponent digit)
     m = s.match(/^([\d.]+)\s*[×xX]\s*10\^?(\d)$/);
@@ -538,32 +544,16 @@ const SmartParse = {
 
     const rows = [];
     const skippedPlaceholderItems = [];
-    // Deliberately narrow, not a general rule: SO2/O3/etc. can legitimately read
-    // "< X" for every single hour when the air is genuinely clean and the detection
-    // limit is low — that's a real, common result and must NOT be discarded (that was
-    // tried and caused a real false-negative on SO2/O3 in a verified report). CH4 is
-    // different: ambient background CH4 is ~1.8–2.0 ppm essentially everywhere on
-    // Earth, so a report showing "< 1.0 ppm" for every hour of the day is physically
-    // implausible — it means this site's hydrocarbon analyzer (which reports CH4,
-    // NMHC, and THC together as one instrument) isn't actually installed, and the
-    // report template just carries the three columns with a placeholder value.
-    // Confirmed against a verified ground-truth filing where this exact pattern
-    // corresponds to CH4/NMHC/THC being correctly absent from the official submission.
-    const isImplausiblyLowCH4 = (col) => {
-      const vals = [];
-      for (let r = unitRow + 1; r < avgHit.r; r++) {
-        const v = this.cellStr(grid[r]?.[col]);
-        if (v !== '') vals.push(v);
-      }
-      if (vals.length < 3 || new Set(vals).size !== 1) return false; // not a flat-all-day pattern
-      const m = vals[0].match(/^<\s*([\d.]+)$/);
-      return !!m && parseFloat(m[1]) < 1.0; // far below real-world CH4 background levels
-    };
-    let hydrocarbonAnalyzerMissing = false;
-    if (cols.CH4 >= 0 && isImplausiblyLowCH4(cols.CH4)) {
-      hydrocarbonAnalyzerMissing = true;
-      skippedPlaceholderItems.push('CH4', 'NMHC', 'THC');
-    }
+    // Whether a pollutant column is actually monitored at this site is determined
+    // by the spreadsheet's own hidden-column flag, not by guessing from the data —
+    // a lab reusing one shared report template across sites with different
+    // instrumentation hides the columns for items a given site doesn't measure,
+    // while the placeholder text stays in the (hidden) cells. Trying to infer this
+    // from data patterns instead (e.g. "this column reads the same value all day")
+    // was tried and is unreliable both ways: it can wrongly flag a genuinely clean
+    // site's real SO2/O3 readings as fake, and wrongly accept a hidden placeholder
+    // column that happens to vary. The hidden-column flag has neither failure mode.
+    const hiddenCols = grid._hiddenCols || new Set();
 
     // Use the same ND/"< X" parser as the water-table reader — a daily average like
     // "< 0.3" (below detection limit) must never be silently dropped just because
@@ -571,7 +561,7 @@ const SmartParse = {
     this.AIR_POLLUTANT_DEFS.forEach(def => {
       const col = cols[def.key];
       if (col < 0) return;
-      if (hydrocarbonAnalyzerMissing && ['CH4', 'NMHC', 'THC'].includes(def.key)) return;
+      if (hiddenCols.has(col)) { skippedPlaceholderItems.push(def.key); return; }
       const v = this.cellStr(avgRow[col]);
       if (v === '') return;
       const { cmp, val } = this.parseValueCell(v);
@@ -583,7 +573,9 @@ const SmartParse = {
         '檢測方法': methodMap[methodKey] || '',
       });
     });
-    if (tspVal) {
+    if (cols.TSP >= 0 && hiddenCols.has(cols.TSP)) {
+      skippedPlaceholderItems.push('TSP');
+    } else if (tspVal) {
       const { cmp, val } = this.parseValueCell(tspVal);
       rows.push({
         ...baseRow, '檢測項目': 'TSP', '檢測濃度/質量單位': '127',
@@ -591,7 +583,9 @@ const SmartParse = {
         '檢測方法': methodMap.TSP || '',
       });
     }
-    if (cols.pm25 >= 0) {
+    if (cols.pm25 >= 0 && hiddenCols.has(cols.pm25)) {
+      skippedPlaceholderItems.push('PM2.5');
+    } else if (cols.pm25 >= 0) {
       const pm25Raw = this.cellStr(grid[unitRow]?.[cols.pm25]);
       if (pm25Raw !== '') {
         const { cmp, val } = this.parseValueCell(pm25Raw);
