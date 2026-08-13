@@ -114,6 +114,10 @@ body {
 
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
 .toolbar-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+#rowSearchInput {
+  padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 13px; width: 240px;
+}
+tr.row-hidden { display: none; }
 .row-count { color: var(--text-muted); font-size: 13px; }
 
 .bulk-toolbar {
@@ -187,6 +191,15 @@ table.data-grid td.col-actions { text-align: center; }
 .hint { font-size: 12.5px; color: var(--text-muted); }
 .warning { background: #fff6e0; border: 1px solid #f0c14b; padding: 8px 10px; border-radius: 6px; font-size: 12.5px; margin-top: 8px; }
 .warning.hidden { display: none; }
+.period-picker {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  background: #eef3f1; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin: 10px 0;
+}
+.period-picker-label {
+  display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text);
+}
+.period-picker-label input { padding: 6px 9px; border: 1px solid var(--border); border-radius: 5px; font-size: 13px; font-family: inherit; width: 140px; }
+#periodFilterSelect { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 13px; }
 .hidden { display: none !important; }
 
 .mapping-table-wrap { max-height: 380px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-top: 10px; }

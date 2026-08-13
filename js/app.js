@@ -11,7 +11,48 @@ const state = {
   itemSelection: null, // Set of currently-checked item values (both import modes)
   batchQueue: null, // [{ catKey, result }] pending confirmation, when batch-importing
   batchQueueTotal: 0,
+  periodFilter: {}, // { [catKey]: '115年第1季' | '' (全部) } — which period is being viewed/edited
+  importPeriod: '', // the period label chosen for the batch currently being imported
 };
+
+// ---------- reporting period (年/季) ----------
+// The official filing is submitted one quarter at a time (the template filenames
+// even say "115Q1" etc.), but nothing in the row data itself says which quarter it
+// belongs to. This tags each imported batch with a period label — guessed from the
+// sampling dates but always shown to the person to confirm/adjust — so data from
+// different quarters doesn't get silently merged together at export time.
+function guessPeriodFromRows(rows) {
+  const dates = rows.map(r => r['日期(起)']).filter(Boolean).sort();
+  if (dates.length === 0) return '';
+  const mid = dates[Math.floor(dates.length / 2)]; // representative date, robust to a few outliers
+  const m = mid.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '';
+  const rocYear = parseInt(m[1], 10) - 1911;
+  const quarter = Math.ceil(parseInt(m[2], 10) / 3);
+  return `${rocYear}年第${quarter}季`;
+}
+function getKnownPeriods(project, catKey) {
+  const rows = DataStore.getData(project.id, catKey);
+  const periods = [...new Set(rows.map(r => r._period).filter(Boolean))];
+  // sort roughly chronologically by the leading ROC year + quarter number embedded in the label
+  return periods.sort();
+}
+
+function renderPeriodPicker(containerId, rows) {
+  const guess = guessPeriodFromRows(rows);
+  if (!state.importPeriod) state.importPeriod = guess;
+  const container = document.getElementById(containerId);
+  container.innerHTML = `
+    <label class="period-picker-label">
+      本批資料屬於哪一期？
+      <input type="text" id="importPeriodInput" value="${escapeAttr(state.importPeriod)}" placeholder="例：115年第1季">
+    </label>
+    <span class="hint">${guess ? `系統依照資料中的採樣日期猜測為「${escapeHtml(guess)}」，如不正確請直接修改。` : '系統無法從資料中判斷期別，請手動輸入（例如 115年第1季），方便日後依季度查看與匯出。'}</span>
+  `;
+  document.getElementById('importPeriodInput').addEventListener('input', (e) => {
+    state.importPeriod = e.target.value;
+  });
+}
 
 // ---------- helpers ----------
 function escapeHtml(s) {
@@ -229,9 +270,26 @@ function renderBasicTab(project) {
 // ---------- category data tab ----------
 function renderCategoryTab(project, catKey) {
   const cat = CATEGORIES[catKey];
-  const rows = DataStore.getData(project.id, catKey);
+  const allRows = DataStore.getData(project.id, catKey);
   const batches = DataStore.getImportBatches(project.id, catKey);
   const body = document.getElementById('tabBody');
+
+  const knownPeriods = getKnownPeriods(project, catKey);
+  const hasUnlabeled = allRows.some(r => !r._period);
+  if (state.periodFilter[catKey] === undefined) state.periodFilter[catKey] = '';
+  const activePeriod = state.periodFilter[catKey];
+  const showPeriodUI = knownPeriods.length > 0 || hasUnlabeled;
+
+  // keep each row's ORIGINAL array index (not display order) so edits/deletes still
+  // target the right record in DataStore after filtering by period for display.
+  const displayEntries = allRows
+    .map((row, idx) => ({ row, idx }))
+    .filter(({ row }) => {
+      if (!activePeriod) return true;
+      if (activePeriod === '__none__') return !row._period;
+      return row._period === activePeriod;
+    });
+  const displayRows = displayEntries.map(e => e.row);
 
   body.innerHTML = `
     <div class="toolbar">
@@ -241,10 +299,18 @@ function renderCategoryTab(project, catKey) {
         <button class="btn btn-ghost btn-sm" id="btnCoordManager">📍 測站座標管理</button>
         ${cat.methodField ? `<button class="btn btn-ghost btn-sm" id="btnMethodManager">🧪 檢測方法管理</button>` : ''}
         <button class="btn btn-ghost btn-sm" id="btnBatchHistory">📜 匯入紀錄${batches.length ? ` (${batches.length})` : ''}</button>
-        <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）</button>
-        <button class="btn btn-danger btn-sm" id="btnClearCat" ${rows.length === 0 ? 'disabled' : ''}>🗑 清空此類別</button>
+        ${showPeriodUI ? `
+        <select id="periodFilterSelect" title="篩選要查看／編輯／匯出哪一期的資料；「匯出此類別」會依此篩選範圍匯出">
+          <option value="" ${activePeriod === '' ? 'selected' : ''}>全部期別</option>
+          ${knownPeriods.map(p => `<option value="${escapeAttr(p)}" ${activePeriod === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
+          ${hasUnlabeled ? `<option value="__none__" ${activePeriod === '__none__' ? 'selected' : ''}>未標示期別</option>` : ''}
+        </select>` : ''}
+        <input type="text" id="rowSearchInput" placeholder="🔍 搜尋任何欄位內容（測站、測項、日期…）" title="輸入關鍵字即時篩選畫面顯示的資料列，方便檢查或修正特定資料；不影響匯出範圍（匯出仍依上方期別篩選）">
+        <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除搜尋</button>
+        <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）${activePeriod ? '（僅目前篩選期別）' : ''}</button>
+        <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別</button>
       </div>
-      <div class="row-count">共 ${rows.length} 筆資料</div>
+      <div class="row-count" id="rowCountDisplay">共 ${displayRows.length} 筆資料${activePeriod ? `（篩選中，全部共 ${allRows.length} 筆）` : ''}</div>
     </div>
     <div class="toolbar bulk-toolbar hidden" id="bulkToolbar">
       <span id="bulkSelCount">已選取 0 筆</span>
@@ -254,15 +320,16 @@ function renderCategoryTab(project, catKey) {
     <div class="table-wrap">
       <table class="data-grid">
         <thead><tr>
-          <th class="col-check"><input type="checkbox" id="checkAllRows" ${rows.length === 0 ? 'disabled' : ''}></th>
+          <th class="col-check"><input type="checkbox" id="checkAllRows" ${displayRows.length === 0 ? 'disabled' : ''}></th>
           <th>操作</th>
           <th>#</th>
           ${cat.fields.map(f => `<th${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
         </tr></thead>
-        <tbody id="gridBody">${rows.map((r, idx) => rowHtml(cat, r, idx)).join('')}</tbody>
+        <tbody id="gridBody">${displayEntries.map(({ row, idx }) => rowHtml(cat, row, idx)).join('')}</tbody>
       </table>
     </div>
-    ${rows.length === 0 ? '<p class="hint" style="margin-top:10px">尚無資料。可點「匯入資料」上傳該類別的檢測結果檔案，或「新增一筆」手動輸入。</p>' : ''}
+    ${allRows.length === 0 ? '<p class="hint" style="margin-top:10px">尚無資料。可點「匯入資料」上傳該類別的檢測結果檔案，或「新增一筆」手動輸入。</p>' : ''}
+    ${allRows.length > 0 && displayRows.length === 0 ? '<p class="hint" style="margin-top:10px">此期別目前沒有資料。</p>' : ''}
   `;
 
   document.getElementById('btnImport').addEventListener('click', () => openImportModal(catKey));
@@ -272,19 +339,60 @@ function renderCategoryTab(project, catKey) {
     document.getElementById('btnMethodManager').addEventListener('click', () => openMethodModal(project, catKey));
   }
   document.getElementById('btnBatchHistory').addEventListener('click', () => openBatchHistoryModal(project, catKey));
+  if (showPeriodUI) {
+    document.getElementById('periodFilterSelect').addEventListener('change', (e) => {
+      state.periodFilter[catKey] = e.target.value;
+      renderContent();
+    });
+  }
   document.getElementById('btnExportCat').addEventListener('click', () => {
-    if (rows.length === 0) { alert('此類別尚無資料可匯出。'); return; }
-    ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey);
+    if (displayRows.length === 0) { alert('目前篩選範圍內沒有資料可匯出。'); return; }
+    ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey, displayRows);
   });
   document.getElementById('btnClearCat').addEventListener('click', () => {
-    if (rows.length === 0) return;
-    if (!confirm(`確定要清空「${cat.label}」的全部 ${rows.length} 筆資料嗎？此操作無法復原。`)) return;
+    if (allRows.length === 0) return;
+    if (!confirm(`確定要清空「${cat.label}」的全部 ${allRows.length} 筆資料嗎？（含所有期別）此操作無法復原。`)) return;
     DataStore.clearData(project.id, catKey);
+    state.periodFilter[catKey] = '';
     renderContent();
   });
 
   wireGridEvents(project, catKey, cat);
   wireBulkSelection(project, catKey, cat);
+  wireRowSearch(displayRows.length, allRows.length, activePeriod);
+}
+
+// ---------- 表格內容搜尋（畫面篩選，不影響匯出範圍——匯出範圍由上方期別篩選決定） ----------
+function wireRowSearch(displayCount, totalCount, activePeriod) {
+  const searchInput = document.getElementById('rowSearchInput');
+  const clearBtn = document.getElementById('btnClearSearch');
+  const tbody = document.getElementById('gridBody');
+  const countEl = document.getElementById('rowCountDisplay');
+  if (!searchInput || !tbody) return;
+
+  const baseCountText = `共 ${displayCount} 筆資料${activePeriod ? `（篩選中，全部共 ${totalCount} 筆）` : ''}`;
+
+  const rowSearchText = (tr) => {
+    const staticText = tr.textContent || '';
+    const inputVals = [...tr.querySelectorAll('input, select')].map(el => el.value || '').join(' ');
+    return (staticText + ' ' + inputVals).toLowerCase();
+  };
+
+  const applyFilter = () => {
+    const q = searchInput.value.trim().toLowerCase();
+    clearBtn.classList.toggle('hidden', q === '');
+    let visible = 0;
+    const rows = tbody.querySelectorAll('tr');
+    rows.forEach(tr => {
+      const matches = !q || rowSearchText(tr).includes(q);
+      tr.classList.toggle('row-hidden', !matches);
+      if (matches) visible++;
+    });
+    countEl.textContent = q ? `符合搜尋：${visible} / ${rows.length} 筆` : baseCountText;
+  };
+
+  searchInput.addEventListener('input', applyFilter);
+  clearBtn.addEventListener('click', () => { searchInput.value = ''; applyFilter(); searchInput.focus(); });
 }
 
 function wireBulkSelection(project, catKey, cat) {
@@ -293,12 +401,16 @@ function wireBulkSelection(project, catKey, cat) {
   const bulkToolbar = document.getElementById('bulkToolbar');
   const bulkCount = document.getElementById('bulkSelCount');
 
-  const getChecked = () => [...tbody.querySelectorAll('.row-check:checked')].map(cb => Number(cb.dataset.row));
+  // "全選"／批次刪除只作用於目前畫面上看得到的列（考慮搜尋篩選後被隱藏的列），
+  // 避免使用者在打了關鍵字、只看到部分資料時，誤選/誤刪看不到的其他資料。
+  const isVisible = (cb) => !cb.closest('tr').classList.contains('row-hidden');
+  const getVisibleCheckboxes = () => [...tbody.querySelectorAll('.row-check')].filter(isVisible);
+  const getChecked = () => getVisibleCheckboxes().filter(cb => cb.checked).map(cb => Number(cb.dataset.row));
   const updateBulkUI = () => {
     const n = getChecked().length;
     bulkToolbar.classList.toggle('hidden', n === 0);
     bulkCount.textContent = `已選取 ${n} 筆`;
-    if (checkAll) checkAll.checked = n > 0 && n === tbody.querySelectorAll('.row-check').length;
+    if (checkAll) checkAll.checked = n > 0 && n === getVisibleCheckboxes().length;
   };
 
   tbody.addEventListener('change', (e) => {
@@ -306,7 +418,7 @@ function wireBulkSelection(project, catKey, cat) {
   });
   if (checkAll) {
     checkAll.addEventListener('change', () => {
-      tbody.querySelectorAll('.row-check').forEach(cb => { cb.checked = checkAll.checked; });
+      getVisibleCheckboxes().forEach(cb => { cb.checked = checkAll.checked; });
       updateBulkUI();
     });
   }
@@ -340,10 +452,11 @@ function openBatchHistoryModal(project, catKey) {
     wrap.innerHTML = '<p class="hint" style="padding:14px">此類別目前沒有透過「匯入」建立的紀錄（手動新增的資料不會列在這裡）。</p>';
   } else {
     wrap.innerHTML = `<table class="mapping-table">
-      <thead><tr><th>匯入時間</th><th>來源檔案</th><th>方式</th><th>筆數</th><th>操作</th></tr></thead>
+      <thead><tr><th>期別</th><th>匯入時間</th><th>來源檔案</th><th>方式</th><th>筆數</th><th>操作</th></tr></thead>
       <tbody>
         ${batches.slice().reverse().map(b => `
           <tr data-batch-id="${escapeAttr(b.id)}">
+            <td>${escapeHtml(b.period || '（未標示）')}</td>
             <td>${new Date(b.timestamp).toLocaleString('zh-TW')}</td>
             <td>${escapeHtml(b.sourceLabel)}</td>
             <td>${b.mode === 'smart' ? '智慧解析' : '一般欄位比對'}</td>
@@ -807,6 +920,30 @@ function openExportSelectModal(project) {
       ${CATEGORIES[c].label}（${DataStore.getData(project.id, c).length} 筆）
     </label>
   `).join('');
+
+  // union of every period label seen across the categories being offered, so one
+  // choice here applies to all of them — matches how a submission is normally
+  // compiled (this whole quarter's data across every category, all at once).
+  const allPeriods = new Set();
+  let anyUnlabeled = false;
+  withData.forEach(c => {
+    DataStore.getData(project.id, c).forEach(r => { r._period ? allPeriods.add(r._period) : (anyUnlabeled = true); });
+  });
+  const periodWrap = document.getElementById('exportSelectPeriodWrap');
+  if (allPeriods.size > 0 || anyUnlabeled) {
+    periodWrap.innerHTML = `
+      <label style="display:flex;flex-direction:column;gap:5px;margin:10px 0;font-size:13px;font-weight:600;">
+        只匯出哪一期的資料？
+        <select id="exportSelectPeriod">
+          <option value="">全部期別</option>
+          ${[...allPeriods].sort().map(p => `<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`).join('')}
+          ${anyUnlabeled ? `<option value="__none__">未標示期別</option>` : ''}
+        </select>
+      </label>`;
+  } else {
+    periodWrap.innerHTML = '';
+  }
+
   document.getElementById('exportSelectModal').dataset.projectId = project.id;
   document.getElementById('exportSelectModal').classList.remove('hidden');
 }
@@ -818,8 +955,16 @@ function confirmExportSelect() {
   const project = getCurrentProject();
   const checked = [...document.querySelectorAll('#exportSelectList [data-export-cat]:checked')].map(cb => cb.value);
   if (checked.length === 0) { alert('請至少勾選一個類別。'); return; }
+  const periodSel = document.getElementById('exportSelectPeriod');
+  const period = periodSel ? periodSel.value : '';
   const basicInfo = DataStore.getBasicInfo(project.id);
-  checked.forEach(catKey => ExportEngine.downloadCategory(project, basicInfo, catKey));
+  checked.forEach(catKey => {
+    let rows = DataStore.getData(project.id, catKey);
+    if (period === '__none__') rows = rows.filter(r => !r._period);
+    else if (period) rows = rows.filter(r => r._period === period);
+    if (rows.length === 0) return; // nothing for this category in the chosen period
+    ExportEngine.downloadCategory(project, basicInfo, catKey, rows);
+  });
   closeExportSelectModal();
 }
 
@@ -1021,6 +1166,7 @@ function openImportModal(catKey) {
   state.importMode = null;
   state.smartResult = null;
   state.itemSelection = null;
+  state.importPeriod = '';
   document.getElementById('importModalTitle').textContent = `匯入${CATEGORIES[catKey].label}監測資料`;
   document.getElementById('importFileInput').value = '';
   document.getElementById('importStep1').classList.remove('hidden');
@@ -1158,6 +1304,15 @@ function renderMappingStep() {
   refreshGenericItemChecklist();
   const itemSel = tbody.querySelector(`select[data-target-field="${cat.itemField}"]`);
   if (itemSel) itemSel.addEventListener('change', refreshGenericItemChecklist);
+
+  const dateSel = tbody.querySelector(`select[data-target-field="日期(起)"]`);
+  const refreshPeriodPicker = () => {
+    const mappedHeader = dateSel ? dateSel.value : '';
+    const shimRows = mappedHeader ? rows.map(r => ({ '日期(起)': normalizeDateString(r[mappedHeader]) })) : [];
+    renderPeriodPicker('genericPeriodWrap', shimRows);
+  };
+  refreshPeriodPicker();
+  if (dateSel) dateSel.addEventListener('change', refreshPeriodPicker);
 }
 
 // ---------- smart import (report-form parser) preview ----------
@@ -1189,6 +1344,8 @@ function renderSmartImportPreview() {
 
   const siteEntries = Object.entries(result.sites); // [key, {siteCode, rawLocation, rowIndices}]
   state.itemSelection = null; // reset so renderItemChecklist re-seeds with "all checked"
+
+  renderPeriodPicker('smartPeriodWrap', result.rows);
 
   const updateCounts = () => {
     const selectedTotal = filterRowsBySelection(result.rows, cat.itemField).length;
@@ -1377,9 +1534,10 @@ function confirmSmartImport() {
     return batchIdByFile[key];
   };
 
-  // strip internal metadata fields before saving into the schema data (keep _batchId)
+  // strip internal metadata fields before saving into the schema data (keep _batchId, _period)
+  const periodLabel = (state.importPeriod || '').trim();
   const cleanRows = selectedRows.map(r => {
-    const out = { _batchId: getBatchIdFor(r._sourceFile) };
+    const out = { _batchId: getBatchIdFor(r._sourceFile), _period: periodLabel };
     cat.fields.forEach(f => { out[f.key] = r[f.key] || ''; });
     return out;
   });
@@ -1400,6 +1558,7 @@ function confirmSmartImport() {
       sourceLabel: fileNameByBatchId[id] || state.currentImportSourceLabel || '（未知來源）',
       mode: 'smart',
       rowCount,
+      period: periodLabel,
     });
   });
 
@@ -1447,7 +1606,7 @@ function confirmImport() {
   selectedRows = resolveDuplicatesForImport(project, catKey, cat, selectedRows);
   if (selectedRows.length === 0) { alert('排除重複資料後已無資料可匯入。'); return; }
   const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-  selectedRows.forEach(r => { r._batchId = batchId; });
+  selectedRows.forEach(r => { r._batchId = batchId; r._period = (state.importPeriod || '').trim(); });
   const existing = DataStore.getData(project.id, catKey);
   const merged = existing.concat(selectedRows);
   DataStore.saveData(project.id, catKey, merged);
@@ -1458,6 +1617,7 @@ function confirmImport() {
     sourceLabel: state.currentImportSourceLabel || '（未知來源）',
     mode: 'generic',
     rowCount: selectedRows.length,
+    period: (state.importPeriod || '').trim(),
   });
 
   closeImportModal();

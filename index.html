@@ -74,10 +74,12 @@
         </table>
       </div>
       <p class="hint" id="importRowCount"></p>
+      <div id="genericPeriodWrap" class="period-picker"></div>
       <div id="genericImportItemsWrap"></div>
     </div>
     <div id="importStep3" class="hidden">
       <p class="hint" id="smartImportSummary"></p>
+      <div id="smartPeriodWrap" class="period-picker"></div>
       <div id="smartImportItemsWrap"></div>
       <div id="smartImportSitesWrap" class="mapping-table-wrap"></div>
       <p class="hint" id="smartImportSkipped"></p>
@@ -134,6 +136,7 @@
     <h3>匯出全部類別</h3>
     <p class="hint">請勾選要匯出的類別（僅列出目前有資料的類別），每個類別會各自下載一個 Excel 檔。</p>
     <div id="exportSelectList" class="item-checklist" style="flex-direction:column;align-items:flex-start"></div>
+    <div id="exportSelectPeriodWrap"></div>
     <div class="modal-actions">
       <button id="btnExportSelectCancel" class="btn btn-ghost">取消</button>
       <button id="btnExportSelectConfirm" class="btn btn-primary">開始匯出</button>

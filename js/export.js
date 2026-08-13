@@ -28,9 +28,9 @@ const ExportEngine = {
     return { t: 'n', v: frac, z: 'h:mm' };
   },
 
-  buildWorkbook(project, basicInfo, categoryKey) {
+  buildWorkbook(project, basicInfo, categoryKey, rowsOverride) {
     const cat = CATEGORIES[categoryKey];
-    const rows = DataStore.getData(project.id, categoryKey);
+    const rows = rowsOverride || DataStore.getData(project.id, categoryKey);
 
     const wb = XLSX.utils.book_new();
 
@@ -57,9 +57,9 @@ const ExportEngine = {
     return wb;
   },
 
-  downloadCategory(project, basicInfo, categoryKey) {
+  downloadCategory(project, basicInfo, categoryKey, rowsOverride) {
     const cat = CATEGORIES[categoryKey];
-    const wb = this.buildWorkbook(project, basicInfo, categoryKey);
+    const wb = this.buildWorkbook(project, basicInfo, categoryKey, rowsOverride);
     const fname = `${project.code}_${cat.sourceFile}`;
     XLSX.writeFile(wb, fname);
   },
