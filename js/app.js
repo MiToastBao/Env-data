@@ -223,7 +223,7 @@ function renderCategoryTab(project, catKey) {
           <th class="col-check"><input type="checkbox" id="checkAllRows" ${rows.length === 0 ? 'disabled' : ''}></th>
           <th>操作</th>
           <th>#</th>
-          ${cat.fields.map(f => `<th${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
+          ${cat.fields.map(f => `<th${f.key === cat.itemField ? ' class="col-item"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
         </tr></thead>
         <tbody id="gridBody">${rows.map((r, idx) => rowHtml(cat, r, idx)).join('')}</tbody>
       </table>
@@ -331,7 +331,7 @@ function openBatchHistoryModal(project, catKey) {
 }
 
 function rowHtml(cat, row, idx) {
-  const cells = cat.fields.map(f => `<td>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
+  const cells = cat.fields.map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : ''}>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
   return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td><td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td>${idx + 1}</td>${cells}</tr>`;
 }
 
@@ -385,22 +385,33 @@ function wireGridEvents(project, catKey, cat) {
     DataStore.saveData(project.id, catKey, rows);
   };
 
-  // If the person fills in coordinates for one row, carry them forward to any other
-  // row sharing the same 日期(起) that doesn't have that field filled in yet — so a
-  // multi-item report (e.g. water quality's several test items from one sampling
-  // event) only needs coordinates entered once. Never overwrites an existing value.
-  const propagateCoordsForDate = (rowIdx, fieldKey) => {
-    if (!COORD_FIELDS.includes(fieldKey)) return false;
+  // If the person corrects a coordinate on one row, offer to sync all three
+  // coordinate fields to every other row that (a) came from the same import batch,
+  // (b) shares the same sampling location, AND (c) shares the same sampling date —
+  // e.g. a site sampled in both April and May can genuinely have slightly different
+  // coordinates between visits, so syncing must never cross dates. Always asks first,
+  // same reasoning as the date/time sync below.
+  const offerCoordSync = (rowIdx) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
-    if (!source || !source[fieldKey] || !source['日期(起)']) return false;
-    let changed = false;
-    rows.forEach((r, idx) => {
-      if (idx === rowIdx || r['日期(起)'] !== source['日期(起)']) return;
-      if (!r[fieldKey]) { r[fieldKey] = source[fieldKey]; changed = true; }
-    });
-    if (changed) DataStore.saveData(project.id, catKey, rows);
-    return changed;
+    const locField = cat.locationField;
+    if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
+    const matches = rows
+      .map((r, idx) => ({ r, idx }))
+      .filter(({ r, idx }) => idx !== rowIdx && r._batchId === source._batchId
+        && r[locField] === source[locField] && r['日期(起)'] === source['日期(起)']);
+    if (matches.length === 0) return false;
+    const anyDiff = matches.some(({ r }) => COORD_FIELDS.some(f => r[f] !== source[f]));
+    if (!anyDiff) return false;
+    const ok = confirm(
+      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
+      `是否要將這些資料的座標一併同步更新為與這一筆相同？\n\n` +
+      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。不同採樣日期的資料不會被同步。）`
+    );
+    if (!ok) return false;
+    matches.forEach(({ r }) => { COORD_FIELDS.forEach(f => { r[f] = source[f]; }); });
+    DataStore.saveData(project.id, catKey, rows);
+    return true;
   };
 
   // If the person corrects a date/time on one row, offer to sync all four date/time
@@ -448,7 +459,7 @@ function wireGridEvents(project, catKey, cat) {
     if (!t.dataset.field) return;
     if (t.tagName === 'SELECT') {
       commit(Number(t.dataset.row), t.dataset.field, t.value);
-      if (propagateCoordsForDate(Number(t.dataset.row), t.dataset.field)) { renderContent(); return; }
+      if (COORD_FIELDS.includes(t.dataset.field) && offerCoordSync(Number(t.dataset.row))) { renderContent(); return; }
     }
   });
   // use focusout (bubbles) rather than blur to catch this via delegation; only
@@ -465,7 +476,7 @@ function wireGridEvents(project, catKey, cat) {
       commit(rowIdx, fieldKey, normalized);
     }
 
-    if (propagateCoordsForDate(rowIdx, fieldKey)) { renderContent(); return; }
+    if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContent(); return; }
     if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx)) renderContent();
   });
   tbody.addEventListener('click', (e) => {
@@ -476,6 +487,16 @@ function wireGridEvents(project, catKey, cat) {
     rows.splice(Number(btn.dataset.row), 1);
     DataStore.saveData(project.id, catKey, rows);
     renderContent();
+  });
+  // Pressing Enter should confirm the edit immediately (normalize, commit, and offer
+  // any sync) rather than requiring the person to click elsewhere first — blur()
+  // reuses the exact same focusout logic above rather than duplicating it.
+  tbody.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const t = e.target;
+    if (!t.dataset.field || t.tagName === 'SELECT') return;
+    e.preventDefault();
+    t.blur();
   });
 }
 
@@ -498,23 +519,28 @@ function openCoordModal(project, catKey) {
   const rows = DataStore.getData(project.id, catKey);
   const locField = cat.locationField;
 
-  // group row indices by site name text
-  const groups = {}; // locationText -> { indices: [...], coordSystem, x, y }
+  // Group by (location, sampling date) — NOT location alone. The same named site can
+  // legitimately have slightly different coordinates between visits (e.g. April vs
+  // May), so applying one set of coordinates across all dates for a site would
+  // silently corrupt the other visits' data.
+  const groups = {}; // "loc\u0001date" -> { loc, date, indices: [...], coordSystem, x, y }
   rows.forEach((row, idx) => {
     const loc = (row[locField] || '').trim() || '（未命名測站）';
-    if (!groups[loc]) {
-      groups[loc] = {
-        indices: [],
+    const date = row['日期(起)'] || '（未填日期）';
+    const key = loc + '\u0001' + date;
+    if (!groups[key]) {
+      groups[key] = {
+        loc, date, indices: [],
         coordSystem: row['座標系統'] || '',
         x: row['採樣座標-經度 X'] || '',
         y: row['採樣座標-緯度 Y'] || '',
       };
     }
-    groups[loc].indices.push(idx);
+    groups[key].indices.push(idx);
     // prefer an already-filled value if this group doesn't have one yet
-    if (!groups[loc].x && row['採樣座標-經度 X']) groups[loc].x = row['採樣座標-經度 X'];
-    if (!groups[loc].y && row['採樣座標-緯度 Y']) groups[loc].y = row['採樣座標-緯度 Y'];
-    if (!groups[loc].coordSystem && row['座標系統']) groups[loc].coordSystem = row['座標系統'];
+    if (!groups[key].x && row['採樣座標-經度 X']) groups[key].x = row['採樣座標-經度 X'];
+    if (!groups[key].y && row['採樣座標-緯度 Y']) groups[key].y = row['採樣座標-緯度 Y'];
+    if (!groups[key].coordSystem && row['座標系統']) groups[key].coordSystem = row['座標系統'];
   });
 
   const entries = Object.entries(groups);
@@ -523,10 +549,11 @@ function openCoordModal(project, catKey) {
     wrap.innerHTML = '<p class="hint" style="padding:14px">目前此類別尚無資料，請先新增或匯入資料後再使用測站座標管理。</p>';
   } else {
     wrap.innerHTML = `<table class="mapping-table">
-      <thead><tr><th>測站名稱</th><th title="2：WGS84（全球座標，例如經度 120.681，緯度 24.147）／3：TWD97-TM2（投影座標系，例如 X=193150, Y=2670900）">座標系統 ℹ️</th><th>經度 X</th><th>緯度 Y</th><th>筆數</th></tr></thead>
+      <thead><tr><th>測站名稱</th><th>採樣日期</th><th title="2：WGS84（全球座標，例如經度 120.681，緯度 24.147）／3：TWD97-TM2（投影座標系，例如 X=193150, Y=2670900）">座標系統 ℹ️</th><th>經度 X</th><th>緯度 Y</th><th>筆數</th></tr></thead>
       <tbody id="coordSitesBody">
-        ${entries.map(([loc, g]) => `<tr data-loc="${escapeAttr(loc)}">
-          <td>${escapeHtml(loc)}</td>
+        ${entries.map(([key, g]) => `<tr data-group-key="${escapeAttr(key)}">
+          <td>${escapeHtml(g.loc)}</td>
+          <td>${escapeHtml(g.date)}</td>
           <td><select data-coord-field="座標系統" title="2：WGS84（全球座標，例如經度 120.681，緯度 24.147）／3：TWD97-TM2（投影座標系，例如 X=193150, Y=2670900）">
             <option value="" ${g.coordSystem === '' ? 'selected' : ''}>（未選擇）</option>
             <option value="2" ${g.coordSystem === '2' ? 'selected' : ''}>2：WGS84（全球座標）</option>
@@ -558,19 +585,20 @@ function saveCoordModal() {
   const locField = CATEGORIES[catKey].locationField;
 
   document.querySelectorAll('#coordSitesBody tr').forEach(tr => {
-    const loc = tr.dataset.loc;
+    const [loc, date] = tr.dataset.groupKey.split('\u0001');
     const values = {};
     tr.querySelectorAll('[data-coord-field]').forEach(el => { values[el.dataset.coordField] = el.value; });
     rows.forEach(row => {
       const rowLoc = (row[locField] || '').trim() || '（未命名測站）';
-      if (rowLoc === loc) Object.assign(row, values);
+      const rowDate = row['日期(起)'] || '（未填日期）';
+      if (rowLoc === loc && rowDate === date) Object.assign(row, values);
     });
   });
 
   DataStore.saveData(projectId, catKey, rows);
   closeCoordModal();
   renderContent();
-  alert('已套用座標到符合的資料列。');
+  alert('已套用座標到符合的資料列（僅限相同測站＋相同採樣日期的資料）。');
 }
 
 // ---------- version / changelog ----------
@@ -745,9 +773,12 @@ async function handleBatchFiles(fileList) {
   const unrecognizedFiles = [];
 
   for (const file of files) {
+    const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
+    const isPdf = /\.pdf$/i.test(file.name);
+    if (!isSpreadsheet && !isPdf) { unrecognizedFiles.push(`${file.name}（不支援的格式）`); continue; }
     let grids;
     try {
-      grids = await ImportEngine.readWorkbookGrids(file);
+      grids = isSpreadsheet ? await ImportEngine.readWorkbookGrids(file) : await ImportEngine.readPdfAsGrids(file);
     } catch (err) {
       unrecognizedFiles.push(`${file.name}（讀取失敗：${err.message}）`);
       continue;
@@ -761,6 +792,7 @@ async function handleBatchFiles(fileList) {
           perCategory[catKey].rows.push(...rows);
           perCategory[catKey].matchedSheets.push(`${file.name} / ${sheetName}`);
           perCategory[catKey].sourceFiles.add(file.name);
+          if (isPdf) perCategory[catKey].hasPdfSource = true;
           matchedCat = catKey;
           anyMatchInFile = true;
           break; // a sheet belongs to exactly one category
@@ -846,26 +878,71 @@ function closeImportModal() {
 
 const SMART_PARSE_CATEGORIES = ['noise', 'water', 'air'];
 
-async function handleImportFile(file) {
-  if (!file) return;
+/**
+ * Accepts one File, an array of Files, or a FileList (multi-select is now supported
+ * for a single category too — e.g. importing this quarter's several monthly 放流水
+ * reports at once). For smart-parse categories every selected file is read and
+ * aggregated into one preview (one item checklist, one site-profile table) before
+ * anything is committed. Non-smart-parse categories still take exactly one file,
+ * since combining several raw tables via column-mapping isn't well-defined.
+ */
+async function handleImportFile(fileOrFiles) {
+  if (!fileOrFiles) return;
+  const files = fileOrFiles instanceof FileList ? [...fileOrFiles]
+    : Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+  if (files.length === 0) return;
   const catKey = state.importCatKey;
-  const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
-  state.currentImportSourceLabel = file.name;
+  state.currentImportSourceLabel = files.map(f => f.name).join('、');
 
   try {
-    // Try the smart form-parser first for categories/report types it understands.
-    if (isSpreadsheet && SMART_PARSE_CATEGORIES.includes(catKey)) {
-      const grids = await ImportEngine.readWorkbookGrids(file);
-      const result = SmartParse.parseWorkbook(catKey, grids);
-      if (result.rows.length > 0) {
+    if (SMART_PARSE_CATEGORIES.includes(catKey)) {
+      const aggregate = { rows: [], matchedSheets: [], skippedSheets: [], sourceFiles: new Set() };
+      for (const file of files) {
+        const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
+        const isPdf = /\.pdf$/i.test(file.name);
+        if (!isSpreadsheet && !isPdf) { aggregate.skippedSheets.push(`${file.name}（不支援的格式）`); continue; }
+        let grids;
+        try {
+          grids = isSpreadsheet ? await ImportEngine.readWorkbookGrids(file) : await ImportEngine.readPdfAsGrids(file);
+        } catch (err) {
+          console.error(err);
+          aggregate.skippedSheets.push(`${file.name}（讀取失敗：${err.message}）`);
+          continue;
+        }
+        for (const [sheetName, grid] of Object.entries(grids)) {
+          const rows = SmartParse.parseSheet(catKey, sheetName, grid);
+          if (rows && rows.length) {
+            aggregate.rows.push(...rows);
+            aggregate.matchedSheets.push(`${file.name} / ${sheetName}`);
+            aggregate.sourceFiles.add(file.name);
+            if (isPdf) aggregate.hasPdfSource = true;
+          } else {
+            aggregate.skippedSheets.push(`${file.name} / ${sheetName}`);
+          }
+        }
+      }
+      if (aggregate.rows.length > 0) {
+        const sites = {};
+        aggregate.rows.forEach((row, i) => {
+          const key = row._siteCode || row._rawLocation || `row${i}`;
+          if (!sites[key]) sites[key] = { siteCode: row._siteCode || '', rawLocation: row._rawLocation || '', rowIndices: [] };
+          sites[key].rowIndices.push(i);
+        });
+        aggregate.sites = sites;
         state.importMode = 'smart';
-        state.smartResult = result;
+        state.smartResult = aggregate;
         renderSmartImportPreview();
         return;
       }
-      // fall through to generic import if nothing recognized
+      // fall through to generic single-file import if nothing recognized
     }
 
+    if (files.length > 1) {
+      alert('這個類別目前無法自動判讀多個檔案的原始報告格式，因此只能一次匯入一個檔案（一般欄位比對）。請改為逐一匯入，或確認檔案是否為噪音／水質／空氣品質可自動判讀的報告格式。');
+      return;
+    }
+
+    const file = files[0];
     const parsed = await ImportEngine.readFile(file);
     if (!parsed.rows || parsed.rows.length === 0) {
       alert('無法從此檔案讀取到任何資料列，請確認檔案內容或改用 Excel 格式。');
@@ -946,6 +1023,16 @@ function renderSmartImportPreview() {
 
   renderItemChecklist(document.getElementById('smartImportItemsWrap'), result.rows, cat.itemField, updateCounts);
 
+  const existingPdfWarning = document.getElementById('smartImportPdfWarning');
+  if (existingPdfWarning) existingPdfWarning.remove();
+  if (result.hasPdfSource) {
+    const pdfWarn = document.createElement('div');
+    pdfWarn.id = 'smartImportPdfWarning';
+    pdfWarn.className = 'warning';
+    pdfWarn.innerHTML = '⚠️ 這批資料包含從 PDF 判讀而來的內容。PDF 是逐行文字重組出來的表格，準確度低於 Excel（欄位對齊、數值可能有誤判），匯入後請務必逐筆核對，尤其是數值與座標欄位。';
+    document.getElementById('smartImportItemsWrap').after(pdfWarn);
+  }
+
   const uncertainCount = result.rows.filter(r => r._uncertainUnit).length;
   const existingWarning = document.getElementById('smartImportUnitWarning');
   if (existingWarning) existingWarning.remove();
@@ -979,7 +1066,11 @@ function renderSmartImportPreview() {
           ${profileFields.map(f => {
             const val = saved[f.key] !== undefined ? saved[f.key] : (defaults[f.key] || '');
             if (f.type === 'select') {
-              return `<td><select data-site-field="${f.key}">${f.options.map(o => `<option value="${escapeAttr(o)}" ${o === val ? 'selected' : ''}>${o || '（未選擇）'}</option>`).join('')}</select></td>`;
+              const opts = f.options.map(o => {
+                const label = (f.optionLabels && f.optionLabels[o]) || o || '（未選擇）';
+                return `<option value="${escapeAttr(o)}" ${o === val ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+              }).join('');
+              return `<td><select data-site-field="${f.key}">${opts}</select></td>`;
             }
             return `<td><input type="text" data-site-field="${f.key}" value="${escapeAttr(val)}"></td>`;
           }).join('')}
@@ -1150,7 +1241,7 @@ function init() {
   document.getElementById('btnBackupImport').addEventListener('click', () => document.getElementById('backupFileInput').click());
   document.getElementById('backupFileInput').addEventListener('change', (e) => backupImport(e.target.files[0]));
 
-  document.getElementById('importFileInput').addEventListener('change', (e) => handleImportFile(e.target.files[0]));
+  document.getElementById('importFileInput').addEventListener('change', (e) => handleImportFile(e.target.files));
   document.getElementById('btnImportCancel').addEventListener('click', closeImportModal);
   document.getElementById('btnImportConfirm').addEventListener('click', confirmImport);
 

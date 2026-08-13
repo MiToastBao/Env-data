@@ -61,8 +61,8 @@
   <div class="modal modal-wide">
     <h3 id="importModalTitle">匯入監測資料</h3>
     <div id="importStep1">
-      <p class="hint">支援 Excel（.xlsx / .xls / .csv）；PDF 為輔助解析，建議上傳 Excel 以獲得最佳結果。</p>
-      <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf">
+      <p class="hint">支援 Excel（.xlsx / .xls / .csv）；可一次選取多個檔案（例如本類別多個月份或多個測站的報告）。PDF 為輔助解析，建議上傳 Excel 以獲得最佳結果。</p>
+      <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
       <div id="importPdfWarning" class="warning hidden">⚠️ PDF 為自動判讀表格內容，準確度有限，請務必於下方逐欄核對後再匯入。</div>
     </div>
     <div id="importStep2" class="hidden">
@@ -93,7 +93,7 @@
 <div id="coordModal" class="modal-overlay hidden">
   <div class="modal modal-wide">
     <h3>測站座標管理</h3>
-    <p class="hint">掃描版報告上的座標常是手寫、不適合自動判讀。請在下方為每個測站輸入一次座標，按「儲存並套用」後，會自動套用到該測站目前所有資料列；之後新增/匯入同名測站的資料也可以再回來這裡統一補充。</p>
+    <p class="hint">掃描版報告上的座標常是手寫、不適合自動判讀。下方依「測站＋採樣日期」分組（同一測站不同次採樣的座標可能略有不同，因此不會混在一起套用），請為每一組輸入一次座標，按「儲存並套用」後只會套用到該測站、該採樣日期的資料列。</p>
     <p class="hint coord-legend">座標系統：<b>2</b>＝WGS84（全球座標，例如經度 120.681，緯度 24.147）／<b>3</b>＝TWD97-TM2（投影座標系，例如 X=193150, Y=2670900）</p>
     <div id="coordSitesWrap" class="mapping-table-wrap"></div>
     <div class="modal-actions">
@@ -144,8 +144,8 @@
 <div id="batchImportModal" class="modal-overlay hidden">
   <div class="modal modal-wide">
     <h3>批次匯入監測報告</h3>
-    <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告），系統會自動判斷每個檔案（或檔案中每個工作表）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前僅噪音／水質／空氣品質三類支援自動判斷；地質／生態尚無法自動判斷，請於各分類頁面用一般匯入方式處理。</p>
-    <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv" multiple>
+    <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告，也支援單一 PDF 內含多類別內容，會逐頁嘗試判斷），系統會自動判斷每個檔案（或工作表／頁面）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前僅噪音／水質／空氣品質三類支援自動判斷；地質／生態尚無法自動判斷，請於各分類頁面用一般匯入方式處理。<strong>PDF 判讀準確度低於 Excel，來自 PDF 的資料請務必逐項核對。</strong></p>
+    <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
     <div id="batchDetectStatus" class="hint" style="margin-top:12px"></div>
     <div class="modal-actions">
       <button id="btnBatchCancel" class="btn btn-ghost">取消</button>

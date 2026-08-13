@@ -122,15 +122,27 @@ body {
 }
 .bulk-toolbar.hidden { display: none; }
 .col-check { width: 34px; text-align: center; }
+.col-check input[type="checkbox"], table.mapping-table input[type="checkbox"] {
+  width: 15px; height: 15px; margin: 0; cursor: pointer; vertical-align: middle;
+}
 table.data-grid th.col-check, table.data-grid td.col-check,
-table.data-grid th.col-actions, table.data-grid td.col-actions {
+table.data-grid th.col-actions, table.data-grid td.col-actions,
+table.data-grid th.col-item, table.data-grid td.col-item {
   position: sticky; z-index: 3; background: #fff;
 }
-table.data-grid th.col-check, table.data-grid th.col-actions { z-index: 4; background: #eef3f1; }
+table.data-grid th.col-check, table.data-grid th.col-actions, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
 table.data-grid td.col-check, table.data-grid th.col-check { left: 0; }
-table.data-grid td.col-actions, table.data-grid th.col-actions { left: 34px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
+table.data-grid .col-actions { width: 44px; }
+table.data-grid td.col-actions, table.data-grid th.col-actions { left: 34px; }
+/* pinned so the measurement item stays visible while scrolling right to check values —
+   sits right after the checkbox+delete columns; the boundary shadow moves here since
+   this is now the last pinned column before normally-scrolling content. */
+table.data-grid td.col-item, table.data-grid th.col-item { left: 78px; min-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
 
-.table-wrap { overflow: auto; max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius); }
+.table-wrap {
+  overflow: auto; max-width: 100%; max-height: 65vh;
+  border: 1px solid var(--border); border-radius: var(--radius);
+}
 table.data-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12.5px; }
 table.data-grid th, table.data-grid td { border: 1px solid var(--border); padding: 0; white-space: nowrap; }
 table.data-grid th {
@@ -175,9 +187,10 @@ table.data-grid td.col-actions { text-align: center; }
 
 .mapping-table-wrap { max-height: 380px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; margin-top: 10px; }
 table.mapping-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.mapping-table th { background: #eef3f1; text-align: left; padding: 8px 10px; position: sticky; top: 0; }
+table.mapping-table th { background: #eef3f1; text-align: left; padding: 8px 10px; position: sticky; top: 0; white-space: nowrap; }
 table.mapping-table td { padding: 6px 10px; border-top: 1px solid var(--border); }
-table.mapping-table select { width: 100%; padding: 6px; font-family: inherit; border: 1px solid var(--border); border-radius: 5px; }
+table.mapping-table select { width: 100%; min-width: 160px; padding: 6px; font-family: inherit; border: 1px solid var(--border); border-radius: 5px; }
+table.mapping-table input[type="text"] { min-width: 110px; }
 table.mapping-table td.unmatched { color: #b8860b; }
 
 .datalist-note { font-size: 11px; color: var(--text-muted); }

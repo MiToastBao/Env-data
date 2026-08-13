@@ -84,14 +84,19 @@ const ImportEngine = {
     return grids;
   },
 
-  async _readPdf(file) {
+  /**
+   * Extract per-page text lines from a PDF, each line reconstructed by grouping
+   * text fragments at roughly the same vertical position and ordering left-to-right.
+   * Returns an array of pages, each an array of line strings — shared by both the
+   * generic table reader and readPdfAsGrids below.
+   */
+  async _readPdfPages(file) {
     const buf = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
-    let allLines = [];
+    const pages = [];
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const content = await page.getTextContent();
-      // group text items by approximate Y position to reconstruct rows
       const rowsByY = {};
       content.items.forEach(item => {
         const y = Math.round(item.transform[5]);
@@ -99,12 +104,70 @@ const ImportEngine = {
         rowsByY[y].push(item);
       });
       const ys = Object.keys(rowsByY).map(Number).sort((a, b) => b - a);
+      const lines = [];
       ys.forEach(y => {
         const items = rowsByY[y].sort((a, b) => a.transform[4] - b.transform[4]);
-        const line = items.map(it => it.str).join(' ').trim();
-        if (line) allLines.push(line);
+        // Reconstruct spacing from the actual gap between text items, not just a flat
+        // single space — otherwise a "label： value" pair sitting close together on
+        // the page collapses into one un-splittable string, and downstream code that
+        // splits columns on runs of 2+ spaces (both here and in readPdfAsGrids) can
+        // never see the label and value as separate cells.
+        let line = '';
+        let prevEnd = null;
+        items.forEach(it => {
+          const x = it.transform[4];
+          const fontSize = Math.abs(it.transform[3]) || Math.abs(it.transform[0]) || 10;
+          const spaceUnit = fontSize * 0.5; // rough width of one space character at this size
+          if (prevEnd !== null && spaceUnit > 0) {
+            const gap = x - prevEnd;
+            if (gap > spaceUnit * 1.2) {
+              // a real gap on the page: treat as a column break (always 2+ spaces so
+              // "split on 2+ spaces" logic downstream picks it up as a boundary)
+              line += ' '.repeat(Math.min(Math.max(Math.round(gap / spaceUnit), 2), 20));
+            } else if (gap > 0) {
+              line += ' ';
+            }
+          }
+          line += it.str;
+          prevEnd = x + (typeof it.width === 'number' ? it.width : it.str.length * fontSize * 0.5);
+        });
+        line = line.trim();
+        if (line) lines.push(line);
       });
+      pages.push(lines);
     }
+    return pages;
+  },
+
+  /**
+   * Turn a PDF into per-page "grids" (array-of-arrays of cell strings) compatible
+   * with the smart form-parsers in smartparse.js, so a combined multi-category PDF
+   * report can potentially be auto-detected page by page the same way a multi-sheet
+   * Excel workbook is. This is inherently less reliable than the Excel path: PDF text
+   * extraction only approximates column positions from character spacing, so parsers
+   * that depend on values sitting in a specific column (not just "the next non-empty
+   * cell after a label") can misalign. Rows recovered this way should get extra
+   * scrutiny — the item-selection and site-profile review steps still apply, but
+   * treat PDF-sourced values as a first draft rather than a verified transcription.
+   */
+  async readPdfAsGrids(file) {
+    const pages = await this._readPdfPages(file);
+    const grids = {};
+    pages.forEach((lines, i) => {
+      // split each line into cells on runs of 2+ spaces (mirrors the generic PDF
+      // table reader), padded so every row in the page has the same column count
+      const splitLine = (l) => l.split(/\s{2,}|\t/).map(s => s.trim());
+      const rows = lines.map(splitLine);
+      const maxCols = rows.reduce((m, r) => Math.max(m, r.length), 0);
+      const padded = rows.map(r => { const out = r.slice(); while (out.length < maxCols) out.push(''); return out; });
+      grids[`page${i + 1}`] = padded;
+    });
+    return grids;
+  },
+
+  async _readPdf(file) {
+    const pages = await this._readPdfPages(file);
+    const allLines = pages.flat();
     // Best-effort: try to find a header-like line (many short tokens) then
     // split subsequent lines by 2+ spaces / tabs into columns.
     if (allLines.length === 0) return { headers: [], rows: [], pdfLines: [] };

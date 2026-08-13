@@ -19,7 +19,8 @@ const SmartParse = {
   SITE_PROFILE_FIELDS: {
     noise: [
       { key: '監測地點', label: '正式監測站名', type: 'text' },
-      { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'] },
+      { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'],
+        optionLabels: { '2': '2：WGS84（全球座標）', '3': '3：TWD97-TM2（投影座標系）' } },
       { key: '採樣座標-經度 X', label: '座標X', type: 'text' },
       { key: '採樣座標-緯度 Y', label: '座標Y', type: 'text' },
       { key: '管制區', label: '管制區', type: 'text' },
@@ -27,14 +28,16 @@ const SmartParse = {
     ],
     water: [
       { key: '採樣地點', label: '正式採樣地點', type: 'text' },
-      { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'] },
+      { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'],
+        optionLabels: { '2': '2：WGS84（全球座標）', '3': '3：TWD97-TM2（投影座標系）' } },
       { key: '採樣座標-經度 X', label: '座標X', type: 'text' },
       { key: '採樣座標-緯度 Y', label: '座標Y', type: 'text' },
       { key: '管制編號', label: '管制編號', type: 'text' },
     ],
     air: [
       { key: '採樣地點', label: '正式採樣地點', type: 'text' },
-      { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'] },
+      { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'],
+        optionLabels: { '2': '2：WGS84（全球座標）', '3': '3：TWD97-TM2（投影座標系）' } },
       { key: '採樣座標-經度 X', label: '座標X', type: 'text' },
       { key: '採樣座標-緯度 Y', label: '座標Y', type: 'text' },
       { key: '管制編號', label: '管制編號', type: 'text' },
@@ -521,7 +524,10 @@ const SmartParse = {
       if (cells[idx] && /^NIEA/i.test(cells[idx])) { methodText = cells[idx]; idx++; }
 
       const { cmp, val } = this.parseValueCell(valueRaw);
-      const unitLookup = unitText ? this.reverseUnitLookup(unitText) : { code: '', confident: true };
+      // No unit column at all for this item (e.g. pH is dimensionless) means "無" —
+      // official unit code 161 — not a blank/unknown unit. Only missing/unmatched
+      // unit *text* (unitText present but not found in the code table) is uncertain.
+      const unitLookup = unitText ? this.reverseUnitLookup(unitText) : { code: '161', confident: true };
       const valFormatted = /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val;
       const limitFormatted = /^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : limitRaw;
 
