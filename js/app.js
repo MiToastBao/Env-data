@@ -13,6 +13,7 @@ const state = {
   batchQueueTotal: 0,
   periodFilter: {}, // { [catKey]: '115年第1季' | '' (全部) } — which period is being viewed/edited
   importPeriod: '', // the period label chosen for the batch currently being imported
+  columnFilters: {}, // { [catKey]: { [fieldKey]: Set of allowed display values } } — Excel-style AutoFilter
 };
 
 // ---------- reporting period (年/季) ----------
@@ -326,7 +327,7 @@ function renderCategoryTab(project, catKey) {
           ${hasUnlabeled ? `<option value="__none__" ${activePeriod === '__none__' ? 'selected' : ''}>未標示期別</option>` : ''}
         </select>` : ''}
         <input type="text" id="rowSearchInput" placeholder="🔍 搜尋任何欄位內容（測站、測項、日期…）" title="輸入關鍵字即時篩選畫面顯示的資料列，方便檢查或修正特定資料；不影響匯出範圍（匯出仍依上方期別篩選）">
-        <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除搜尋</button>
+        <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除篩選</button>
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）${activePeriod ? '（僅目前篩選期別）' : ''}</button>
         <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別</button>
       </div>
@@ -343,7 +344,14 @@ function renderCategoryTab(project, catKey) {
           <th class="col-check"><input type="checkbox" id="checkAllRows" ${displayRows.length === 0 ? 'disabled' : ''}></th>
           <th>操作</th>
           <th>#</th>
-          ${cat.fields.map(f => `<th${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</th>`).join('')}
+          ${cat.fields.map(f => {
+            const activeFilter = state.columnFilters[catKey]?.[f.key];
+            const filterActive = activeFilter && activeFilter.size > 0;
+            return `<th${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>
+              <span class="th-label">${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</span>
+              <button class="col-filter-btn${filterActive ? ' col-filter-active' : ''}" data-field-key="${escapeAttr(f.key)}" title="篩選「${escapeAttr(f.label)}」">▾</button>
+            </th>`;
+          }).join('')}
         </tr></thead>
         <tbody id="gridBody">${displayEntries.map(({ row, idx }) => rowHtml(cat, row, idx)).join('')}</tbody>
       </table>
@@ -379,11 +387,21 @@ function renderCategoryTab(project, catKey) {
 
   wireGridEvents(project, catKey, cat);
   wireBulkSelection(project, catKey, cat);
-  wireRowSearch(displayRows.length, allRows.length, activePeriod);
+  wireRowSearch(catKey, cat, displayRows.length, allRows.length, activePeriod);
 }
 
-// ---------- 表格內容搜尋（畫面篩選，不影響匯出範圍——匯出範圍由上方期別篩選決定） ----------
-function wireRowSearch(displayCount, totalCount, activePeriod) {
+// ---------- 表格篩選：文字搜尋 + Excel風格欄位篩選（皆為畫面篩選，不影響匯出範圍——匯出範圍由上方期別篩選決定） ----------
+function getRowFieldDisplayValue(tr, fieldKey) {
+  const el = tr.querySelector(`[data-field="${CSS.escape(fieldKey)}"]`);
+  if (!el) return '';
+  if (el.tagName === 'SELECT') {
+    const opt = el.options[el.selectedIndex];
+    return opt ? opt.text : (el.value || '');
+  }
+  return el.value ?? '';
+}
+
+function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
   const searchInput = document.getElementById('rowSearchInput');
   const clearBtn = document.getElementById('btnClearSearch');
   const tbody = document.getElementById('gridBody');
@@ -392,27 +410,141 @@ function wireRowSearch(displayCount, totalCount, activePeriod) {
 
   const baseCountText = `共 ${displayCount} 筆資料${activePeriod ? `（篩選中，全部共 ${totalCount} 筆）` : ''}`;
 
+  // Search text is built from each cell's ACTUAL current value — not raw DOM
+  // textContent, which for a <select> silently includes every hidden <option> label
+  // (not just the selected one), causing a search term to match rows regardless of
+  // what's actually selected there.
   const rowSearchText = (tr) => {
-    const staticText = tr.textContent || '';
-    const inputVals = [...tr.querySelectorAll('input, select')].map(el => el.value || '').join(' ');
-    return (staticText + ' ' + inputVals).toLowerCase();
+    const parts = [];
+    tr.querySelectorAll('td').forEach(td => {
+      const select = td.querySelector('select');
+      const input = td.querySelector('input:not([type="checkbox"])');
+      if (select) {
+        const opt = select.options[select.selectedIndex];
+        parts.push(opt ? opt.text : select.value);
+      } else if (input) {
+        parts.push(input.value || '');
+      } else {
+        parts.push(td.textContent || '');
+      }
+    });
+    return parts.join(' ').toLowerCase();
   };
 
-  const applyFilter = () => {
+  const colFiltersForCat = () => state.columnFilters[catKey] || {};
+
+  const applyAllFilters = () => {
     const q = searchInput.value.trim().toLowerCase();
-    clearBtn.classList.toggle('hidden', q === '');
+    const colFilters = colFiltersForCat();
+    const anyColFilter = Object.values(colFilters).some(s => s && s.size > 0);
+    clearBtn.classList.toggle('hidden', q === '' && !anyColFilter);
     let visible = 0;
     const rows = tbody.querySelectorAll('tr');
     rows.forEach(tr => {
-      const matches = !q || rowSearchText(tr).includes(q);
+      let matches = !q || rowSearchText(tr).includes(q);
+      if (matches && anyColFilter) {
+        for (const [fieldKey, allowedSet] of Object.entries(colFilters)) {
+          if (!allowedSet || allowedSet.size === 0) continue;
+          if (!allowedSet.has(getRowFieldDisplayValue(tr, fieldKey))) { matches = false; break; }
+        }
+      }
       tr.classList.toggle('row-hidden', !matches);
       if (matches) visible++;
     });
-    countEl.textContent = q ? `符合搜尋：${visible} / ${rows.length} 筆` : baseCountText;
+    countEl.textContent = (q || anyColFilter) ? `符合篩選：${visible} / ${rows.length} 筆` : baseCountText;
   };
 
-  searchInput.addEventListener('input', applyFilter);
-  clearBtn.addEventListener('click', () => { searchInput.value = ''; applyFilter(); searchInput.focus(); });
+  searchInput.addEventListener('input', applyAllFilters);
+  clearBtn.addEventListener('click', () => {
+    searchInput.value = '';
+    state.columnFilters[catKey] = {};
+    renderContent();
+  });
+
+  document.querySelectorAll('.col-filter-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openColumnFilterPopup(catKey, fieldKeyOf(btn), btn);
+    });
+  });
+
+  applyAllFilters();
+}
+
+function fieldKeyOf(btn) { return btn.dataset.fieldKey; }
+
+/** Excel-style AutoFilter dropdown: lists every distinct value currently shown in a
+ *  column (as actually displayed — select labels, not codes) with checkboxes. */
+function openColumnFilterPopup(catKey, fieldKey, btnEl) {
+  const tbody = document.getElementById('gridBody');
+  const popup = document.getElementById('colFilterPopup');
+  const allTrs = [...tbody.querySelectorAll('tr')];
+  const uniqueValues = [...new Set(allTrs.map(tr => getRowFieldDisplayValue(tr, fieldKey)))]
+    .sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+  const currentFilter = state.columnFilters[catKey]?.[fieldKey]; // Set or undefined (undefined = show all)
+
+  popup.innerHTML = `
+    <div class="col-filter-search"><input type="text" id="colFilterSearchInput" placeholder="搜尋選項..."></div>
+    <div class="col-filter-actions">
+      <button type="button" id="colFilterSelectAll" class="btn btn-ghost btn-sm">全選</button>
+      <button type="button" id="colFilterClearAll" class="btn btn-ghost btn-sm">清除</button>
+    </div>
+    <div class="col-filter-list" id="colFilterList">
+      ${uniqueValues.map(v => `
+        <label class="col-filter-item">
+          <input type="checkbox" value="${escapeAttr(v)}" ${!currentFilter || currentFilter.has(v) ? 'checked' : ''}>
+          <span>${escapeHtml(v === '' ? '（空白）' : v)}</span>
+        </label>
+      `).join('')}
+    </div>
+    <div class="col-filter-buttons">
+      <button type="button" id="colFilterCancel" class="btn btn-ghost btn-sm">取消</button>
+      <button type="button" id="colFilterApply" class="btn btn-primary btn-sm">確定</button>
+    </div>
+  `;
+
+  const rect = btnEl.getBoundingClientRect();
+  const popupWidth = 240;
+  popup.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - popupWidth - 4)) + 'px';
+  popup.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+  popup.classList.remove('hidden');
+
+  document.getElementById('colFilterSearchInput').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#colFilterList .col-filter-item').forEach(label => {
+      label.style.display = (!q || label.textContent.toLowerCase().includes(q)) ? '' : 'none';
+    });
+  });
+  document.getElementById('colFilterSelectAll').addEventListener('click', () => {
+    document.querySelectorAll('#colFilterList input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+  });
+  document.getElementById('colFilterClearAll').addEventListener('click', () => {
+    document.querySelectorAll('#colFilterList input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+  });
+  document.getElementById('colFilterCancel').addEventListener('click', () => {
+    popup.classList.add('hidden');
+  });
+  document.getElementById('colFilterApply').addEventListener('click', () => {
+    const checked = [...document.querySelectorAll('#colFilterList input[type="checkbox"]:checked')].map(cb => cb.value);
+    if (!state.columnFilters[catKey]) state.columnFilters[catKey] = {};
+    if (checked.length === uniqueValues.length) {
+      delete state.columnFilters[catKey][fieldKey]; // everything checked = no filter
+    } else {
+      state.columnFilters[catKey][fieldKey] = new Set(checked);
+    }
+    popup.classList.add('hidden');
+    renderContent();
+  });
+
+  setTimeout(() => {
+    const closeOnOutsideClick = (e) => {
+      if (!popup.contains(e.target) && e.target !== btnEl) {
+        popup.classList.add('hidden');
+        document.removeEventListener('click', closeOnOutsideClick);
+      }
+    };
+    document.addEventListener('click', closeOnOutsideClick);
+  }, 0);
 }
 
 function wireBulkSelection(project, catKey, cat) {
@@ -1431,6 +1563,61 @@ function renderSmartImportPreview() {
 
   const locField = cat.locationField;
 
+  // Compare each site's items in THIS import against the project's site-item
+  // history (accumulated from every past confirmed import for this category) —
+  // if history has items this batch doesn't, offer to add them as blank rows
+  // (method/unit pre-filled from item memory, value left for the person to type,
+  // since the source is often a PDF this app can't extract numbers from at all).
+  const existingMissingWrap = document.getElementById('smartImportMissingItemsWrap');
+  const siteHistory = DataStore.getSiteItemHistory(project.id, catKey);
+  const itemMemoryForSuggestion = DataStore.getItemMemory(project.id, catKey);
+  const suggestions = [];
+  siteEntries.forEach(([key, site]) => {
+    const saved = savedAliases[key] || {};
+    const confirmedLoc = saved[locField] || site.rawLocation;
+    const historicalItems = siteHistory[confirmedLoc] || [];
+    if (historicalItems.length === 0) return;
+    const currentItems = new Set(site.rowIndices.map(i => result.rows[i][cat.itemField]));
+    const missing = historicalItems.filter(item => !currentItems.has(item));
+    if (missing.length > 0) suggestions.push({ siteKey: key, location: confirmedLoc, missingItems: missing });
+  });
+  state.missingItemSuggestions = suggestions;
+
+  if (suggestions.length === 0) {
+    existingMissingWrap.innerHTML = '';
+  } else {
+    existingMissingWrap.innerHTML = `
+      <div class="warning" style="background:#e8f0fe;border-color:#a8c7fa;">
+        📋 系統比對過去記錄，以下測站過去曾出現、但本次報告未出現的測項。若要一併新增（檢測方法／單位／項目名稱會依過去記錄先幫您填好，檢測數值請自行輸入），請勾選：
+        <div id="missingItemsList" style="margin-top:8px">
+          ${suggestions.map((s, i) => `
+            <div style="margin-top:6px">
+              <label style="font-weight:700">
+                <input type="checkbox" class="missing-item-group" data-group-idx="${i}" checked> ${escapeHtml(s.location)}
+              </label>
+              <div style="margin-left:22px">
+                ${s.missingItems.map(item => {
+                  const mem = itemMemoryForSuggestion[item];
+                  const memNote = mem && (mem.method || mem.unitCode) ? `（已記憶：${[mem.method, mem.unitCode ? `單位代碼${mem.unitCode}` : ''].filter(Boolean).join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
+                  return `<label style="display:block">
+                    <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-item="${escapeAttr(item)}" checked>
+                    ${escapeHtml(item)} <span class="hint">${memNote}</span>
+                  </label>`;
+                }).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    document.querySelectorAll('.missing-item-group').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const idx = cb.dataset.groupIdx;
+        document.querySelectorAll(`.missing-item-single[data-group-idx="${idx}"]`).forEach(sub => { sub.checked = cb.checked; });
+      });
+    });
+  }
+
   const wrap = document.getElementById('smartImportSitesWrap');
   wrap.innerHTML = `<table class="mapping-table">
     <thead><tr>
@@ -1491,6 +1678,13 @@ function learnItemMemoryFromRows(projectId, catKey, cat, rows) {
   if (Object.keys(updates).length) DataStore.updateItemMemory(projectId, catKey, updates);
 }
 
+/** Records which items have ever been confirmed for each location — this is what
+ *  lets a later import notice "上次這個測站還有 def 三項" even though this quarter's
+ *  raw report only covers abc. Called after every successful import commit. */
+function learnSiteItemHistory(projectId, catKey, cat, rows) {
+  DataStore.learnSiteItems(projectId, catKey, cat.locationField, cat.itemField, rows);
+}
+
 // A row counts as a duplicate of existing data when its date + time + location + item
 // all match exactly — e.g. re-importing the same report twice, or two files that
 // happen to cover an overlapping period for the same site.
@@ -1522,6 +1716,35 @@ function resolveDuplicatesForImport(project, catKey, cat, candidateRows) {
   return exclude ? candidateRows.filter((_, i) => !dupSet.has(i)) : candidateRows;
 }
 
+/** Synthesizes blank rows for any "missing item" suggestions the person checked —
+ *  copies date/time/coordinates/category etc. from an existing row at that site (so
+ *  it lines up as the same sampling event), fills in method/unit from item memory
+ *  when available, and leaves the actual measurement blank for manual entry. */
+function buildSuggestedRows(project, catKey, cat, result) {
+  const checkedBoxes = [...document.querySelectorAll('.missing-item-single:checked')];
+  if (checkedBoxes.length === 0) return [];
+  const itemMemory = DataStore.getItemMemory(project.id, catKey);
+  const newRows = [];
+  checkedBoxes.forEach(cb => {
+    const suggestion = state.missingItemSuggestions?.[Number(cb.dataset.groupIdx)];
+    if (!suggestion) return;
+    const site = result.sites[suggestion.siteKey];
+    if (!site || site.rowIndices.length === 0) return;
+    const template = result.rows[site.rowIndices[0]]; // already has site overrides applied
+    const itemName = cb.dataset.item;
+    const newRow = { ...template };
+    newRow[cat.itemField] = itemName;
+    ['檢測數值', '監測數值', '比較關係', '檢測極限'].forEach(k => { if (k in newRow) newRow[k] = ''; });
+    const mem = itemMemory[itemName];
+    if (mem) {
+      if (cat.methodField && mem.method) newRow[cat.methodField] = mem.method;
+      if (cat.unitField && mem.unitCode) newRow[cat.unitField] = mem.unitCode;
+    }
+    newRows.push(newRow);
+  });
+  return newRows;
+}
+
 function confirmSmartImport() {
   const project = getCurrentProject();
   const catKey = state.importCatKey;
@@ -1550,6 +1773,8 @@ function confirmSmartImport() {
   DataStore.saveSiteAliases(project.id, catKey, savedAliases);
 
   let selectedRows = filterRowsBySelection(result.rows, cat.itemField);
+  const suggestedRows = buildSuggestedRows(project, catKey, cat, result);
+  selectedRows = selectedRows.concat(suggestedRows);
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
   selectedRows = resolveDuplicatesForImport(project, catKey, cat, selectedRows);
   if (selectedRows.length === 0) { alert('排除重複資料後已無資料可匯入。'); return; }
@@ -1576,6 +1801,7 @@ function confirmSmartImport() {
   const existing = DataStore.getData(project.id, catKey);
   DataStore.saveData(project.id, catKey, existing.concat(cleanRows));
   learnItemMemoryFromRows(project.id, catKey, cat, cleanRows);
+  learnSiteItemHistory(project.id, catKey, cat, cleanRows);
 
   // One import-history entry per source file (matching the per-file batch id above),
   // so "刪除此批次" in the history list correctly removes exactly one file's rows.
@@ -1642,6 +1868,7 @@ function confirmImport() {
   const merged = existing.concat(selectedRows);
   DataStore.saveData(project.id, catKey, merged);
   learnItemMemoryFromRows(project.id, catKey, cat, selectedRows);
+  learnSiteItemHistory(project.id, catKey, cat, selectedRows);
   DataStore.addImportBatch(project.id, catKey, {
     id: batchId,
     timestamp: new Date().toISOString(),

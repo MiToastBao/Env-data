@@ -46,6 +46,7 @@ const DataStore = {
       localStorage.removeItem(this._siteAliasKey(id, cat));
       localStorage.removeItem(this._batchKey(id, cat));
       localStorage.removeItem(this._methodMemoryKey(id, cat));
+      localStorage.removeItem(this._siteItemHistoryKey(id, cat));
     });
   },
 
@@ -63,6 +64,38 @@ const DataStore = {
   },
   _methodMemoryKey(projectId, category) {
     return `envapp_methodmem_${projectId}_${category}`;
+  },
+  _siteItemHistoryKey(projectId, category) {
+    return `envapp_siteitems_${projectId}_${category}`;
+  },
+
+  // Site-item history: remembers, per (project, category, location name), every
+  // item name ever confirmed for that site — across all quarters. This is what lets
+  // the app notice "上次這個測站還有 def 三項，這次的報告沒出現" and offer to add
+  // those as blank rows (with method/unit pre-filled from item memory) instead of the
+  // person having to remember and manually recreate columns a PDF-only report can't
+  // supply data for.
+  getSiteItemHistory(projectId, category) {
+    try {
+      return JSON.parse(localStorage.getItem(this._siteItemHistoryKey(projectId, category))) || {};
+    } catch (e) {
+      return {};
+    }
+  },
+  saveSiteItemHistory(projectId, category, history) {
+    localStorage.setItem(this._siteItemHistoryKey(projectId, category), JSON.stringify(history));
+  },
+  /** Adds (location, item) pairs to the history — additive/idempotent, never removes. */
+  learnSiteItems(projectId, category, locationField, itemField, rows) {
+    const history = this.getSiteItemHistory(projectId, category);
+    rows.forEach(r => {
+      const loc = r[locationField];
+      const item = r[itemField];
+      if (!loc || !item) return;
+      if (!history[loc]) history[loc] = [];
+      if (!history[loc].includes(item)) history[loc].push(item);
+    });
+    this.saveSiteItemHistory(projectId, category, history);
   },
 
   // Item memory: remembers, per (project, category, item name), the last-confirmed
@@ -161,10 +194,12 @@ const DataStore = {
     const projects = this.getProjects();
     const out = { projects: [] };
     projects.forEach(p => {
-      const entry = { ...p, basicInfo: this.getBasicInfo(p.id), data: {}, itemMemory: {} };
+      const entry = { ...p, basicInfo: this.getBasicInfo(p.id), data: {}, itemMemory: {}, siteItemHistory: {}, siteAliases: {} };
       CATEGORY_ORDER.forEach(cat => {
         entry.data[cat] = this.getData(p.id, cat);
         entry.itemMemory[cat] = this.getItemMemory(p.id, cat);
+        entry.siteItemHistory[cat] = this.getSiteItemHistory(p.id, cat);
+        entry.siteAliases[cat] = this.getSiteAliases(p.id, cat);
       });
       out.projects.push(entry);
     });
@@ -185,6 +220,8 @@ const DataStore = {
       CATEGORY_ORDER.forEach(cat => {
         this.saveData(newId, cat, (entry.data && entry.data[cat]) || []);
         if (entry.itemMemory && entry.itemMemory[cat]) this.saveItemMemory(newId, cat, entry.itemMemory[cat]);
+        if (entry.siteItemHistory && entry.siteItemHistory[cat]) this.saveSiteItemHistory(newId, cat, entry.siteItemHistory[cat]);
+        if (entry.siteAliases && entry.siteAliases[cat]) this.saveSiteAliases(newId, cat, entry.siteAliases[cat]);
       });
     });
     this.saveProjects(projects);

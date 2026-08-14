@@ -300,7 +300,10 @@ const SmartParse = {
   /** N-xx(平日/假日) 24hr ambient noise, or V-xx(平日/假日) 24hr vibration. */
   parseNoise24hrSheet(sheetName, grid) {
     const isVib = /^V-?\d/i.test(sheetName) || !!this.findCell(grid, /Lv日\(Lv10\)=/);
-    const isNoise = /^N-?\d/i.test(sheetName) || !!this.findCell(grid, /^L日\(6~20\)/);
+    // Don't require the specific "(6~20)" hours — 道路交通噪音 reports use a
+    // different daytime window (e.g. "(7~20)"), and hardcoding the hours meant
+    // those sheets never matched here at all.
+    const isNoise = /^N-?\d/i.test(sheetName) || !!this.findCell(grid, /^L日\(/);
     if (!isVib && !isNoise) return null;
 
     const dateRaw = this.labelValue(grid, /監測日期[:：]/);
@@ -314,6 +317,15 @@ const SmartParse = {
     const agencyCode = this.reverseAgencyLookup(agencyRaw);
     const siteCode = this.labelValue(grid, /測點編號[:：]/) || '';
 
+    // 樣品特性 tells us which noise category this report actually is — different
+    // report types (一般環境噪音 vs 道路交通噪音 etc.) use different daytime windows
+    // and regulatory bases, so this must be read from the report, not assumed.
+    const sampleChar = this.labelValue(grid, /樣品特性[:：]/) || '';
+    let noiseCategory = '環境噪音';
+    if (/道路交通/.test(sampleChar)) noiseCategory = '道路交通噪音';
+    else if (/公私場所/.test(sampleChar)) noiseCategory = '公私場所噪音';
+    else if (/航空/.test(sampleChar)) noiseCategory = '航空噪音';
+
     const baseRow = {
       '日期(起)': dateISO, '時間(起)': '00:00:00',
       '日期(迄)': this.addDaysISO(dateISO, 1), '時間(迄)': '00:00:00',
@@ -326,20 +338,34 @@ const SmartParse = {
     if (isNoise) {
       const methodRaw = this.labelValue(grid, /採樣方法[:：]/);
       const method = this.extractMethodCode(methodRaw) || 'NIEA P201';
-      const labelHit = this.findCell(grid, /^L日\(6~20\)/);
+      // Find the "L日(...)" label without pinning to specific clock hours — different
+      // control-zone classes (第一/二類 vs 第三/四類) and regulatory bases legitimately
+      // use different day/evening/night windows (e.g. "L日(6~20)" vs "L日(7~20)"), so
+      // matching only the "L日(" prefix works across all of them uniformly.
+      const labelHit = this.findCell(grid, /^L日\(/);
       if (labelHit) {
+        const labelRow = grid[labelHit.r];
         const valueRow = grid[labelHit.r + 1] || [];
+        // Find each period's OWN column in the label row rather than assuming they
+        // sit at label.col, +1, +2 — merged cells of different widths can space
+        // "L日"/"L晚"/"L夜" (and their value row underneath) much further apart than
+        // that, which silently dropped 晚間/夜間 on reports using a wider layout.
+        const findCol = (regex) => {
+          for (let c = 0; c < labelRow.length; c++) if (regex.test(this.cellStr(labelRow[c]))) return c;
+          return -1;
+        };
         const periods = [
-          { key: 'L日', tod: '日間', col: labelHit.c },
-          { key: 'L晚', tod: '晚間', col: labelHit.c + 1 },
-          { key: 'L夜', tod: '夜間', col: labelHit.c + 2 },
+          { key: 'L日', tod: '日間', col: findCol(/^L日/) },
+          { key: 'L晚', tod: '晚間', col: findCol(/^L晚/) },
+          { key: 'L夜', tod: '夜間', col: findCol(/^L夜/) },
         ];
         periods.forEach(p => {
+          if (p.col < 0) return;
           const v = this.cellStr(valueRow[p.col]);
           if (v !== '' && !isNaN(parseFloat(v))) {
             rows.push({
               ...baseRow, '管制標準': '噪音管制法第7條第1項', '管制區': '', '環境音量標準': '', '頻率範圍': '20 Hz 至 20kHz',
-              '檢測類別': '環境噪音', '監測時段': p.tod, '音源發聲特性': '均能音量(Leq)',
+              '檢測類別': noiseCategory, '監測時段': p.tod, '音源發聲特性': '均能音量(Leq)',
               '監測單位': '16', '監測數值': String(Math.round(parseFloat(v) * 10) / 10), '監測方法': method,
             });
           }
@@ -348,16 +374,25 @@ const SmartParse = {
     } else if (isVib) {
       const methodRaw = this.labelValue(grid, /量測方法依據[:：]?/) || this.labelValue(grid, /採樣方法[:：]/);
       const method = this.extractMethodCode(methodRaw) || 'NIEA P204';
-      const dayVal = this.labelValue(grid, /Lv日\(Lv10\)=/);
-      const nightVal = this.labelValue(grid, /Lv夜\(Lv10\)=/);
-      [{ v: dayVal, tod: '日間' }, { v: nightVal, tod: '夜間' }].forEach(p => {
-        if (p.v && !isNaN(parseFloat(p.v))) {
-          rows.push({
-            ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
-            '檢測類別': '振動', '監測時段': p.tod, '音源發聲特性': 'Lvd(10)',
-            '監測單位': '159', '監測數值': String(Math.round(parseFloat(p.v) * 10) / 10), '監測方法': method,
-          });
-        }
+      // Extract BOTH the Lvd(10) and Leq-style vibration summaries when the report
+      // provides them — which ones actually end up in the filing is the person's
+      // call via the item-selection checklist, not something to decide here.
+      const vibMetrics = [
+        { labelKey: 'Lv10', dayRegex: /Lv日\(Lv10\)=/, nightRegex: /Lv夜\(Lv10\)=/, itemLabel: 'Lvd(10)' },
+        { labelKey: 'Lveq', dayRegex: /Lv日\(Lveq\)=/, nightRegex: /Lv夜\(Lveq\)=/, itemLabel: '事件振動位準(Lveq)' },
+      ];
+      vibMetrics.forEach(metric => {
+        const dayVal = this.labelValue(grid, metric.dayRegex);
+        const nightVal = this.labelValue(grid, metric.nightRegex);
+        [{ v: dayVal, tod: '日間' }, { v: nightVal, tod: '夜間' }].forEach(p => {
+          if (p.v && !isNaN(parseFloat(p.v))) {
+            rows.push({
+              ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
+              '檢測類別': '振動', '監測時段': p.tod, '音源發聲特性': metric.itemLabel,
+              '監測單位': '159', '監測數值': String(Math.round(parseFloat(p.v) * 10) / 10), '監測方法': method,
+            });
+          }
+        });
       });
     }
     return rows.length ? rows : null;
