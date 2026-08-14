@@ -862,6 +862,11 @@ function wireGridEvents(project, catKey, cat) {
     if (!rows[rowIdx]) return;
     rows[rowIdx][fieldKey] = value;
     DataStore.saveData(project.id, catKey, rows);
+    // Keep the site-item history snapshot current with manual corrections too — not
+    // just at import time — so a value the person fixes by hand (e.g. filling in
+    // coordinates a water report never provides) is what gets carried forward next
+    // season, not whatever was frozen in at the moment of import.
+    learnSiteItemHistory(project.id, catKey, cat, [rows[rowIdx]]);
   };
 
   // Whether row `r` belongs to the same "sampling event" as `source` for sync
@@ -906,6 +911,7 @@ function wireGridEvents(project, catKey, cat) {
     if (!ok) return false;
     matches.forEach(({ r }) => { COORD_FIELDS.forEach(f => { r[f] = source[f]; }); });
     DataStore.saveData(project.id, catKey, rows);
+    learnSiteItemHistory(project.id, catKey, cat, matches.map(m => m.r).concat([source]));
     return true;
   };
 
@@ -937,6 +943,7 @@ function wireGridEvents(project, catKey, cat) {
     if (!ok) return false;
     matches.forEach(({ r }) => { DATE_TIME_FIELDS.forEach(f => { r[f] = source[f]; }); });
     DataStore.saveData(project.id, catKey, rows);
+    learnSiteItemHistory(project.id, catKey, cat, matches.map(m => m.r).concat([source]));
     return true;
   };
 
@@ -965,6 +972,7 @@ function wireGridEvents(project, catKey, cat) {
     if (!ok) return false;
     matches.forEach(({ r }) => { r['檢測類別'] = source['檢測類別']; });
     DataStore.saveData(project.id, catKey, rows);
+    learnSiteItemHistory(project.id, catKey, cat, matches.map(m => m.r).concat([source]));
     return true;
   };
 
@@ -1000,6 +1008,7 @@ function wireGridEvents(project, catKey, cat) {
     if (!ok) return false;
     matches.forEach(({ r }) => { r[fieldKey] = source[fieldKey]; });
     DataStore.saveData(project.id, catKey, rows);
+    learnSiteItemHistory(project.id, catKey, cat, matches.map(m => m.r).concat([source]));
     return true;
   };
 
@@ -1149,8 +1158,10 @@ function saveCoordModal() {
   const modal = document.getElementById('coordModal');
   const projectId = modal.dataset.projectId;
   const catKey = modal.dataset.catKey;
+  const cat = CATEGORIES[catKey];
   const rows = DataStore.getData(projectId, catKey);
-  const locField = CATEGORIES[catKey].locationField;
+  const locField = cat.locationField;
+  const touchedRows = [];
 
   document.querySelectorAll('#coordSitesBody tr').forEach(tr => {
     const [loc, date] = tr.dataset.groupKey.split('\u0001');
@@ -1159,11 +1170,18 @@ function saveCoordModal() {
     rows.forEach(row => {
       const rowLoc = (row[locField] || '').trim() || '（未命名測站）';
       const rowDate = row['日期(起)'] || '（未填日期）';
-      if (rowLoc === loc && rowDate === date) Object.assign(row, values);
+      if (rowLoc === loc && rowDate === date) { Object.assign(row, values); touchedRows.push(row); }
     });
   });
 
   DataStore.saveData(projectId, catKey, rows);
+  // Coordinates are frequently the one thing a raw water/air lab report never
+  // includes at all — filled in here, after import, rather than at confirm time.
+  // Without re-learning history now, the site-item snapshot stays frozen at
+  // whatever it captured at import (blank coordinates), so next season's auto-fill
+  // would never have anything to carry forward no matter how many times this gets
+  // filled in — re-learning on every save keeps the remembered snapshot current.
+  if (touchedRows.length > 0) learnSiteItemHistory(projectId, catKey, cat, touchedRows);
   closeCoordModal();
   renderContent();
   alert('已套用座標到符合的資料列（僅限相同測站＋相同採樣日期的資料）。');
@@ -1457,11 +1475,14 @@ function filterRowsBySelection(rows, itemField) {
  */
 function renderRowDetailTable(containerEl, rows, cat) {
   if (!state.excludedRowIndices) state.excludedRowIndices = new Set();
+  if (!state.rowDetailColumnFilters) state.rowDetailColumnFilters = {}; // { loc: Set, item: Set }
   if (rows.length === 0) { containerEl.innerHTML = ''; return; }
   const locField = cat.locationField;
   const itemField = cat.itemField;
   const valueField = cat.fields.find(f => ['檢測數值', '監測數值'].includes(f.key))?.key || '';
   const valueLabel = cat.fields.find(f => f.key === valueField)?.label || '數值';
+  const locFilterActive = state.rowDetailColumnFilters.loc && state.rowDetailColumnFilters.loc.size > 0;
+  const itemFilterActive = state.rowDetailColumnFilters.item && state.rowDetailColumnFilters.item.size > 0;
 
   const wasOpen = containerEl.querySelector('details')?.open;
   containerEl.innerHTML = `
@@ -1476,11 +1497,19 @@ function renderRowDetailTable(containerEl, rows, cat) {
         <table class="mapping-table">
           <thead><tr>
             <th><input type="checkbox" id="rowDetailCheckAll" checked></th>
-            <th>地點</th><th>測項</th><th>日期</th><th>時間</th><th>${escapeHtml(valueLabel)}</th>
+            <th>
+              <span class="th-label">地點</span>
+              <button type="button" class="col-filter-btn${locFilterActive ? ' col-filter-active' : ''}" data-row-detail-field="loc" title="篩選地點">▾</button>
+            </th>
+            <th>
+              <span class="th-label">測項</span>
+              <button type="button" class="col-filter-btn${itemFilterActive ? ' col-filter-active' : ''}" data-row-detail-field="item" title="篩選測項">▾</button>
+            </th>
+            <th>日期</th><th>時間</th><th>${escapeHtml(valueLabel)}</th>
           </tr></thead>
           <tbody id="rowDetailTbody">
             ${rows.map(r => `
-              <tr data-search-text="${escapeAttr([r[locField], r[itemField], r['日期(起)'], r['時間(起)'], r[valueField]].filter(Boolean).join(' ').toLowerCase())}">
+              <tr data-search-text="${escapeAttr([r[locField], r[itemField], r['日期(起)'], r['時間(起)'], r[valueField]].filter(Boolean).join(' ').toLowerCase())}" data-loc-value="${escapeAttr(r[locField] || '')}" data-item-value="${escapeAttr(r[itemField] || '')}">
                 <td><input type="checkbox" class="row-detail-check" data-row-uid="${r._rowUid}" ${state.excludedRowIndices.has(r._rowUid) ? '' : 'checked'}></td>
                 <td>${escapeHtml(r[locField] || '')}</td>
                 <td>${escapeHtml(r[itemField] || '')}</td>
@@ -1508,10 +1537,10 @@ function renderRowDetailTable(containerEl, rows, cat) {
       syncCheckAllState();
     });
   });
-  // "Select all" only ever affects rows currently visible under the search filter —
-  // same convention as the main data grid's search+select-all, so filtering down to
-  // a handful of rows and clicking select-all doesn't silently re-check hundreds of
-  // rows the person can't currently see.
+  // "Select all" only ever affects rows currently visible under the search/column
+  // filter — same convention as the main data grid's search+select-all, so
+  // filtering down to a handful of rows and clicking select-all doesn't silently
+  // re-check hundreds of rows the person can't currently see.
   checkAll.addEventListener('change', () => {
     getVisibleRowChecks().forEach(cb => {
       cb.checked = checkAll.checked;
@@ -1528,14 +1557,107 @@ function renderRowDetailTable(containerEl, rows, cat) {
     syncCheckAllState();
   });
 
-  const searchInput = containerEl.querySelector('#rowDetailSearchInput');
-  searchInput.addEventListener('input', () => {
+  // Combines the free-text search with any active column filters (地點/測項) — a
+  // row must satisfy all of them to stay visible, same AND logic as the main grid.
+  const applyAllFilters = () => {
     const q = searchInput.value.trim().toLowerCase();
+    const locFilter = state.rowDetailColumnFilters.loc;
+    const itemFilter = state.rowDetailColumnFilters.item;
     containerEl.querySelectorAll('#rowDetailTbody tr').forEach(tr => {
-      tr.classList.toggle('row-hidden', !(!q || tr.dataset.searchText.includes(q)));
+      let matches = !q || tr.dataset.searchText.includes(q);
+      if (matches && locFilter && locFilter.size > 0) matches = locFilter.has(tr.dataset.locValue);
+      if (matches && itemFilter && itemFilter.size > 0) matches = itemFilter.has(tr.dataset.itemValue);
+      tr.classList.toggle('row-hidden', !matches);
     });
     syncCheckAllState();
+  };
+
+  const searchInput = containerEl.querySelector('#rowDetailSearchInput');
+  searchInput.addEventListener('input', applyAllFilters);
+
+  containerEl.querySelectorAll('.col-filter-btn[data-row-detail-field]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openRowDetailColumnFilterPopup(btn.dataset.rowDetailField, btn, rows, locField, itemField, applyAllFilters);
+    });
   });
+
+  applyAllFilters(); // re-apply any column filter left over from before this re-render
+}
+
+/** Excel-style AutoFilter popup for the 詳細資料列表's 地點/測項 columns — mirrors
+ *  openColumnFilterPopup's UI, but reads from the in-memory candidate rows (this is
+ *  an import preview, not saved DataStore data) and stores its filter state
+ *  separately in state.rowDetailColumnFilters. */
+function openRowDetailColumnFilterPopup(fieldType, btnEl, rows, locField, itemField, onApply) {
+  const popup = document.getElementById('colFilterPopup');
+  const getVal = fieldType === 'loc' ? (r => r[locField] || '') : (r => r[itemField] || '');
+  const uniqueValues = [...new Set(rows.map(getVal))].sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+  const currentFilter = state.rowDetailColumnFilters[fieldType];
+
+  popup.innerHTML = `
+    <div class="col-filter-search"><input type="text" id="colFilterSearchInput" placeholder="搜尋選項..."></div>
+    <div class="col-filter-actions">
+      <button type="button" id="colFilterSelectAll" class="btn btn-ghost btn-sm">全選</button>
+      <button type="button" id="colFilterClearAll" class="btn btn-ghost btn-sm">清除</button>
+    </div>
+    <div class="col-filter-list" id="colFilterList">
+      ${uniqueValues.map(v => `
+        <label class="col-filter-item">
+          <input type="checkbox" value="${escapeAttr(v)}" ${!currentFilter || currentFilter.has(v) ? 'checked' : ''}>
+          <span>${escapeHtml(v === '' ? '（空白）' : v)}</span>
+        </label>
+      `).join('')}
+    </div>
+    <div class="col-filter-buttons">
+      <button type="button" id="colFilterCancel" class="btn btn-ghost btn-sm">取消</button>
+      <button type="button" id="colFilterApply" class="btn btn-primary btn-sm">確定</button>
+    </div>
+  `;
+
+  const rect = btnEl.getBoundingClientRect();
+  const popupWidth = 240;
+  popup.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - popupWidth - 4)) + 'px';
+  popup.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+  popup.classList.remove('hidden');
+
+  document.getElementById('colFilterSearchInput').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#colFilterList .col-filter-item').forEach(label => {
+      label.style.display = (!q || label.textContent.toLowerCase().includes(q)) ? '' : 'none';
+    });
+  });
+  document.getElementById('colFilterSelectAll').addEventListener('click', () => {
+    document.querySelectorAll('#colFilterList input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+  });
+  document.getElementById('colFilterClearAll').addEventListener('click', () => {
+    document.querySelectorAll('#colFilterList input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+  });
+  document.getElementById('colFilterCancel').addEventListener('click', () => {
+    popup.classList.add('hidden');
+  });
+  document.getElementById('colFilterApply').addEventListener('click', () => {
+    const checked = [...document.querySelectorAll('#colFilterList input[type="checkbox"]:checked')].map(cb => cb.value);
+    if (checked.length === uniqueValues.length) {
+      delete state.rowDetailColumnFilters[fieldType];
+      btnEl.classList.remove('col-filter-active');
+    } else {
+      state.rowDetailColumnFilters[fieldType] = new Set(checked);
+      btnEl.classList.add('col-filter-active');
+    }
+    popup.classList.add('hidden');
+    onApply();
+  });
+
+  setTimeout(() => {
+    const closeOnOutsideClick = (e) => {
+      if (!popup.contains(e.target) && e.target !== btnEl) {
+        popup.classList.add('hidden');
+        document.removeEventListener('click', closeOnOutsideClick);
+      }
+    };
+    document.addEventListener('click', closeOnOutsideClick);
+  }, 0);
 }
 
 // ---------- batch import (multi-file, auto-detect category) ----------
@@ -1649,6 +1771,7 @@ function openImportModal(catKey) {
   state.smartResult = null;
   state.itemSelection = null;
   state.excludedRowIndices = null;
+  state.rowDetailColumnFilters = {};
   state.importPeriod = '';
   document.getElementById('importModalTitle').textContent = `匯入${CATEGORIES[catKey].label}監測資料`;
   document.getElementById('importFileInput').value = '';
@@ -2034,6 +2157,13 @@ function renderSmartImportPreview() {
     existingMissingWrap.innerHTML = `
       <div class="warning" style="background:#e8f0fe;border-color:#a8c7fa;">
         📋 系統比對過去記錄，以下測站過去曾出現、但本次報告未出現的測項。若要一併新增（檢測方法／單位／項目名稱及對應的檢測類別會依過去記錄先幫您填好，檢測數值請自行輸入），請勾選：
+        <details style="margin-top:6px">
+          <summary style="cursor:pointer;font-size:12.5px;color:var(--text-muted)">ℹ️ 這是跟哪一份資料比對的？（點此展開說明）</summary>
+          <p class="hint" style="margin:6px 0 0 0">
+            系統一律以「您最近一次確認匯入的內容」為比對基準，不是依季別標籤強制對應到「上一季」——只是一般情況下季度是照順序匯入，所以看起來就像是跟前一季比對。<br>
+            如果您想指定要跟哪一份資料比對（例如想跳過中間某幾季，直接參考更早以前的完整版資料），只要<strong>先把那份資料匯入並確認</strong>，之後才匯入這次真正要處理的資料，系統就會以最後確認的那份為準。
+          </p>
+        </details>
         <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap">
           <input type="text" id="missingItemsSearchInput" placeholder="🔍 搜尋測站名稱，快速篩選" style="flex:1;min-width:180px;max-width:320px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-family:inherit;font-size:13px">
           <button type="button" id="btnMissingSelectAllVisible" class="btn btn-ghost btn-sm">全選（僅目前顯示的測站）</button>
@@ -2504,15 +2634,29 @@ function confirmImport() {
 
   const newRows = ImportEngine.applyMapping(state.importParsed.rows, mapping, cat.fields);
   newRows.forEach((r, i) => { r._rowUid = i; });
-  if (cat.methodField || cat.unitField) {
-    const memory = DataStore.getItemMemory(project.id, catKey);
-    newRows.forEach(row => {
-      const mem = memory[row[cat.itemField]];
-      if (!mem) return;
+  // Same history-based fill as the smart-parse path: method/unit from item memory,
+  // plus every OTHER blank field (座標/管制標準/管制區/環境音量標準/備註 etc) from
+  // the last confirmed full-row snapshot for this exact (location, item-identity)
+  // combo — this path (re-importing an already-formatted, schema-matching file, e.g.
+  // a prior season's completed export or the government template) is the MAIN way
+  // people actually re-import a full season's data, so it needs the same treatment
+  // as the raw-report smart-parse path, not just the older method/unit-only fill.
+  const memory = DataStore.getItemMemory(project.id, catKey);
+  const siteHistoryForFill = DataStore.getSiteItemHistory(project.id, catKey);
+  newRows.forEach(row => {
+    const mem = memory[row[cat.itemField]];
+    if (mem) {
       if (cat.methodField && !row[cat.methodField] && mem.method) row[cat.methodField] = mem.method;
       if (cat.unitField && !row[cat.unitField] && mem.unitCode) row[cat.unitField] = mem.unitCode;
-    });
-  }
+    }
+    const loc = row[cat.locationField];
+    if (loc) {
+      const histEntry = (siteHistoryForFill[loc] || {})[itemIdentityKey(row, cat)];
+      if (histEntry && histEntry.snapshot) {
+        Object.entries(histEntry.snapshot).forEach(([k, v]) => { if (v && !row[k]) row[k] = v; });
+      }
+    }
+  });
   const selectedRows = filterRowsBySelection(newRows, cat.itemField);
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
 

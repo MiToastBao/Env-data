@@ -122,6 +122,7 @@ tr.row-hidden { display: none; }
 
 /* Excel-style column header filter */
 table.data-grid th { position: relative; }
+table.mapping-table th { position: relative; }
 .th-label { display: inline-block; }
 .th-sortable { cursor: pointer; user-select: none; }
 .th-sortable:hover { text-decoration: underline; }

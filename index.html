@@ -62,6 +62,13 @@
     <h3 id="importModalTitle">匯入監測資料</h3>
     <div id="importStep1">
       <p class="hint">支援 Excel（.xlsx / .xls / .csv）；可一次選取多個檔案（例如本類別多個月份或多個測站的報告）。PDF 為輔助解析，建議上傳 Excel 以獲得最佳結果。</p>
+      <details style="margin-bottom:10px">
+        <summary style="cursor:pointer;font-size:12.5px;color:var(--text-muted)">ℹ️ 系統如何跨季記住座標、方法、管制標準等欄位？（點此展開說明）</summary>
+        <p class="hint" style="margin:6px 0 0 0">
+          每次確認匯入後，系統會記住每個測站每個測項的完整內容，下次匯入時會自動用來補齊空白欄位、或提示新增遺漏的測項。<br>
+          比對基準是「您最近一次確認匯入的內容」，不是依季別標籤強制對應到「上一季」——只是一般情況下季度是照順序匯入，所以看起來就像是跟前一季比對。若想指定要比對哪一份資料，只要<strong>先匯入並確認那份資料</strong>，再匯入這次真正要處理的資料即可。
+        </p>
+      </details>
       <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
       <div id="importPdfWarning" class="warning hidden">⚠️ PDF 為自動判讀表格內容，準確度有限，請務必於下方逐欄核對後再匯入。</div>
     </div>
