@@ -1459,15 +1459,20 @@ function renderRowDetailTable(containerEl, rows, cat) {
   containerEl.innerHTML = `
     <details class="row-detail-toggle" ${wasOpen ? 'open' : ''}>
       <summary>📋 詳細資料列表（可個別排除不匯入的資料，共 ${rows.length} 筆）</summary>
-      <div class="mapping-table-wrap" style="max-height:320px;margin-top:8px">
+      <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap">
+        <input type="text" id="rowDetailSearchInput" placeholder="🔍 搜尋地點、測項等關鍵字，快速篩選" style="flex:1;min-width:200px;max-width:360px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-family:inherit;font-size:13px">
+        <button type="button" id="rowDetailSelectAllVisible" class="btn btn-ghost btn-sm">勾選目前顯示的</button>
+        <button type="button" id="rowDetailClearAllVisible" class="btn btn-ghost btn-sm">取消勾選目前顯示的</button>
+      </div>
+      <div class="mapping-table-wrap" style="max-height:320px">
         <table class="mapping-table">
           <thead><tr>
             <th><input type="checkbox" id="rowDetailCheckAll" checked></th>
             <th>地點</th><th>測項</th><th>日期</th><th>時間</th><th>${escapeHtml(valueLabel)}</th>
           </tr></thead>
-          <tbody>
+          <tbody id="rowDetailTbody">
             ${rows.map(r => `
-              <tr>
+              <tr data-search-text="${escapeAttr([r[locField], r[itemField], r['日期(起)'], r['時間(起)'], r[valueField]].filter(Boolean).join(' ').toLowerCase())}">
                 <td><input type="checkbox" class="row-detail-check" data-row-uid="${r._rowUid}" ${state.excludedRowIndices.has(r._rowUid) ? '' : 'checked'}></td>
                 <td>${escapeHtml(r[locField] || '')}</td>
                 <td>${escapeHtml(r[itemField] || '')}</td>
@@ -1482,23 +1487,46 @@ function renderRowDetailTable(containerEl, rows, cat) {
     </details>
   `;
   const checkAll = containerEl.querySelector('#rowDetailCheckAll');
-  const rowChecks = containerEl.querySelectorAll('.row-detail-check');
+  const getRowChecks = () => [...containerEl.querySelectorAll('.row-detail-check')];
+  const getVisibleRowChecks = () => getRowChecks().filter(cb => !cb.closest('tr').classList.contains('row-hidden'));
   const syncCheckAllState = () => {
-    checkAll.checked = [...rowChecks].every(cb => cb.checked);
+    const visible = getVisibleRowChecks();
+    checkAll.checked = visible.length > 0 && visible.every(cb => cb.checked);
   };
-  rowChecks.forEach(cb => {
+  getRowChecks().forEach(cb => {
     cb.addEventListener('change', () => {
       const uid = Number(cb.dataset.rowUid);
       if (cb.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
       syncCheckAllState();
     });
   });
+  // "Select all" only ever affects rows currently visible under the search filter —
+  // same convention as the main data grid's search+select-all, so filtering down to
+  // a handful of rows and clicking select-all doesn't silently re-check hundreds of
+  // rows the person can't currently see.
   checkAll.addEventListener('change', () => {
-    rowChecks.forEach(cb => {
+    getVisibleRowChecks().forEach(cb => {
       cb.checked = checkAll.checked;
       const uid = Number(cb.dataset.rowUid);
       if (checkAll.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
     });
+  });
+  containerEl.querySelector('#rowDetailSelectAllVisible').addEventListener('click', () => {
+    getVisibleRowChecks().forEach(cb => { cb.checked = true; state.excludedRowIndices.delete(Number(cb.dataset.rowUid)); });
+    syncCheckAllState();
+  });
+  containerEl.querySelector('#rowDetailClearAllVisible').addEventListener('click', () => {
+    getVisibleRowChecks().forEach(cb => { cb.checked = false; state.excludedRowIndices.add(Number(cb.dataset.rowUid)); });
+    syncCheckAllState();
+  });
+
+  const searchInput = containerEl.querySelector('#rowDetailSearchInput');
+  searchInput.addEventListener('input', () => {
+    const q = searchInput.value.trim().toLowerCase();
+    containerEl.querySelectorAll('#rowDetailTbody tr').forEach(tr => {
+      tr.classList.toggle('row-hidden', !(!q || tr.dataset.searchText.includes(q)));
+    });
+    syncCheckAllState();
   });
 }
 
@@ -1976,9 +2004,14 @@ function renderSmartImportPreview() {
     existingMissingWrap.innerHTML = `
       <div class="warning" style="background:#e8f0fe;border-color:#a8c7fa;">
         📋 系統比對過去記錄，以下測站過去曾出現、但本次報告未出現的測項。若要一併新增（檢測方法／單位／項目名稱及對應的檢測類別會依過去記錄先幫您填好，檢測數值請自行輸入），請勾選：
+        <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap">
+          <input type="text" id="missingItemsSearchInput" placeholder="🔍 搜尋測站名稱，快速篩選" style="flex:1;min-width:180px;max-width:320px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-family:inherit;font-size:13px">
+          <button type="button" id="btnMissingSelectAllVisible" class="btn btn-ghost btn-sm">全選（僅目前顯示的測站）</button>
+          <button type="button" id="btnMissingClearAllVisible" class="btn btn-ghost btn-sm">全不選（僅目前顯示的測站）</button>
+        </div>
         <div id="missingItemsList" style="margin-top:8px">
           ${suggestions.map((s, i) => `
-            <div style="margin-top:6px">
+            <div class="missing-item-loc-group" data-search-text="${escapeAttr(s.location.toLowerCase())}" style="margin-top:6px">
               <label style="font-weight:700">
                 <input type="checkbox" class="missing-item-group" data-group-idx="${i}" checked> ${escapeHtml(s.location)}${s.entirelyAbsent ? ' <span class="hint">（本次報告完全沒有這個測站，建議新增的資料日期需要您自行填寫）</span>' : ''}
               </label>
@@ -2004,6 +2037,28 @@ function renderSmartImportPreview() {
         document.querySelectorAll(`.missing-item-single[data-group-idx="${idx}"]`).forEach(sub => { sub.checked = cb.checked; });
       });
     });
+    const missingSearchInput = document.getElementById('missingItemsSearchInput');
+    missingSearchInput.addEventListener('input', () => {
+      const q = missingSearchInput.value.trim().toLowerCase();
+      document.querySelectorAll('.missing-item-loc-group').forEach(div => {
+        div.classList.toggle('row-hidden', !(!q || div.dataset.searchText.includes(q)));
+      });
+    });
+    // Bulk-toggle every group checkbox that's currently visible under the search
+    // filter — dispatches a real 'change' event so the existing group→sub-item sync
+    // listener above fires normally, keeping the two layers consistent.
+    const toggleVisibleGroups = (checked) => {
+      document.querySelectorAll('.missing-item-loc-group').forEach(div => {
+        if (div.classList.contains('row-hidden')) return;
+        const groupCb = div.querySelector('.missing-item-group');
+        if (groupCb.checked !== checked) {
+          groupCb.checked = checked;
+          groupCb.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      });
+    };
+    document.getElementById('btnMissingSelectAllVisible').addEventListener('click', () => toggleVisibleGroups(true));
+    document.getElementById('btnMissingClearAllVisible').addEventListener('click', () => toggleVisibleGroups(false));
   }
 
   const wrap = document.getElementById('smartImportSitesWrap');
@@ -2167,7 +2222,17 @@ function openConflictResolutionModal(conflicts, onResolve) {
  *  it lines up as the same sampling event), fills in method/unit from item memory
  *  when available, and leaves the actual measurement blank for manual entry. */
 function buildSuggestedRows(project, catKey, cat, result) {
-  const checkedBoxes = [...document.querySelectorAll('.missing-item-single:checked')];
+  // Deliberately re-check the GROUP checkbox here too, rather than trusting only the
+  // individual item checkbox's own .checked state — the group→items sync happens via
+  // a 'change' listener on the group box, so if that ever doesn't fire for some
+  // reason (or a re-render raced with the person's click), an unchecked group whose
+  // items still show .checked=true in the DOM would otherwise get imported anyway.
+  // Requiring BOTH layers to agree is what "the person unchecked this location" is
+  // supposed to mean, and costs nothing when everything is working normally.
+  const checkedBoxes = [...document.querySelectorAll('.missing-item-single:checked')].filter(cb => {
+    const groupCb = document.querySelector(`.missing-item-group[data-group-idx="${cb.dataset.groupIdx}"]`);
+    return !groupCb || groupCb.checked;
+  });
   if (checkedBoxes.length === 0) return [];
   const itemMemory = DataStore.getItemMemory(project.id, catKey);
   const savedAliases = DataStore.getSiteAliases(project.id, catKey);

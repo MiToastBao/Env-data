@@ -3,9 +3,18 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v3.2';
+const APP_VERSION = 'v3.3';
 
 const CHANGELOG = [
+  {
+    version: 'v3.3',
+    date: '2026-08-14',
+    notes: [
+      '匯入預覽的「詳細資料列表」新增搜尋篩選框，可輸入地點、測項等關鍵字快速找到要排除的資料，也新增「勾選/取消勾選目前顯示的」批次操作，不用再一筆一筆手動滾動勾選',
+      '「跨季測項比對」的缺少測項建議清單也新增搜尋篩選框，可依測站名稱快速篩選，並新增「全選/全不選（僅目前顯示的測站）」批次操作',
+      '加強「缺少測項建議」的勾選判斷邏輯：新增測站群組與個別測項兩層勾選狀態的雙重確認，避免任何情況下取消勾選的測站被誤判為仍要匯入',
+    ],
+  },
   {
     version: 'v3.2',
     date: '2026-08-14',

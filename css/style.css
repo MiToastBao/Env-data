@@ -118,6 +118,7 @@ body {
   padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-family: inherit; font-size: 13px; width: 240px;
 }
 tr.row-hidden { display: none; }
+.row-hidden { display: none; }
 
 /* Excel-style column header filter */
 table.data-grid th { position: relative; }
