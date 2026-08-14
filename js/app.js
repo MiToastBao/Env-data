@@ -2240,7 +2240,16 @@ function renderSmartImportPreview() {
         return `<tr data-site-key="${escapeAttr(key)}">
           <td>${escapeHtml(site.siteCode || site.rawLocation || key)}${site.siteCode && site.rawLocation ? `<br><span class="hint">${escapeHtml(site.rawLocation)}</span>` : ''}</td>
           ${profileFields.map(f => {
-            const val = saved[f.key] !== undefined ? saved[f.key] : (defaults[f.key] || '');
+            // A blank remembered value must NOT win over a non-blank default — e.g.
+            // the very first time this site was ever confirmed, a field like
+            // coordinates may have been blank (the raw report simply doesn't have
+            // them yet) and got saved as an empty alias; a later import can then
+            // have that same field correctly auto-filled from the site-item history
+            // snapshot (see _memoryApplied) into `firstRow`/`defaults` — that filled
+            // value has to take priority, or the stale "remembered blank" would
+            // silently blank it out again the moment the person hits confirm.
+            const savedVal = saved[f.key];
+            const val = (savedVal !== undefined && savedVal !== '') ? savedVal : (defaults[f.key] || '');
             if (f.type === 'select') {
               const opts = f.options.map(o => {
                 const label = (f.optionLabels && f.optionLabels[o]) || o || '（未選擇）';

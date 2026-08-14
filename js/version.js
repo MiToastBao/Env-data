@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v3.7';
+const APP_VERSION = 'v3.8';
 
 const CHANGELOG = [
+  {
+    version: 'v3.8',
+    date: '2026-08-14',
+    notes: [
+      '修正一個更隱蔽的跨季記憶問題：「測站基本資料」表格（匯入預覽裡讓您確認正式地點名稱/座標/類別等的表格）會記住您上次的設定，但如果第一次匯入時某個欄位（如座標）當時是空的、且「記住此設定」是勾選狀態，系統就會把這個「空白」也當作您的設定記住。即使之後透過座標管理補齊、或系統從歷史記憶自動補齊，下次匯入預覽時，這個舊的「空白記憶」仍然會蓋過補齊後的正確結果，導致確認匯入後座標又變回空白。現在改為：只有「非空白」的記住設定才會覆蓋，空白的記住設定會讓路給更完整、更新的補齊結果',
+    ],
+  },
   {
     version: 'v3.7',
     date: '2026-08-14',
