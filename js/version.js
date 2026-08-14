@@ -3,9 +3,17 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v2.9';
+const APP_VERSION = 'v3.0';
 
 const CHANGELOG = [
+  {
+    version: 'v3.0',
+    date: '2026-08-13',
+    notes: [
+      '匯入預覽畫面新增「詳細資料列表」：原本只能依整個測項類型勾選要不要匯入，現在可以在展開的清單裡逐筆勾選/排除特定資料（例如同樣是CO測項，只想排除其中某一筆特定測站或日期的資料）',
+      '新增通用欄位同步確認：除了原本已有的座標、日期時間、檢測類別，現在其他欄位（如管制標準、管制區、檢測方法、單位代碼、備註等）修正時，只要偵測到同一份檔案、同一天、同一測站還有其他資料，也會跳出是否同步更新的提示。依使用者確認，「採樣地點/監測地點/調查地點」與「檢測數值/監測數值」不納入此機制（前者是同步比對的依據本身，後者是每筆本來就該獨立的量測結果）',
+    ],
+  },
   {
     version: 'v2.9',
     date: '2026-08-13',

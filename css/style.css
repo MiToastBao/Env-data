@@ -214,6 +214,11 @@ table.data-grid td.col-actions { text-align: center; }
 .req { color: var(--req); }
 .hint { font-size: 12.5px; color: var(--text-muted); }
 .warning { background: #fff6e0; border: 1px solid #f0c14b; padding: 8px 10px; border-radius: 6px; font-size: 12.5px; margin-top: 8px; }
+.row-detail-toggle {
+  background: #f7faf8; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin-top: 8px; font-size: 13px;
+}
+.row-detail-toggle summary { cursor: pointer; font-weight: 600; }
+.row-detail-toggle table.mapping-table th, .row-detail-toggle table.mapping-table td { font-size: 12.5px; white-space: nowrap; }
 .warning.hidden { display: none; }
 .period-picker {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;

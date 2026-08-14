@@ -800,6 +800,42 @@ function wireGridEvents(project, catKey, cat) {
     return true;
   };
 
+  // Generic sync for every OTHER field (管制標準、管制區、檢測方法、單位代碼、檢測
+  // 機構、備註等等) — same batch/site/date rule as the three specific sync helpers
+  // above. Deliberately excludes: the item field itself (each row IS a different
+  // item, syncing it would be nonsensical), the location field (editing it would
+  // break the very "same location" matching this relies on — see openCoordModal's
+  // separate, date-aware handling for correcting locations), the measurement value
+  // fields (always unique per row by definition), and anything already covered by
+  // a dedicated sync above (coordinates / date-time / 檢測類別) to avoid asking twice.
+  const SYNC_EXCLUDED_FIELDS = new Set([
+    cat.itemField, cat.locationField, '檢測數值', '監測數值',
+    ...COORD_FIELDS, ...DATE_TIME_FIELDS, '檢測類別',
+  ]);
+  const offerGenericFieldSync = (rowIdx, fieldKey) => {
+    const rows = DataStore.getData(project.id, catKey);
+    const source = rows[rowIdx];
+    const locField = cat.locationField;
+    if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
+    const matches = rows
+      .map((r, idx) => ({ r, idx }))
+      .filter(({ r, idx }) => idx !== rowIdx && r._batchId === source._batchId
+        && r[locField] === source[locField] && r['日期(起)'] === source['日期(起)']);
+    if (matches.length === 0) return false;
+    const anyDiff = matches.some(({ r }) => r[fieldKey] !== source[fieldKey]);
+    if (!anyDiff) return false;
+    const fieldLabel = (cat.fields.find(f => f.key === fieldKey) || {}).label || fieldKey;
+    const ok = confirm(
+      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
+      `是否要將這些資料的「${fieldLabel}」一併同步更新為「${source[fieldKey] || '（空白）'}」？\n\n` +
+      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
+    );
+    if (!ok) return false;
+    matches.forEach(({ r }) => { r[fieldKey] = source[fieldKey]; });
+    DataStore.saveData(project.id, catKey, rows);
+    return true;
+  };
+
   tbody.addEventListener('input', (e) => {
     const t = e.target;
     if (!t.dataset.field) return;
@@ -814,8 +850,11 @@ function wireGridEvents(project, catKey, cat) {
     if (!t.dataset.field) return;
     if (t.tagName === 'SELECT') {
       commit(Number(t.dataset.row), t.dataset.field, t.value);
-      if (COORD_FIELDS.includes(t.dataset.field) && offerCoordSync(Number(t.dataset.row))) { renderContentPreservingScroll(); return; }
-      if (t.dataset.field === '檢測類別' && offerCategorySync(Number(t.dataset.row))) { renderContentPreservingScroll(); return; }
+      const fieldKey = t.dataset.field;
+      const rowIdx = Number(t.dataset.row);
+      if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
+      if (fieldKey === '檢測類別' && offerCategorySync(rowIdx)) { renderContentPreservingScroll(); return; }
+      if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
     }
   });
   // use focusout (bubbles) rather than blur to catch this via delegation; only
@@ -838,7 +877,8 @@ function wireGridEvents(project, catKey, cat) {
     }
 
     if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
-    if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx)) renderContentPreservingScroll();
+    if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx)) { renderContentPreservingScroll(); return; }
+    if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
   });
   tbody.addEventListener('click', (e) => {
     const btn = e.target.closest('.row-del-btn');
@@ -1231,8 +1271,76 @@ function renderItemChecklist(containerEl, rows, itemField, onChange) {
 }
 
 function filterRowsBySelection(rows, itemField) {
-  if (!state.itemSelection) return rows;
-  return rows.filter(r => state.itemSelection.has((r[itemField] || '').trim() || '（未標示）'));
+  let filtered = rows;
+  if (state.itemSelection) {
+    filtered = filtered.filter(r => state.itemSelection.has((r[itemField] || '').trim() || '（未標示）'));
+  }
+  if (state.excludedRowIndices && state.excludedRowIndices.size > 0) {
+    filtered = filtered.filter(r => !state.excludedRowIndices.has(r._rowUid));
+  }
+  return filtered;
+}
+
+/**
+ * A row-level checklist below the item-type checklist — lets the person exclude
+ * specific individual records (e.g. "this one CO reading from this date, but not
+ * the rest") rather than only being able to exclude an entire item type at once.
+ * Shows whatever the item checklist currently leaves in (so it doesn't duplicate
+ * rows already excluded that way), collapsed by default since it can be long.
+ */
+function renderRowDetailTable(containerEl, rows, cat) {
+  if (!state.excludedRowIndices) state.excludedRowIndices = new Set();
+  if (rows.length === 0) { containerEl.innerHTML = ''; return; }
+  const locField = cat.locationField;
+  const itemField = cat.itemField;
+  const valueField = cat.fields.find(f => ['檢測數值', '監測數值'].includes(f.key))?.key || '';
+  const valueLabel = cat.fields.find(f => f.key === valueField)?.label || '數值';
+
+  const wasOpen = containerEl.querySelector('details')?.open;
+  containerEl.innerHTML = `
+    <details class="row-detail-toggle" ${wasOpen ? 'open' : ''}>
+      <summary>📋 詳細資料列表（可個別排除不匯入的資料，共 ${rows.length} 筆）</summary>
+      <div class="mapping-table-wrap" style="max-height:320px;margin-top:8px">
+        <table class="mapping-table">
+          <thead><tr>
+            <th><input type="checkbox" id="rowDetailCheckAll" checked></th>
+            <th>地點</th><th>測項</th><th>日期</th><th>時間</th><th>${escapeHtml(valueLabel)}</th>
+          </tr></thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td><input type="checkbox" class="row-detail-check" data-row-uid="${r._rowUid}" ${state.excludedRowIndices.has(r._rowUid) ? '' : 'checked'}></td>
+                <td>${escapeHtml(r[locField] || '')}</td>
+                <td>${escapeHtml(r[itemField] || '')}</td>
+                <td>${escapeHtml(r['日期(起)'] || '')}</td>
+                <td>${escapeHtml(r['時間(起)'] || '')}</td>
+                <td>${escapeHtml(r[valueField] || '')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  `;
+  const checkAll = containerEl.querySelector('#rowDetailCheckAll');
+  const rowChecks = containerEl.querySelectorAll('.row-detail-check');
+  const syncCheckAllState = () => {
+    checkAll.checked = [...rowChecks].every(cb => cb.checked);
+  };
+  rowChecks.forEach(cb => {
+    cb.addEventListener('change', () => {
+      const uid = Number(cb.dataset.rowUid);
+      if (cb.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
+      syncCheckAllState();
+    });
+  });
+  checkAll.addEventListener('change', () => {
+    rowChecks.forEach(cb => {
+      cb.checked = checkAll.checked;
+      const uid = Number(cb.dataset.rowUid);
+      if (checkAll.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
+    });
+  });
 }
 
 // ---------- batch import (multi-file, auto-detect category) ----------
@@ -1345,6 +1453,7 @@ function openImportModal(catKey) {
   state.importMode = null;
   state.smartResult = null;
   state.itemSelection = null;
+  state.excludedRowIndices = null;
   state.importPeriod = '';
   document.getElementById('importModalTitle').textContent = `匯入${CATEGORIES[catKey].label}監測資料`;
   document.getElementById('importFileInput').value = '';
@@ -1451,6 +1560,7 @@ function renderMappingStep() {
   const cat = CATEGORIES[state.importCatKey];
   const { headers, rows } = state.importParsed;
   const mapping = ImportEngine.suggestMapping(headers, cat.fields);
+  state.excludedRowIndices = new Set();
 
   const tbody = document.getElementById('mappingTableBody');
   tbody.innerHTML = cat.fields.map(f => {
@@ -1476,9 +1586,20 @@ function renderMappingStep() {
     const itemSel = tbody.querySelector(`select[data-target-field="${cat.itemField}"]`);
     const mappedHeader = itemSel ? itemSel.value : '';
     const wrap = document.getElementById('genericImportItemsWrap');
-    if (!mappedHeader) { wrap.innerHTML = ''; return; }
+    if (!mappedHeader) { wrap.innerHTML = ''; document.getElementById('genericImportRowDetailWrap').innerHTML = ''; return; }
     const shimRows = rows.map(r => ({ [cat.itemField]: r[mappedHeader] }));
-    renderItemChecklist(wrap, shimRows, cat.itemField, null);
+    renderItemChecklist(wrap, shimRows, cat.itemField, refreshGenericRowDetail);
+    refreshGenericRowDetail();
+  };
+  const refreshGenericRowDetail = () => {
+    const currentMapping = {};
+    tbody.querySelectorAll('select[data-target-field]').forEach(sel => { currentMapping[sel.dataset.targetField] = sel.value || null; });
+    const mappedRows = ImportEngine.applyMapping(rows, currentMapping, cat.fields);
+    mappedRows.forEach((r, i) => { r._rowUid = i; });
+    const itemFilteredRows = state.itemSelection
+      ? mappedRows.filter(r => state.itemSelection.has((r[cat.itemField] || '').trim() || '（未標示）'))
+      : mappedRows;
+    renderRowDetailTable(document.getElementById('genericImportRowDetailWrap'), itemFilteredRows, cat);
   };
   refreshGenericItemChecklist();
   const itemSel = tbody.querySelector(`select[data-target-field="${cat.itemField}"]`);
@@ -1520,9 +1641,14 @@ function renderSmartImportPreview() {
     });
     result._memoryApplied = true;
   }
+  if (!result._rowUidsAssigned) {
+    result.rows.forEach((row, i) => { row._rowUid = i; });
+    result._rowUidsAssigned = true;
+  }
 
   const siteEntries = Object.entries(result.sites); // [key, {siteCode, rawLocation, rowIndices}]
   state.itemSelection = null; // reset so renderItemChecklist re-seeds with "all checked"
+  state.excludedRowIndices = new Set(); // reset row-level exclusions for a fresh parse
 
   renderPeriodPicker('smartPeriodWrap', result.rows);
 
@@ -1538,8 +1664,19 @@ function renderSmartImportPreview() {
     });
     document.getElementById('btnImportConfirm').textContent = `確認匯入 ${selectedTotal} 筆資料`;
   };
+  const updateCountsAndRowDetail = () => {
+    updateCounts();
+    // The row-detail table itself is what excludedRowIndices comes from — show
+    // rows filtered only by item type (not by row exclusion), otherwise a row the
+    // person unchecked would vanish from the list and they could never re-check it.
+    const itemFilteredRows = state.itemSelection
+      ? result.rows.filter(r => state.itemSelection.has((r[cat.itemField] || '').trim() || '（未標示）'))
+      : result.rows;
+    renderRowDetailTable(document.getElementById('smartImportRowDetailWrap'), itemFilteredRows, cat, updateCounts);
+  };
 
-  renderItemChecklist(document.getElementById('smartImportItemsWrap'), result.rows, cat.itemField, updateCounts);
+  renderItemChecklist(document.getElementById('smartImportItemsWrap'), result.rows, cat.itemField, updateCountsAndRowDetail);
+  updateCountsAndRowDetail();
 
   const existingSkippedWarning = document.getElementById('smartImportSkippedItemsWarning');
   if (existingSkippedWarning) existingSkippedWarning.remove();
@@ -2010,6 +2147,7 @@ function confirmImport() {
   });
 
   const newRows = ImportEngine.applyMapping(state.importParsed.rows, mapping, cat.fields);
+  newRows.forEach((r, i) => { r._rowUid = i; });
   if (cat.methodField || cat.unitField) {
     const memory = DataStore.getItemMemory(project.id, catKey);
     newRows.forEach(row => {
