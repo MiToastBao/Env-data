@@ -69,12 +69,12 @@ const DataStore = {
     return `envapp_siteitems_${projectId}_${category}`;
   },
 
-  // Site-item history: remembers, per (project, category, location name), every
-  // item name ever confirmed for that site — across all quarters. This is what lets
-  // the app notice "上次這個測站還有 def 三項，這次的報告沒出現" and offer to add
-  // those as blank rows (with method/unit pre-filled from item memory) instead of the
-  // person having to remember and manually recreate columns a PDF-only report can't
-  // supply data for.
+  // Site-item history: remembers, per (project, category, location name), a full
+  // field snapshot of every item ever confirmed for that site — across all
+  // quarters. This is what lets the app notice "上次這個測站還有 def 三項，這次的
+  // 報告沒出現" and offer to add those back with all their real detail (座標/管制
+  // 標準/檢測方法/單位/備註 etc, not just method/unit) intact, leaving only date/
+  // time/value blank for the person to fill in.
   getSiteItemHistory(projectId, category) {
     try {
       return JSON.parse(localStorage.getItem(this._siteItemHistoryKey(projectId, category))) || {};
@@ -93,20 +93,34 @@ const DataStore = {
    *  belongs to rather than guessing from an arbitrary other row at that location.
    *  Stored as { location: { itemName: lastSeenCategory } } — transparently upgrades
    *  the older { location: [itemName, ...] } array format if found. */
-  learnSiteItems(projectId, category, locationField, itemField, categoryField, rows) {
+  /**
+   * Records a full field snapshot for each (location, item-identity) pair — additive
+   * and always overwritten with the most recent confirmed import, never removes.
+   * Stored as { location: { identityKey: { itemName, timeSegment, category, snapshot } } }
+   * where `snapshot` holds every OTHER field's value (座標/管制標準/檢測方法/單位/
+   * 備註 etc — everything except the location/item identity fields and 日期/時間/
+   * 檢測數值). This is what lets the app rebuild a historically-known-but-currently-
+   * missing row with all its real detail intact — not just item name and category —
+   * when the person asks to add it back, leaving only date/time/value blank for
+   * them to fill in. `identityKey` folds in 監測時段 (day/evening/night) when the
+   * category has that field, so noise's three time-of-day rows per item don't
+   * collapse into one indistinguishable entry.
+   * Transparently discards the older, narrower history formats if found (both the
+   * original { location: [itemName,...] } array and the interim
+   * { location: { itemName: category } } object) — those didn't carry enough
+   * detail to reconstruct a full row anyway, so there's nothing worth preserving
+   * from them; the next confirmed import repopulates correctly.
+   */
+  learnSiteItemSnapshots(projectId, category, entries) {
     const history = this.getSiteItemHistory(projectId, category);
-    rows.forEach(r => {
-      const loc = r[locationField];
-      const item = r[itemField];
-      if (!loc || !item) return;
-      if (Array.isArray(history[loc])) {
-        const converted = {};
-        history[loc].forEach(it => { converted[it] = ''; });
-        history[loc] = converted;
+    entries.forEach(({ location, identityKey, itemName, timeSegment, itemCategory, snapshot }) => {
+      if (!location || !identityKey) return;
+      if (!history[location] || Array.isArray(history[location]) || typeof history[location] !== 'object') {
+        history[location] = {};
       }
-      if (!history[loc]) history[loc] = {};
-      const catVal = categoryField ? (r[categoryField] || '') : '';
-      if (catVal || !(item in history[loc])) history[loc][item] = catVal;
+      const existing = history[location][identityKey];
+      if (existing && typeof existing === 'string') delete history[location][identityKey]; // discard old narrow format entry
+      history[location][identityKey] = { itemName, timeSegment: timeSegment || '', category: itemCategory || '', snapshot };
     });
     this.saveSiteItemHistory(projectId, category, history);
   },

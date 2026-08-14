@@ -475,7 +475,7 @@ function renderCategoryTab(project, catKey) {
         <input type="text" id="rowSearchInput" placeholder="🔍 搜尋任何欄位內容（測站、測項、日期…）" title="輸入關鍵字即時篩選畫面顯示的資料列，方便檢查或修正特定資料；不影響匯出範圍（匯出仍依上方期別篩選）">
         <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除篩選</button>
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）${activePeriod ? '（僅目前篩選期別）' : ''}</button>
-        <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別</button>
+        <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別${activePeriod ? '（僅目前篩選期別）' : ''}</button>
       </div>
       <div class="row-count" id="rowCountDisplay">共 ${displayRows.length} 筆資料${activePeriod ? `（篩選中，全部共 ${allRows.length} 筆）` : ''}</div>
     </div>
@@ -529,9 +529,17 @@ function renderCategoryTab(project, catKey) {
   });
   document.getElementById('btnClearCat').addEventListener('click', () => {
     if (allRows.length === 0) return;
-    if (!confirm(`確定要清空「${cat.label}」的全部 ${allRows.length} 筆資料嗎？（含所有期別）此操作無法復原。`)) return;
-    DataStore.clearData(project.id, catKey);
-    state.periodFilter[catKey] = '';
+    if (activePeriod) {
+      const periodLabel = activePeriod === '__none__' ? '未標示期別' : activePeriod;
+      const rowsToKeep = allRows.filter(r => activePeriod === '__none__' ? !!r._period : r._period !== activePeriod);
+      const removedCount = allRows.length - rowsToKeep.length;
+      if (!confirm(`確定要清空「${cat.label}」目前篩選的「${periodLabel}」共 ${removedCount} 筆資料嗎？其他期別的資料不會受影響。此操作無法復原。`)) return;
+      DataStore.saveData(project.id, catKey, rowsToKeep);
+      state.periodFilter[catKey] = '';
+    } else {
+      if (!confirm(`確定要清空「${cat.label}」的全部 ${allRows.length} 筆資料嗎？（含所有期別）此操作無法復原。`)) return;
+      DataStore.clearData(project.id, catKey);
+    }
     renderContent();
   });
 
@@ -1819,19 +1827,35 @@ function renderSmartImportPreview() {
   // oxygen legitimately measured by either 電極法/NIEA W455 or 碘定量法/NIEA W422
   // depending on which the lab used that season), but it's flagged so the person
   // can confirm it's an intentional change rather than a parsing fluke.
-  if (!result._memoryApplied && (cat.methodField || cat.unitField)) {
+  //
+  // Separately, fill in any OTHER blank field from the historical full-row
+  // snapshot for this exact (location, item-identity) combo — e.g. this quarter's
+  // report only supplied date/time/value for an item that's otherwise unchanged,
+  // but coordinates/管制標準/etc were present last season; carry those forward
+  // rather than leaving them permanently blank, since only date/time/value should
+  // genuinely differ quarter to quarter for an otherwise-unchanged monitoring point.
+  if (!result._memoryApplied) {
     const memory = DataStore.getItemMemory(project.id, catKey);
+    const siteHistory = DataStore.getSiteItemHistory(project.id, catKey);
     const methodDiffsByItem = {};
     result.rows.forEach(row => {
       const mem = memory[row[cat.itemField]];
-      if (!mem) return;
-      if (cat.methodField && !row[cat.methodField] && mem.method) {
-        row[cat.methodField] = mem.method; row._methodFromMemory = true;
-      } else if (cat.methodField && row[cat.methodField] && mem.method && row[cat.methodField] !== mem.method) {
-        methodDiffsByItem[row[cat.itemField]] = { reportMethod: row[cat.methodField], memoryMethod: mem.method };
+      if (mem) {
+        if (cat.methodField && !row[cat.methodField] && mem.method) {
+          row[cat.methodField] = mem.method; row._methodFromMemory = true;
+        } else if (cat.methodField && row[cat.methodField] && mem.method && row[cat.methodField] !== mem.method) {
+          methodDiffsByItem[row[cat.itemField]] = { reportMethod: row[cat.methodField], memoryMethod: mem.method };
+        }
+        if (cat.unitField && !row[cat.unitField] && mem.unitCode) {
+          row[cat.unitField] = mem.unitCode; row._unitFromMemory = true;
+        }
       }
-      if (cat.unitField && !row[cat.unitField] && mem.unitCode) {
-        row[cat.unitField] = mem.unitCode; row._unitFromMemory = true;
+      const loc = row[cat.locationField];
+      if (loc) {
+        const histEntry = (siteHistory[loc] || {})[itemIdentityKey(row, cat)];
+        if (histEntry && histEntry.snapshot) {
+          Object.entries(histEntry.snapshot).forEach(([k, v]) => { if (v && !row[k]) row[k] = v; });
+        }
       }
     });
     result._methodDiffs = Object.entries(methodDiffsByItem).map(([item, d]) => ({ item, ...d }));
@@ -1938,9 +1962,10 @@ function renderSmartImportPreview() {
 
   // Compare each LOCATION's items in THIS import against the project's site-item
   // history (accumulated from every past confirmed import for this category) — if
-  // history has items this batch doesn't, offer to add them as blank rows
-  // (method/unit pre-filled from item memory, value left for the person to type,
-  // since the source is often a PDF this app can't extract numbers from at all).
+  // history has items this batch doesn't, offer to add them as blank rows (every
+  // field carried over from the last confirmed snapshot except date/time/value,
+  // which the person fills in themselves — the source is often a PDF this app
+  // can't extract numbers from at all).
   //
   // Grouped by CONFIRMED location name, not raw site key: a category like noise
   // can have several distinct raw "sites" (e.g. a 環境噪音 report and a separate
@@ -1948,33 +1973,40 @@ function renderSmartImportPreview() {
   // confirms the official site name — comparing history against just one of those
   // site keys' items would wrongly "miss" every item that actually belongs to the
   // other sub-report at the same location.
+  //
+  // Comparison and history are both keyed by itemIdentityKey (item name + 監測時段
+  // when the category has that field), not bare item name — otherwise noise's
+  // separate 日/晚/夜 rows for the same 音源發聲特性 collapse into one indistinguishable
+  // entry and only one of the three ever gets suggested/rebuilt.
   const existingMissingWrap = document.getElementById('smartImportMissingItemsWrap');
   const siteHistory = DataStore.getSiteItemHistory(project.id, catKey);
   const itemMemoryForSuggestion = DataStore.getItemMemory(project.id, catKey);
 
-  const itemsByLoc = {}; // confirmedLoc -> Set(itemName)
+  const itemsByLoc = {}; // confirmedLoc -> Set(identityKey)
   const siteKeysByLoc = {}; // confirmedLoc -> [siteKey, ...] (may span multiple raw sites)
   siteEntries.forEach(([key, site]) => {
     const saved = savedAliases[siteAliasKey(site, result, cat)] || {};
     const confirmedLoc = saved[locField] || site.rawLocation;
     if (!itemsByLoc[confirmedLoc]) { itemsByLoc[confirmedLoc] = new Set(); siteKeysByLoc[confirmedLoc] = []; }
-    site.rowIndices.forEach(i => itemsByLoc[confirmedLoc].add(result.rows[i][cat.itemField]));
+    site.rowIndices.forEach(i => itemsByLoc[confirmedLoc].add(itemIdentityKey(result.rows[i], cat)));
     siteKeysByLoc[confirmedLoc].push(key);
   });
 
+  // tolerate the older, narrower history formats (array of item names, or
+  // { item: category }) by simply treating them as having nothing usable —
+  // there's no snapshot to rebuild from anyway, so nothing to suggest from them.
+  const historyEntriesFor = (historyForLoc) => {
+    if (!historyForLoc || Array.isArray(historyForLoc)) return [];
+    return Object.entries(historyForLoc).filter(([, v]) => v && typeof v === 'object' && v.snapshot);
+  };
+
   const suggestions = [];
-  Object.entries(itemsByLoc).forEach(([confirmedLoc, currentItemsSet]) => {
-    const historyForLoc = siteHistory[confirmedLoc];
-    if (!historyForLoc) return;
-    // tolerate the older array-only history format (no per-item category)
-    const historicalEntries = Array.isArray(historyForLoc)
-      ? historyForLoc.map(item => [item, ''])
-      : Object.entries(historyForLoc);
-    const missing = historicalEntries.filter(([item]) => !currentItemsSet.has(item));
+  Object.entries(itemsByLoc).forEach(([confirmedLoc, currentIdentitySet]) => {
+    const missing = historyEntriesFor(siteHistory[confirmedLoc]).filter(([identityKey]) => !currentIdentitySet.has(identityKey));
     if (missing.length > 0) {
       suggestions.push({
         siteKeys: siteKeysByLoc[confirmedLoc], location: confirmedLoc,
-        missingItems: missing.map(([item, category]) => ({ item, category })),
+        missingItems: missing.map(([identityKey, entry]) => ({ identityKey, ...entry })),
       });
     }
   });
@@ -1983,17 +2015,15 @@ function renderSmartImportPreview() {
   // last quarter. Those locations never show up in itemsByLoc above (there's no
   // current row for them at all), so they need a separate pass over the full
   // history to be offered — with no row from this import to copy shared fields
-  // (date/coordinates/etc) from, buildSuggestedRows falls back to the remembered
-  // site profile and leaves the date blank for the person to fill in themselves.
+  // from, buildSuggestedRows rebuilds the whole row from the remembered snapshot
+  // and leaves date/time/value blank for the person to fill in themselves.
   Object.entries(siteHistory).forEach(([histLoc, historyForLoc]) => {
     if (itemsByLoc[histLoc]) return; // already handled above — this location DID appear
-    const historicalEntries = Array.isArray(historyForLoc)
-      ? historyForLoc.map(item => [item, ''])
-      : Object.entries(historyForLoc);
+    const historicalEntries = historyEntriesFor(historyForLoc);
     if (historicalEntries.length === 0) return;
     suggestions.push({
       siteKeys: [], location: histLoc, entirelyAbsent: true,
-      missingItems: historicalEntries.map(([item, category]) => ({ item, category })),
+      missingItems: historicalEntries.map(([identityKey, entry]) => ({ identityKey, ...entry })),
     });
   });
   state.missingItemSuggestions = suggestions;
@@ -2016,13 +2046,16 @@ function renderSmartImportPreview() {
                 <input type="checkbox" class="missing-item-group" data-group-idx="${i}" checked> ${escapeHtml(s.location)}${s.entirelyAbsent ? ' <span class="hint">（本次報告完全沒有這個測站，建議新增的資料日期需要您自行填寫）</span>' : ''}
               </label>
               <div style="margin-left:22px">
-                ${s.missingItems.map(({ item, category }) => {
-                  const mem = itemMemoryForSuggestion[item];
-                  const memParts = [category ? `檢測類別：${category}` : '', mem?.method, mem?.unitCode ? `單位代碼${mem.unitCode}` : ''].filter(Boolean);
+                ${s.missingItems.map(({ identityKey, itemName, timeSegment, category, snapshot }) => {
+                  const displayName = timeSegment ? `${itemName}（${timeSegment}）` : itemName;
+                  const mem = itemMemoryForSuggestion[itemName];
+                  const methodNote = snapshot?.[cat.methodField] || mem?.method;
+                  const unitNote = snapshot?.[cat.unitField] || mem?.unitCode;
+                  const memParts = [category ? `檢測類別：${category}` : '', methodNote, unitNote ? `單位代碼${unitNote}` : ''].filter(Boolean);
                   const memNote = memParts.length ? `（已記憶：${memParts.join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
                   return `<label style="display:block">
-                    <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-item="${escapeAttr(item)}" checked>
-                    ${escapeHtml(item)} <span class="hint">${memNote}</span>
+                    <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-identity-key="${escapeAttr(identityKey)}" checked>
+                    ${escapeHtml(displayName)} <span class="hint">${memNote}</span>
                   </label>`;
                 }).join('')}
               </div>
@@ -2124,8 +2157,45 @@ function learnItemMemoryFromRows(projectId, catKey, cat, rows) {
 /** Records which items have ever been confirmed for each location — this is what
  *  lets a later import notice "上次這個測站還有 def 三項" even though this quarter's
  *  raw report only covers abc. Called after every successful import commit. */
+/** Whether item identity for cross-season comparison needs to fold in 監測時段
+ *  (day/evening/night) — currently only noise reuses the same item name (音源發聲
+ *  特性, e.g. "均能音量(Leq)") across three separate rows distinguished only by
+ *  their 監測時段, so without this the three would collapse into one indistinguishable
+ *  entry both in "what items does this site currently have" and in history. */
+function hasTimeSegmentField(cat) {
+  return cat.fields.some(f => f.key === '監測時段');
+}
+/** A stable identity for one "kind of measurement" at a site — item name, plus
+ *  監測時段 when the category has that field (see hasTimeSegmentField). */
+function itemIdentityKey(row, cat) {
+  return hasTimeSegmentField(cat) ? `${row[cat.itemField]}::${row['監測時段'] || ''}` : row[cat.itemField];
+}
+const SNAPSHOT_EXCLUDED_FIELDS = new Set(['日期(起)', '時間(起)', '日期(迄)', '時間(迄)', '檢測數值', '監測數值']);
+/** Every field's value except the row's own location/item identity and its actual
+ *  measurement (date/time/value) — this is what gets carried forward wholesale when
+ *  reconstructing a historically-known-but-currently-absent row, so a person only
+ *  has to fill in this quarter's actual date/time/reading, not re-type coordinates,
+ *  method, unit, 管制標準, remarks, etc. all over again. */
+function buildFieldSnapshot(row, cat) {
+  const exclude = new Set([cat.itemField, cat.locationField, ...SNAPSHOT_EXCLUDED_FIELDS]);
+  const snap = {};
+  cat.fields.forEach(f => { if (!exclude.has(f.key)) snap[f.key] = row[f.key] || ''; });
+  return snap;
+}
+
 function learnSiteItemHistory(projectId, catKey, cat, rows) {
-  DataStore.learnSiteItems(projectId, catKey, cat.locationField, cat.itemField, '檢測類別', rows);
+  const locField = cat.locationField, itemField = cat.itemField;
+  const entries = rows
+    .filter(r => r[locField] && r[itemField])
+    .map(r => ({
+      location: r[locField],
+      identityKey: itemIdentityKey(r, cat),
+      itemName: r[itemField],
+      timeSegment: hasTimeSegmentField(cat) ? (r['監測時段'] || '') : '',
+      itemCategory: r['檢測類別'] || '',
+      snapshot: buildFieldSnapshot(r, cat),
+    }));
+  DataStore.learnSiteItemSnapshots(projectId, catKey, entries);
 }
 
 /**
@@ -2235,14 +2305,14 @@ function buildSuggestedRows(project, catKey, cat, result) {
   });
   if (checkedBoxes.length === 0) return [];
   const itemMemory = DataStore.getItemMemory(project.id, catKey);
-  const savedAliases = DataStore.getSiteAliases(project.id, catKey);
   const newRows = [];
   checkedBoxes.forEach(cb => {
     const suggestion = state.missingItemSuggestions?.[Number(cb.dataset.groupIdx)];
     if (!suggestion) return;
-    const itemName = cb.dataset.item;
-    const missingEntry = suggestion.missingItems.find(m => m.item === itemName);
-    const historicalCategory = missingEntry ? missingEntry.category : '';
+    const identityKey = cb.dataset.identityKey;
+    const missingEntry = suggestion.missingItems.find(m => m.identityKey === identityKey);
+    if (!missingEntry) return;
+    const { itemName, timeSegment, category: historicalCategory, snapshot } = missingEntry;
 
     // A location can span several raw "sites" (e.g. a noise sub-report and a
     // separate vibration sub-report at the same physical site) — gather rows from
@@ -2257,28 +2327,34 @@ function buildSuggestedRows(project, catKey, cat, result) {
 
     let newRow;
     if (candidateRows.length > 0) {
+      // Partially-present location: this quarter's own data at the site is the
+      // most accurate source for shared fields (coordinates etc, which could
+      // genuinely have changed since last season) — use it as the base, then just
+      // correct the identity fields to the specific missing item being added.
       const template = candidateRows.find(r => !historicalCategory || r['檢測類別'] === historicalCategory) || candidateRows[0];
       newRow = { ...template };
     } else {
       // Entirely-absent location (suggestion.entirelyAbsent): this quarter's report
-      // has no rows for this site at all, so there's nothing to copy shared fields
-      // from — build from scratch using whatever site profile was remembered, and
-      // leave date/time blank since there's no genuine reading to attribute a date
-      // to; the person fills that in themselves.
+      // has no rows for this site at all, so there's no current data to base shared
+      // fields on — reconstruct the ENTIRE row from the remembered snapshot (every
+      // field it had last season: coordinates, 管制標準, 檢測方法, 單位, 備註, etc),
+      // not just a narrow "site profile" subset.
       newRow = {};
       cat.fields.forEach(f => { newRow[f.key] = ''; });
       newRow[cat.locationField] = suggestion.location;
-      const aliasKeyGuess = historicalCategory ? `${suggestion.location}::${historicalCategory}` : suggestion.location;
-      const savedProfile = savedAliases[aliasKeyGuess] || {};
-      Object.entries(savedProfile).forEach(([k, v]) => { if (v) newRow[k] = v; });
+      Object.entries(snapshot || {}).forEach(([k, v]) => { if (v) newRow[k] = v; });
     }
     newRow[cat.itemField] = itemName;
+    if (timeSegment && '監測時段' in newRow) newRow['監測時段'] = timeSegment;
     if (historicalCategory && '檢測類別' in newRow) newRow['檢測類別'] = historicalCategory;
-    ['檢測數值', '監測數值', '比較關係', '檢測極限'].forEach(k => { if (k in newRow) newRow[k] = ''; });
+    // Only date/time/value are left blank for manual entry — everything else
+    // (comparison relation, detection limit, method, unit, coordinates, remarks...)
+    // carries over as-is, per the person's explicit request.
+    ['日期(起)', '時間(起)', '日期(迄)', '時間(迄)', '檢測數值', '監測數值'].forEach(k => { if (k in newRow) newRow[k] = ''; });
     const mem = itemMemory[itemName];
     if (mem) {
-      if (cat.methodField && mem.method) newRow[cat.methodField] = mem.method;
-      if (cat.unitField && mem.unitCode) newRow[cat.unitField] = mem.unitCode;
+      if (cat.methodField && !newRow[cat.methodField] && mem.method) newRow[cat.methodField] = mem.method;
+      if (cat.unitField && !newRow[cat.unitField] && mem.unitCode) newRow[cat.unitField] = mem.unitCode;
     }
     newRows.push(newRow);
   });
