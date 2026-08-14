@@ -2105,13 +2105,17 @@ function renderSmartImportPreview() {
   const siteHistory = DataStore.getSiteItemHistory(project.id, catKey);
   const itemMemoryForSuggestion = DataStore.getItemMemory(project.id, catKey);
 
-  const itemsByLoc = {}; // confirmedLoc -> Set(identityKey)
+  const itemsByLoc = {}; // confirmedLoc -> Map(identityKey -> count)
   const siteKeysByLoc = {}; // confirmedLoc -> [siteKey, ...] (may span multiple raw sites)
   siteEntries.forEach(([key, site]) => {
     const saved = savedAliases[siteAliasKey(site, result, cat)] || {};
     const confirmedLoc = saved[locField] || site.rawLocation;
-    if (!itemsByLoc[confirmedLoc]) { itemsByLoc[confirmedLoc] = new Set(); siteKeysByLoc[confirmedLoc] = []; }
-    site.rowIndices.forEach(i => itemsByLoc[confirmedLoc].add(itemIdentityKey(result.rows[i], cat)));
+    if (!itemsByLoc[confirmedLoc]) { itemsByLoc[confirmedLoc] = new Map(); siteKeysByLoc[confirmedLoc] = []; }
+    site.rowIndices.forEach(i => {
+      const idKey = itemIdentityKey(result.rows[i], cat);
+      const m = itemsByLoc[confirmedLoc];
+      m.set(idKey, (m.get(idKey) || 0) + 1);
+    });
     siteKeysByLoc[confirmedLoc].push(key);
   });
 
@@ -2124,13 +2128,20 @@ function renderSmartImportPreview() {
   };
 
   const suggestions = [];
-  Object.entries(itemsByLoc).forEach(([confirmedLoc, currentIdentitySet]) => {
-    const missing = historyEntriesFor(siteHistory[confirmedLoc]).filter(([identityKey]) => !currentIdentitySet.has(identityKey));
+  Object.entries(itemsByLoc).forEach(([confirmedLoc, currentCounts]) => {
+    // Compare COUNTS, not just presence — a site sampled both 平日 and 假日 in the
+    // same quarter legitimately has 2 rows sharing the same item+監測時段 identity;
+    // if history remembers 2 but this import only has 1 (or 0), that's 1 (or 2)
+    // still missing, not "already covered because at least one exists".
+    const missing = historyEntriesFor(siteHistory[confirmedLoc])
+      .map(([identityKey, entry]) => {
+        const historicalCount = entry.count || 1; // tolerate pre-count history entries
+        const missingCount = historicalCount - (currentCounts.get(identityKey) || 0);
+        return missingCount > 0 ? { identityKey, ...entry, missingCount } : null;
+      })
+      .filter(Boolean);
     if (missing.length > 0) {
-      suggestions.push({
-        siteKeys: siteKeysByLoc[confirmedLoc], location: confirmedLoc,
-        missingItems: missing.map(([identityKey, entry]) => ({ identityKey, ...entry })),
-      });
+      suggestions.push({ siteKeys: siteKeysByLoc[confirmedLoc], location: confirmedLoc, missingItems: missing });
     }
   });
   // A whole location can be entirely absent from this import — e.g. this quarter's
@@ -2139,14 +2150,15 @@ function renderSmartImportPreview() {
   // current row for them at all), so they need a separate pass over the full
   // history to be offered — with no row from this import to copy shared fields
   // from, buildSuggestedRows rebuilds the whole row from the remembered snapshot
-  // and leaves date/time/value blank for the person to fill in themselves.
+  // and leaves date/time/value blank for the person to fill in themselves. Every
+  // historically-remembered occurrence (count) is offered, not just one.
   Object.entries(siteHistory).forEach(([histLoc, historyForLoc]) => {
     if (itemsByLoc[histLoc]) return; // already handled above — this location DID appear
     const historicalEntries = historyEntriesFor(historyForLoc);
     if (historicalEntries.length === 0) return;
     suggestions.push({
       siteKeys: [], location: histLoc, entirelyAbsent: true,
-      missingItems: historicalEntries.map(([identityKey, entry]) => ({ identityKey, ...entry })),
+      missingItems: historicalEntries.map(([identityKey, entry]) => ({ identityKey, ...entry, missingCount: entry.count || 1 })),
     });
   });
   state.missingItemSuggestions = suggestions;
@@ -2176,8 +2188,9 @@ function renderSmartImportPreview() {
                 <input type="checkbox" class="missing-item-group" data-group-idx="${i}" checked> ${escapeHtml(s.location)}${s.entirelyAbsent ? ' <span class="hint">（本次報告完全沒有這個測站，建議新增的資料日期需要您自行填寫）</span>' : ''}
               </label>
               <div style="margin-left:22px">
-                ${s.missingItems.map(({ identityKey, itemName, timeSegment, category, snapshot }) => {
+                ${s.missingItems.map(({ identityKey, itemName, timeSegment, category, snapshot, missingCount }) => {
                   const displayName = timeSegment ? `${itemName}（${timeSegment}）` : itemName;
+                  const countNote = missingCount > 1 ? `<strong>（缺 ${missingCount} 筆，例如平日／假日各一次，將新增 ${missingCount} 筆空白列）</strong>` : '';
                   const mem = itemMemoryForSuggestion[itemName];
                   const methodNote = snapshot?.[cat.methodField] || mem?.method;
                   const unitNote = snapshot?.[cat.unitField] || mem?.unitCode;
@@ -2185,7 +2198,7 @@ function renderSmartImportPreview() {
                   const memNote = memParts.length ? `（已記憶：${memParts.join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
                   return `<label style="display:block">
                     <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-identity-key="${escapeAttr(identityKey)}" checked>
-                    ${escapeHtml(displayName)} <span class="hint">${memNote}</span>
+                    ${escapeHtml(displayName)} ${countNote} <span class="hint">${memNote}</span>
                   </label>`;
                 }).join('')}
               </div>
@@ -2324,16 +2337,26 @@ function buildFieldSnapshot(row, cat) {
 
 function learnSiteItemHistory(projectId, catKey, cat, rows) {
   const locField = cat.locationField, itemField = cat.itemField;
-  const entries = rows
-    .filter(r => r[locField] && r[itemField])
-    .map(r => ({
-      location: r[locField],
-      identityKey: itemIdentityKey(r, cat),
-      itemName: r[itemField],
-      timeSegment: hasTimeSegmentField(cat) ? (r['監測時段'] || '') : '',
-      itemCategory: r['檢測類別'] || '',
-      snapshot: buildFieldSnapshot(r, cat),
-    }));
+  // Recompute from the FULL current DataStore contents for whichever locations were
+  // touched — not from `rows` directly — so a partial call (e.g. commit() passing
+  // just the one row that was edited, or coordinate-manager passing only the rows
+  // it changed) can't corrupt the remembered COUNT for a site that legitimately has
+  // multiple rows sharing the same item identity (e.g. 平日/假日 pairs both landing
+  // on "均能音量(Leq)::日間"). `rows` only tells us WHICH locations to re-learn;
+  // the actual counting always looks at everything currently in DataStore for
+  // those locations, which is the single source of truth.
+  const touchedLocations = new Set(rows.filter(r => r[locField]).map(r => r[locField]));
+  if (touchedLocations.size === 0) return;
+  const allRows = DataStore.getData(projectId, catKey);
+  const relevantRows = allRows.filter(r => touchedLocations.has(r[locField]) && r[itemField]);
+  const entries = relevantRows.map(r => ({
+    location: r[locField],
+    identityKey: itemIdentityKey(r, cat),
+    itemName: r[itemField],
+    timeSegment: hasTimeSegmentField(cat) ? (r['監測時段'] || '') : '',
+    itemCategory: r['檢測類別'] || '',
+    snapshot: buildFieldSnapshot(r, cat),
+  }));
   DataStore.learnSiteItemSnapshots(projectId, catKey, entries);
 }
 
@@ -2451,7 +2474,8 @@ function buildSuggestedRows(project, catKey, cat, result) {
     const identityKey = cb.dataset.identityKey;
     const missingEntry = suggestion.missingItems.find(m => m.identityKey === identityKey);
     if (!missingEntry) return;
-    const { itemName, timeSegment, category: historicalCategory, snapshot } = missingEntry;
+    const { itemName, timeSegment, category: historicalCategory, snapshot, missingCount } = missingEntry;
+    const copiesToAdd = missingCount || 1;
 
     // A location can span several raw "sites" (e.g. a noise sub-report and a
     // separate vibration sub-report at the same physical site) — gather rows from
@@ -2495,7 +2519,12 @@ function buildSuggestedRows(project, catKey, cat, result) {
       if (cat.methodField && !newRow[cat.methodField] && mem.method) newRow[cat.methodField] = mem.method;
       if (cat.unitField && !newRow[cat.unitField] && mem.unitCode) newRow[cat.unitField] = mem.unitCode;
     }
-    newRows.push(newRow);
+    // A site sampled both 平日 and 假日 in the same quarter legitimately has
+    // MULTIPLE rows sharing this exact identity (same item, same 監測時段,
+    // different sampling date) — add back however many were actually missing,
+    // not just one. Each copy is a fresh object (not the same reference) so later
+    // per-row edits don't accidentally affect siblings.
+    for (let i = 0; i < copiesToAdd; i++) newRows.push({ ...newRow });
   });
   return newRows;
 }

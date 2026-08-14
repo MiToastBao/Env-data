@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v3.8';
+const APP_VERSION = 'v3.9';
 
 const CHANGELOG = [
+  {
+    version: 'v3.9',
+    date: '2026-08-14',
+    notes: [
+      '修正噪音「平日／假日各測一次」時，跨季新增建議只會補回其中一天的問題：原本的記憶機制對每個「測項＋時段」識別鍵只能記住一筆快照，同一測站當季若有兩次採樣（如平日+假日），第二筆會直接覆蓋第一筆，導致下一季只被建議新增 1 筆而非 2 筆。現在改為記住「次數」，比對時也依次數計算缺少幾筆，正確建議並合成對應的筆數（例如「均能音量(Leq)（日間）缺 2 筆」會正確新增 2 筆空白列）',
+    ],
+  },
   {
     version: 'v3.8',
     date: '2026-08-14',

@@ -96,15 +96,25 @@ const DataStore = {
   /**
    * Records a full field snapshot for each (location, item-identity) pair — additive
    * and always overwritten with the most recent confirmed import, never removes.
-   * Stored as { location: { identityKey: { itemName, timeSegment, category, snapshot } } }
+   * Stored as { location: { identityKey: { itemName, timeSegment, category, snapshot, count } } }
    * where `snapshot` holds every OTHER field's value (座標/管制標準/檢測方法/單位/
    * 備註 etc — everything except the location/item identity fields and 日期/時間/
-   * 檢測數值). This is what lets the app rebuild a historically-known-but-currently-
-   * missing row with all its real detail intact — not just item name and category —
-   * when the person asks to add it back, leaving only date/time/value blank for
-   * them to fill in. `identityKey` folds in 監測時段 (day/evening/night) when the
-   * category has that field, so noise's three time-of-day rows per item don't
-   * collapse into one indistinguishable entry.
+   * 檢測數值), and `count` is how many rows shared that exact identity — e.g. a site
+   * sampled both 平日 and 假日 in the same quarter legitimately has TWO rows with
+   * the identical "音源發聲特性::監測時段" identity (same item, same time-of-day,
+   * different sampling date). Without tracking count, the second row learned would
+   * simply overwrite the first and the app would only ever remember/rebuild one of
+   * the two. `entries` should reflect the FULL current picture for each touched
+   * location (see learnSiteItemHistory in app.js, which re-derives this from
+   * complete DataStore data rather than whatever partial row list triggered the
+   * update) — that's what lets `count` be computed by just counting how many times
+   * an identityKey appears in `entries`, no separate bookkeeping needed.
+   * This is what lets the app rebuild a historically-known-but-currently-missing
+   * row (or set of rows) with all its real detail intact — not just item name and
+   * category — when the person asks to add it back, leaving only date/time/value
+   * blank for them to fill in. `identityKey` folds in 監測時段 (day/evening/night)
+   * when the category has that field, so noise's three time-of-day rows per item
+   * don't collapse into one indistinguishable entry.
    * Transparently discards the older, narrower history formats if found (both the
    * original { location: [itemName,...] } array and the interim
    * { location: { itemName: category } } object) — those didn't carry enough
@@ -113,14 +123,26 @@ const DataStore = {
    */
   learnSiteItemSnapshots(projectId, category, entries) {
     const history = this.getSiteItemHistory(projectId, category);
+    // Group first so repeated (location, identityKey) pairs within `entries`
+    // (the 平日/假日 case) accumulate into a count rather than the last one
+    // silently overwriting the rest.
+    const grouped = {}; // location -> identityKey -> { itemName, timeSegment, category, snapshot, count }
     entries.forEach(({ location, identityKey, itemName, timeSegment, itemCategory, snapshot }) => {
       if (!location || !identityKey) return;
+      if (!grouped[location]) grouped[location] = {};
+      if (!grouped[location][identityKey]) {
+        grouped[location][identityKey] = { itemName, timeSegment: timeSegment || '', category: itemCategory || '', snapshot, count: 0 };
+      }
+      grouped[location][identityKey].count += 1;
+      grouped[location][identityKey].snapshot = snapshot; // keep the most recently seen snapshot
+    });
+    Object.entries(grouped).forEach(([location, identities]) => {
       if (!history[location] || Array.isArray(history[location]) || typeof history[location] !== 'object') {
         history[location] = {};
       }
-      const existing = history[location][identityKey];
-      if (existing && typeof existing === 'string') delete history[location][identityKey]; // discard old narrow format entry
-      history[location][identityKey] = { itemName, timeSegment: timeSegment || '', category: itemCategory || '', snapshot };
+      Object.entries(identities).forEach(([identityKey, entry]) => {
+        history[location][identityKey] = entry;
+      });
     });
     this.saveSiteItemHistory(projectId, category, history);
   },
