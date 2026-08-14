@@ -131,6 +131,23 @@
   </div>
 </div>
 
+<!-- Import Conflict Resolution Modal -->
+<div id="conflictModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>⚠️ 偵測到資料內容有差異</h3>
+    <p class="hint">以下資料的日期／時間／地點／測項跟目前已有的資料相同，但內容不同——通常代表這是您手動修正過的完整版。請確認要保留哪個版本（勾選「套用新版本」會直接取代現有資料，不會產生重複列）：</p>
+    <div class="modal-actions" style="justify-content:flex-start;gap:10px;margin:0 0 10px 0;padding:0;border:none">
+      <button type="button" id="btnConflictUseAllNew" class="btn btn-ghost btn-sm">全部套用新版本</button>
+      <button type="button" id="btnConflictKeepAllOld" class="btn btn-ghost btn-sm">全部保留原有資料</button>
+    </div>
+    <div id="conflictListWrap" style="max-height:420px;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button id="btnConflictCancel" class="btn btn-ghost">取消整批匯入</button>
+      <button id="btnConflictConfirm" class="btn btn-primary">依上方選擇繼續匯入</button>
+    </div>
+  </div>
+</div>
+
 <!-- Export Selection Modal -->
 <div id="exportSelectModal" class="modal-overlay hidden">
   <div class="modal">

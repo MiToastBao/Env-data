@@ -76,6 +76,27 @@ function renderPeriodPicker(containerId, rows) {
 }
 
 // ---------- helpers ----------
+/** Lightweight, non-blocking notification — fades in, sits for a few seconds, fades
+ *  out. Used for reminders that matter but shouldn't force a click to dismiss every
+ *  single time (e.g. every export), unlike alert()/confirm(). */
+function showToast(message, durationMs = 7000) {
+  let container = document.getElementById('toastContainer');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toastContainer';
+    document.body.appendChild(container);
+  }
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.innerHTML = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('toast-visible'));
+  setTimeout(() => {
+    toast.classList.remove('toast-visible');
+    setTimeout(() => toast.remove(), 400);
+  }, durationMs);
+}
+
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -376,6 +397,7 @@ function renderCategoryTab(project, catKey) {
   document.getElementById('btnExportCat').addEventListener('click', () => {
     if (displayRows.length === 0) { alert('目前篩選範圍內沒有資料可匯出。'); return; }
     ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey, displayRows);
+    showToast('📥 已匯出。<strong>若之後修改這份檔案</strong>（手動補值、新增測項等），完成後可到本頁上方點原本的「📥 匯入資料」按鈕、選擇這份修改過的檔案<strong>重新匯入即可</strong>——系統會自動比對，內容相同的資料會忽略，內容不同的會列出讓您確認要不要用新版本取代，不會憑空覆蓋或造成重複。', 9000);
   });
   document.getElementById('btnClearCat').addEventListener('click', () => {
     if (allRows.length === 0) return;
@@ -1110,14 +1132,19 @@ function confirmExportSelect() {
   const periodSel = document.getElementById('exportSelectPeriod');
   const period = periodSel ? periodSel.value : '';
   const basicInfo = DataStore.getBasicInfo(project.id);
+  let exportedCount = 0;
   checked.forEach(catKey => {
     let rows = DataStore.getData(project.id, catKey);
     if (period === '__none__') rows = rows.filter(r => !r._period);
     else if (period) rows = rows.filter(r => r._period === period);
     if (rows.length === 0) return; // nothing for this category in the chosen period
     ExportEngine.downloadCategory(project, basicInfo, catKey, rows);
+    exportedCount++;
   });
   closeExportSelectModal();
+  if (exportedCount > 0) {
+    showToast('📥 已匯出。<strong>若之後修改這些檔案</strong>（手動補值、新增測項等），完成後可到各分類頁面上方點「📥 匯入資料」按鈕、選擇修改過的檔案<strong>重新匯入即可</strong>——系統會自動比對，內容相同的資料會忽略，內容不同的會列出讓您確認要不要用新版本取代，不會憑空覆蓋或造成重複。', 9000);
+  }
 }
 
 // ---------- project modal (create/edit) ----------
@@ -1685,35 +1712,93 @@ function learnSiteItemHistory(projectId, catKey, cat, rows) {
   DataStore.learnSiteItems(projectId, catKey, cat.locationField, cat.itemField, rows);
 }
 
-// A row counts as a duplicate of existing data when its date + time + location + item
-// all match exactly — e.g. re-importing the same report twice, or two files that
-// happen to cover an overlapping period for the same site.
-function findDuplicateIndices(existingRows, newRows, cat) {
+/**
+ * Compares candidate rows against what's already in this category, split into:
+ *  - brandNew: rows with no existing match at all — nothing to ask about
+ *  - conflicts: rows that match an existing row's date/time/location/item exactly,
+ *    but differ in some other field — this is the "you re-imported a corrected
+ *    version" case, and needs a decision (update vs keep existing), never a silent
+ *    guess either way
+ * Rows that match an existing row on EVERY field (true duplicates) are silently
+ * dropped — there's nothing to gain by asking about them.
+ */
+function analyzeImportAgainstExisting(existingRows, candidateRows, cat) {
   const locField = cat.locationField;
   const itemField = cat.itemField;
-  const existingKeys = new Set(existingRows.map(r =>
-    [r['日期(起)'], r['時間(起)'], r[locField], r[itemField]].join('\u0001')));
-  const dupIndices = [];
-  newRows.forEach((r, i) => {
-    const key = [r['日期(起)'], r['時間(起)'], r[locField], r[itemField]].join('\u0001');
-    if (existingKeys.has(key)) dupIndices.push(i);
+  const keyOf = (r) => [r['日期(起)'], r['時間(起)'], r[locField], r[itemField]].join('\u0001');
+  const identityKeys = new Set(['日期(起)', '時間(起)', locField, itemField]);
+
+  const existingByKey = new Map();
+  existingRows.forEach((r, idx) => { if (!existingByKey.has(keyOf(r))) existingByKey.set(keyOf(r), idx); });
+
+  const brandNew = [];
+  const conflicts = [];
+
+  candidateRows.forEach(candidate => {
+    const key = keyOf(candidate);
+    const existingIdx = existingByKey.get(key);
+    if (existingIdx === undefined) { brandNew.push(candidate); return; }
+    const existingRow = existingRows[existingIdx];
+    const diffFields = [];
+    cat.fields.forEach(f => {
+      if (identityKeys.has(f.key)) return;
+      const oldVal = existingRow[f.key] || '';
+      const newVal = candidate[f.key] || '';
+      if (oldVal !== newVal) diffFields.push({ key: f.key, label: f.label, oldVal, newVal });
+    });
+    if (diffFields.length === 0) return; // truly identical — silently skip, nothing to decide
+    conflicts.push({
+      existingIndex: existingIdx, candidateRow: candidate, diffFields,
+      location: candidate[locField], item: candidate[itemField], date: candidate['日期(起)'],
+    });
   });
-  return dupIndices;
+
+  return { brandNew, conflicts };
 }
-/** Returns the rows to actually import after checking for duplicates against what's
- *  already in this category, prompting the person if any are found. Returns null if
- *  the whole import should be aborted (not currently used, but keeps the door open). */
-function resolveDuplicatesForImport(project, catKey, cat, candidateRows) {
-  const existing = DataStore.getData(project.id, catKey);
-  const dupIndices = findDuplicateIndices(existing, candidateRows, cat);
-  if (dupIndices.length === 0) return candidateRows;
-  const dupSet = new Set(dupIndices);
-  const exclude = confirm(
-    `偵測到 ${dupIndices.length} 筆資料的採樣日期／時間／地點／測項都跟目前已有的資料完全相同，可能是重複匯入。\n\n` +
-    `按「確定」＝排除這些重複資料，只匯入其餘不重複的部分。\n` +
-    `按「取消」＝仍然全部匯入（含重複資料）。`
-  );
-  return exclude ? candidateRows.filter((_, i) => !dupSet.has(i)) : candidateRows;
+
+/** Shows the conflict list and waits for the person's per-row decision, then calls
+ *  onResolve({ useNew: Set<conflictIndex> }) — or doesn't call it at all if they
+ *  cancel the whole import. */
+function openConflictResolutionModal(conflicts, onResolve) {
+  const wrap = document.getElementById('conflictListWrap');
+  wrap.innerHTML = conflicts.map((c, i) => `
+    <div class="conflict-item">
+      <div class="conflict-item-header">
+        <label>
+          <input type="checkbox" class="conflict-use-new" data-idx="${i}" checked>
+          <span><strong>${escapeHtml(c.location)}</strong>／${escapeHtml(c.item)}／${escapeHtml(c.date)}：套用本次匯入的新版本（取消勾選＝保留原有資料，不更動）</span>
+        </label>
+      </div>
+      <table class="conflict-diff-table">
+        <thead><tr><th>欄位</th><th>原有資料</th><th>本次匯入</th></tr></thead>
+        <tbody>
+          ${c.diffFields.map(d => `<tr>
+            <td>${escapeHtml(d.label)}</td>
+            <td class="diff-old">${escapeHtml(d.oldVal || '（空白）')}</td>
+            <td class="diff-new">${escapeHtml(d.newVal || '（空白）')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
+
+  document.getElementById('btnConflictUseAllNew').onclick = () => {
+    wrap.querySelectorAll('.conflict-use-new').forEach(cb => { cb.checked = true; });
+  };
+  document.getElementById('btnConflictKeepAllOld').onclick = () => {
+    wrap.querySelectorAll('.conflict-use-new').forEach(cb => { cb.checked = false; });
+  };
+  document.getElementById('btnConflictCancel').onclick = () => {
+    document.getElementById('conflictModal').classList.add('hidden');
+  };
+  document.getElementById('btnConflictConfirm').onclick = () => {
+    const useNew = new Set();
+    wrap.querySelectorAll('.conflict-use-new:checked').forEach(cb => useNew.add(Number(cb.dataset.idx)));
+    document.getElementById('conflictModal').classList.add('hidden');
+    onResolve({ useNew });
+  };
+
+  document.getElementById('conflictModal').classList.remove('hidden');
 }
 
 /** Synthesizes blank rows for any "missing item" suggestions the person checked —
@@ -1743,6 +1828,72 @@ function buildSuggestedRows(project, catKey, cat, result) {
     newRows.push(newRow);
   });
   return newRows;
+}
+
+/**
+ * Commits a resolved import (after any conflict decisions are made): applies
+ * updates to matching existing rows in place, appends brand-new rows, tags
+ * everything with batch/period metadata, records history/memory, and finishes the
+ * modal/batch-queue flow. Shared by both the smart-parse and generic import paths.
+ *  - brandNewRows: rows with no existing match — appended as new rows
+ *  - updates: [{ existingIndex, newData }] — existing rows to overwrite in place
+ *  - assignBatchId(row): returns the batch id a given row belongs to
+ */
+function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assignBatchId, importMode) {
+  const periodLabel = (state.importPeriod || '').trim();
+  const cleanify = (r) => {
+    const out = { _batchId: assignBatchId(r), _period: periodLabel };
+    cat.fields.forEach(f => { out[f.key] = r[f.key] || ''; });
+    return out;
+  };
+
+  const existing = DataStore.getData(project.id, catKey);
+  const cleanNew = brandNewRows.map(cleanify);
+  const cleanUpdates = updates.map(u => ({ existingIndex: u.existingIndex, row: cleanify(u.newData) }));
+
+  cleanUpdates.forEach(u => { existing[u.existingIndex] = u.row; });
+  const merged = existing.concat(cleanNew);
+  DataStore.saveData(project.id, catKey, merged);
+
+  const allTouchedRows = cleanNew.concat(cleanUpdates.map(u => u.row));
+  learnItemMemoryFromRows(project.id, catKey, cat, allTouchedRows);
+  learnSiteItemHistory(project.id, catKey, cat, allTouchedRows);
+
+  // One import-history entry per batch id, so "刪除此批次" in the history list acts
+  // on exactly the rows this confirm action touched (new or updated).
+  const rowCountByBatchId = {};
+  const fileByBatchId = {};
+  allTouchedRows.forEach(r => {
+    rowCountByBatchId[r._batchId] = (rowCountByBatchId[r._batchId] || 0) + 1;
+    if (!fileByBatchId[r._batchId]) fileByBatchId[r._batchId] = state.currentImportSourceLabel || '（未知來源）';
+  });
+  Object.entries(rowCountByBatchId).forEach(([id, rowCount]) => {
+    DataStore.addImportBatch(project.id, catKey, {
+      id, timestamp: new Date().toISOString(), sourceLabel: fileByBatchId[id],
+      mode: importMode, rowCount, period: periodLabel,
+    });
+  });
+
+  const summary = [];
+  if (cleanNew.length) summary.push(`新增 ${cleanNew.length} 筆`);
+  if (cleanUpdates.length) summary.push(`更新 ${cleanUpdates.length} 筆既有資料`);
+
+  if (state.batchQueue && state.batchQueue.length > 0) {
+    state.batchQueue.shift();
+    renderContent();
+    if (state.batchQueue.length > 0) {
+      processNextBatchItem();
+    } else {
+      state.batchQueue = null;
+      document.getElementById('importModal').classList.add('hidden');
+      alert(`批次匯入完成，共匯入 ${state.batchQueueTotal} 個類別的資料，請至各分類頁面核對內容。`);
+    }
+    return;
+  }
+
+  closeImportModal();
+  renderContent();
+  alert(`已匯入「${cat.label}」：${summary.join('、') || '沒有變更'}。請於表格中核對內容是否正確，特別是尚未有測站設定的欄位。`);
 }
 
 function confirmSmartImport() {
@@ -1776,65 +1927,36 @@ function confirmSmartImport() {
   const suggestedRows = buildSuggestedRows(project, catKey, cat, result);
   selectedRows = selectedRows.concat(suggestedRows);
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
-  selectedRows = resolveDuplicatesForImport(project, catKey, cat, selectedRows);
-  if (selectedRows.length === 0) { alert('排除重複資料後已無資料可匯入。'); return; }
 
   // Tag rows with a batch id PER SOURCE FILE, not one shared id for the whole confirm
   // action — a multi-file import (e.g. three months' reports for the same site
   // selected together) must not let the "same file, same site" sync logic treat all
   // three months as one sampling event just because they were imported in one go.
   const batchIdByFile = {};
-  const getBatchIdFor = (sourceFile) => {
-    const key = sourceFile || '(單一檔案)';
+  const assignBatchId = (r) => {
+    const key = r._sourceFile || '(單一檔案)';
     if (!batchIdByFile[key]) batchIdByFile[key] = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     return batchIdByFile[key];
   };
 
-  // strip internal metadata fields before saving into the schema data (keep _batchId, _period)
-  const periodLabel = (state.importPeriod || '').trim();
-  const cleanRows = selectedRows.map(r => {
-    const out = { _batchId: getBatchIdFor(r._sourceFile), _period: periodLabel };
-    cat.fields.forEach(f => { out[f.key] = r[f.key] || ''; });
-    return out;
-  });
-
   const existing = DataStore.getData(project.id, catKey);
-  DataStore.saveData(project.id, catKey, existing.concat(cleanRows));
-  learnItemMemoryFromRows(project.id, catKey, cat, cleanRows);
-  learnSiteItemHistory(project.id, catKey, cat, cleanRows);
+  const { brandNew, conflicts } = analyzeImportAgainstExisting(existing, selectedRows, cat);
 
-  // One import-history entry per source file (matching the per-file batch id above),
-  // so "刪除此批次" in the history list correctly removes exactly one file's rows.
-  const rowCountByBatchId = {};
-  cleanRows.forEach(r => { rowCountByBatchId[r._batchId] = (rowCountByBatchId[r._batchId] || 0) + 1; });
-  const fileNameByBatchId = Object.fromEntries(Object.entries(batchIdByFile).map(([file, id]) => [id, file]));
-  Object.entries(rowCountByBatchId).forEach(([id, rowCount]) => {
-    DataStore.addImportBatch(project.id, catKey, {
-      id,
-      timestamp: new Date().toISOString(),
-      sourceLabel: fileNameByBatchId[id] || state.currentImportSourceLabel || '（未知來源）',
-      mode: 'smart',
-      rowCount,
-      period: periodLabel,
+  const proceed = (useNewSet) => {
+    const updates = [];
+    conflicts.forEach((c, i) => {
+      if (!useNewSet || useNewSet.has(i)) updates.push({ existingIndex: c.existingIndex, newData: c.candidateRow });
     });
-  });
+    if (brandNew.length === 0 && updates.length === 0) { alert('這批資料跟現有資料完全相同，或您選擇全部保留原有資料，沒有任何變更。'); return; }
+    finalizeImportCommit(project, catKey, cat, brandNew, updates, assignBatchId, 'smart');
+  };
 
-  if (state.batchQueue && state.batchQueue.length > 0) {
-    state.batchQueue.shift();
-    renderContent();
-    if (state.batchQueue.length > 0) {
-      processNextBatchItem();
-    } else {
-      state.batchQueue = null;
-      document.getElementById('importModal').classList.add('hidden');
-      alert(`批次匯入完成，共匯入 ${state.batchQueueTotal} 個類別的資料，請至各分類頁面核對內容。`);
-    }
-    return;
+  if (conflicts.length === 0) {
+    if (brandNew.length === 0) { alert('這批資料跟現有資料完全相同，沒有新增或需要處理的內容。'); return; }
+    proceed(null);
+  } else {
+    openConflictResolutionModal(conflicts, ({ useNew }) => proceed(useNew));
   }
-
-  closeImportModal();
-  renderContent();
-  alert(`已匯入 ${cleanRows.length} 筆資料到「${cat.label}」。請於表格中核對內容是否正確，特別是尚未有測站設定的欄位。`);
 }
 
 function confirmImport() {
@@ -1858,29 +1980,30 @@ function confirmImport() {
       if (cat.unitField && !row[cat.unitField] && mem.unitCode) row[cat.unitField] = mem.unitCode;
     });
   }
-  let selectedRows = filterRowsBySelection(newRows, cat.itemField);
+  const selectedRows = filterRowsBySelection(newRows, cat.itemField);
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
-  selectedRows = resolveDuplicatesForImport(project, catKey, cat, selectedRows);
-  if (selectedRows.length === 0) { alert('排除重複資料後已無資料可匯入。'); return; }
-  const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-  selectedRows.forEach(r => { r._batchId = batchId; r._period = (state.importPeriod || '').trim(); });
-  const existing = DataStore.getData(project.id, catKey);
-  const merged = existing.concat(selectedRows);
-  DataStore.saveData(project.id, catKey, merged);
-  learnItemMemoryFromRows(project.id, catKey, cat, selectedRows);
-  learnSiteItemHistory(project.id, catKey, cat, selectedRows);
-  DataStore.addImportBatch(project.id, catKey, {
-    id: batchId,
-    timestamp: new Date().toISOString(),
-    sourceLabel: state.currentImportSourceLabel || '（未知來源）',
-    mode: 'generic',
-    rowCount: selectedRows.length,
-    period: (state.importPeriod || '').trim(),
-  });
 
-  closeImportModal();
-  renderContent();
-  alert(`已匯入 ${selectedRows.length} 筆資料到「${cat.label}」。請於表格中核對內容是否正確。`);
+  const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+  const assignBatchId = () => batchId; // one file, one batch id — no per-file split needed here
+
+  const existing = DataStore.getData(project.id, catKey);
+  const { brandNew, conflicts } = analyzeImportAgainstExisting(existing, selectedRows, cat);
+
+  const proceed = (useNewSet) => {
+    const updates = [];
+    conflicts.forEach((c, i) => {
+      if (!useNewSet || useNewSet.has(i)) updates.push({ existingIndex: c.existingIndex, newData: c.candidateRow });
+    });
+    if (brandNew.length === 0 && updates.length === 0) { alert('這批資料跟現有資料完全相同，或您選擇全部保留原有資料，沒有任何變更。'); return; }
+    finalizeImportCommit(project, catKey, cat, brandNew, updates, assignBatchId, 'generic');
+  };
+
+  if (conflicts.length === 0) {
+    if (brandNew.length === 0) { alert('這批資料跟現有資料完全相同，沒有新增或需要處理的內容。'); return; }
+    proceed(null);
+  } else {
+    openConflictResolutionModal(conflicts, ({ useNew }) => proceed(useNew));
+  }
 }
 
 // ---------- backup export/import ----------
