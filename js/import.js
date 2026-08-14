@@ -52,6 +52,29 @@ const ImportEngine = {
     throw new Error('不支援的檔案格式，請上傳 .xlsx / .xls / .csv 或 .pdf');
   },
 
+  /** Converts a SheetJS-produced Date object (from cellDates:true + raw:true) into
+   *  a plain "YYYY-MM-DD" or "HH:MM:SS" string, whichever the cell actually holds.
+   *  A pure-time Excel cell still comes back as a Date object under cellDates — its
+   *  date portion is just Excel's epoch (1899/1904) and is meaningless, so a year at
+   *  or before 1900 signals "this is really a time value, read h/m/s instead". This
+   *  matters because relying on the cell's own display-formatted text (raw:false)
+   *  breaks on real-world date formats like the US-style "3/8/26" this app's own
+   *  normalizeDateString doesn't recognize — going through the actual Date object
+   *  sidesteps having to enumerate every possible format string.
+   */
+  _excelDateObjToString(d) {
+    const y = d.getUTCFullYear();
+    if (y <= 1900) {
+      const h = String(d.getUTCHours()).padStart(2, '0');
+      const mi = String(d.getUTCMinutes()).padStart(2, '0');
+      const s = String(d.getUTCSeconds()).padStart(2, '0');
+      return `${h}:${mi}:${s}`;
+    }
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  },
+
   async _readSheet(file) {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
@@ -59,9 +82,23 @@ const ImportEngine = {
     let best = null;
     for (const sheetName of wb.SheetNames) {
       const ws = wb.Sheets[sheetName];
-      const json = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
-      if (json.length > 0 && (!best || json.length > best.rows.length)) {
-        best = { sheetName, rows: json };
+      // Two passes: raw:false gives human-readable display text for ordinary cells
+      // (numbers with their formatting, plain text); raw:true is needed to get the
+      // actual Date object back for real date/time cells rather than a formatted
+      // string this app might not be able to parse (see _excelDateObjToString).
+      const jsonDisplay = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+      const jsonRaw = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+      if (jsonDisplay.length > 0 && (!best || jsonDisplay.length > best.rows.length)) {
+        const merged = jsonDisplay.map((displayRow, i) => {
+          const rawRow = jsonRaw[i] || {};
+          const out = {};
+          Object.keys(displayRow).forEach(key => {
+            const rawVal = rawRow[key];
+            out[key] = (rawVal instanceof Date) ? this._excelDateObjToString(rawVal) : displayRow[key];
+          });
+          return out;
+        });
+        best = { sheetName, rows: merged };
       }
     }
     if (!best) return { headers: [], rows: [], sheetNames: wb.SheetNames };

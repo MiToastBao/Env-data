@@ -14,6 +14,7 @@ const state = {
   periodFilter: {}, // { [catKey]: '115年第1季' | '' (全部) } — which period is being viewed/edited
   importPeriod: '', // the period label chosen for the batch currently being imported
   columnFilters: {}, // { [catKey]: { [fieldKey]: Set of allowed display values } } — Excel-style AutoFilter
+  columnSort: {}, // { [catKey]: { fieldKey, direction: 'asc'|'desc' } } — Excel-style column sort
 };
 
 // ---------- reporting period (年/季) ----------
@@ -32,11 +33,47 @@ function guessPeriodFromRows(rows) {
   const quarter = Math.ceil(parseInt(m[2], 10) / 3);
   return `${rocYear}年第${quarter}季`;
 }
+/** Parses the canonical "115年第1季" string into { rocYear, quarter }, or null. */
+function parsePeriodString(str) {
+  const m = String(str || '').match(/^(\d+)年第(\d)季$/);
+  return m ? { rocYear: m[1], quarter: m[2] } : null;
+}
+/** Accepts shorthand like "115Q1" / "115-Q1" / "115 Q1" and normalizes it to the
+ *  canonical "115年第1季" form; anything else (including already-canonical strings
+ *  or free text) passes through unchanged. */
+function normalizePeriodShorthand(str) {
+  const s = String(str || '').trim();
+  const m = s.match(/^(\d+)\s*-?\s*[Qq](\d)$/);
+  return m ? `${m[1]}年第${m[2]}季` : s;
+}
 function getKnownPeriods(project, catKey) {
   const rows = DataStore.getData(project.id, catKey);
   const periods = [...new Set(rows.map(r => r._period).filter(Boolean))];
   // sort roughly chronologically by the leading ROC year + quarter number embedded in the label
   return periods.sort();
+}
+
+/**
+ * Site aliases need a key that survives across quarters — the raw site "code" a
+ * report embeds includes the report's own sequence number (e.g. "13545N7-01" for
+ * one report vs "13545N8-01" for the very next one, same physical location), which
+ * breaks any memory keyed on it the moment a new report comes in — confirmed with
+ * real data: every quarter's remembered 管制區/環境音量標準/座標 etc. was silently
+ * lost because the lookup key itself changed. The location's own descriptive text
+ * (as printed in the report) is what's actually stable season to season.
+ *
+ * The key also folds in the row's actual 檢測類別 whenever the category has one
+ * (every category except 生態) — the most robust scoping, since one physical
+ * location can legitimately carry more than one classification within a single
+ * import (most obviously noise: a 環境噪音/道路交通噪音 sub-report and a separate
+ * 振動 sub-report share a location but need different 管制標準/環境音量標準
+ * remembered). Falls back to the bare location text when there's no category field
+ * to key on (生態) or no sample row to read one from.
+ */
+function siteAliasKey(site, result, cat) {
+  const sampleRow = result.rows[site.rowIndices[0]];
+  const category = (sampleRow && sampleRow['檢測類別']) || '';
+  return category ? `${site.rawLocation}::${category}` : (site.rawLocation || '');
 }
 
 /**
@@ -63,15 +100,78 @@ function renderPeriodPicker(containerId, rows) {
   const guess = guessPeriodFromRows(rows);
   if (!state.importPeriod) state.importPeriod = guess;
   const container = document.getElementById(containerId);
+
+  // Flag when the batch's sampling dates span more than one 年/季 — this usually
+  // means a report carries a few rows of older reference/historical data alongside
+  // this quarter's real submission (confirmed against a real ground-truth filing:
+  // a handful of rows from a prior year got silently excluded from the official
+  // submission). The system can't know WHICH rows belong in this filing, but it can
+  // reliably flag "these don't all agree on the same quarter" so the person notices
+  // and can exclude the odd ones out via the row-detail checklist.
+  const periodCounts = {};
+  rows.forEach(r => {
+    const p = guessPeriodFromRows([r]);
+    if (p) periodCounts[p] = (periodCounts[p] || 0) + 1;
+  });
+  const periodEntries = Object.entries(periodCounts).sort((a, b) => b[1] - a[1]);
+  const outlierWarning = periodEntries.length > 1
+    ? `⚠️ 偵測到本次資料的採樣日期橫跨不同期別：${periodEntries.map(([p, c]) => `${escapeHtml(p)}（${c}筆）`).join('、')}。如果其中有不屬於本次要送件季度的資料（例如報告裡夾帶的舊資料或參考值），建議到下方「詳細資料列表」展開後取消勾選排除，避免誤送。`
+    : '';
+
+  // Warn (not block) when the entered/guessed period already has data in this
+  // category — likely a corrected re-import of the same quarter's file. The actual
+  // per-row diff-and-choose-which-version handling already happens automatically
+  // via the conflict-resolution step after confirming, so this is just visibility:
+  // the person doesn't have to guess that re-importing will behave sensibly.
+  const project = getCurrentProject();
+  const catKey = state.importCatKey;
+  let duplicateWarning = '';
+  if (project && catKey && state.importPeriod && getKnownPeriods(project, catKey).includes(state.importPeriod)) {
+    duplicateWarning = `ℹ️ 「${escapeHtml(state.importPeriod)}」這個期別先前已經有資料了。若這是同一期的修正版，請放心繼續匯入——確認時系統會自動比對每一筆的差異，列出讓您選擇要保留哪個版本；若只是重複匯入同一份原始檔案，內容完全相同的部分會自動忽略，不會產生重複資料。`;
+  }
+
+  const parsed = parsePeriodString(normalizePeriodShorthand(state.importPeriod)) || {};
+
   container.innerHTML = `
     <label class="period-picker-label">
       本批資料屬於哪一期？
-      <input type="text" id="importPeriodInput" value="${escapeAttr(state.importPeriod)}" placeholder="例：115年第1季">
+      <input type="number" id="periodRocYearInput" min="1" max="200" placeholder="民國年" value="${escapeAttr(parsed.rocYear || '')}" style="width:64px">
+      年第
+      <select id="periodQuarterInput" style="width:56px">
+        <option value="">-</option>
+        ${[1, 2, 3, 4].map(q => `<option value="${q}" ${String(q) === parsed.quarter ? 'selected' : ''}>${q}</option>`).join('')}
+      </select>
+      季
     </label>
-    <span class="hint">${guess ? `系統依照資料中的採樣日期猜測為「${escapeHtml(guess)}」，如不正確請直接修改。` : '系統無法從資料中判斷期別，請手動輸入（例如 115年第1季），方便日後依季度查看與匯出。'}</span>
+    <label class="period-picker-label">
+      或直接輸入：
+      <input type="text" id="importPeriodInput" value="${escapeAttr(state.importPeriod)}" placeholder="例：115年第1季 或 115Q1" style="width:160px">
+    </label>
+    <span class="hint">${guess ? `系統依照資料中的採樣日期猜測為「${escapeHtml(guess)}」，如不正確請直接修改。` : '系統無法從資料中判斷期別，請填上方民國年+季別，或直接輸入文字（含 115Q1 這種簡寫）。'}</span>
+    ${outlierWarning ? `<div class="warning" style="width:100%;margin-top:8px">${outlierWarning}</div>` : ''}
+    ${duplicateWarning ? `<div class="warning" style="width:100%;margin-top:8px;background:#e8f0fe;border-color:#a8c7fa">${duplicateWarning}</div>` : ''}
   `;
-  document.getElementById('importPeriodInput').addEventListener('input', (e) => {
-    state.importPeriod = e.target.value;
+
+  const yearInput = document.getElementById('periodRocYearInput');
+  const quarterInput = document.getElementById('periodQuarterInput');
+  const textInput = document.getElementById('importPeriodInput');
+
+  const applyFromDropdown = () => {
+    if (yearInput.value && quarterInput.value) {
+      state.importPeriod = `${yearInput.value}年第${quarterInput.value}季`;
+      textInput.value = state.importPeriod;
+    }
+  };
+  yearInput.addEventListener('input', applyFromDropdown);
+  quarterInput.addEventListener('change', applyFromDropdown);
+
+  textInput.addEventListener('input', (e) => { state.importPeriod = e.target.value; });
+  textInput.addEventListener('blur', (e) => {
+    const normalized = normalizePeriodShorthand(e.target.value);
+    state.importPeriod = normalized;
+    e.target.value = normalized;
+    const p = parsePeriodString(normalized);
+    if (p) { yearInput.value = p.rocYear; quarterInput.value = p.quarter; }
   });
 }
 
@@ -95,6 +195,21 @@ function showToast(message, durationMs = 7000) {
     toast.classList.remove('toast-visible');
     setTimeout(() => toast.remove(), 400);
   }, durationMs);
+}
+
+/** Excel-style value comparison for column sort: numeric when both sides parse as
+ *  numbers, locale-aware text compare otherwise; blanks always sort to the end
+ *  regardless of direction (the caller's direction flip is applied on top of this,
+ *  so blanks-last needs to be encoded as a value that survives negation). */
+function compareForSort(a, b) {
+  const av = (a ?? '').toString().trim();
+  const bv = (b ?? '').toString().trim();
+  if (av === '' && bv === '') return 0;
+  if (av === '') return 1;
+  if (bv === '') return -1;
+  const an = Number(av), bn = Number(bv);
+  if (!isNaN(an) && !isNaN(bn)) return an - bn;
+  return av.localeCompare(bv, 'zh-Hant');
 }
 
 function escapeHtml(s) {
@@ -331,6 +446,16 @@ function renderCategoryTab(project, catKey) {
       if (activePeriod === '__none__') return !row._period;
       return row._period === activePeriod;
     });
+
+  // Excel-style column sort — reorders the array itself (not a DOM show/hide trick
+  // like search/column-filter use) since every row keeps carrying its ORIGINAL idx
+  // regardless of display order, so edits/deletes still land on the right record.
+  const sortState = state.columnSort[catKey];
+  if (sortState) {
+    const dir = sortState.direction === 'desc' ? -1 : 1;
+    displayEntries.sort((a, b) => dir * compareForSort(a.row[sortState.fieldKey], b.row[sortState.fieldKey]));
+  }
+
   const displayRows = displayEntries.map(e => e.row);
 
   body.innerHTML = `
@@ -368,8 +493,11 @@ function renderCategoryTab(project, catKey) {
           ${cat.fields.map(f => {
             const activeFilter = state.columnFilters[catKey]?.[f.key];
             const filterActive = activeFilter && activeFilter.size > 0;
+            const sortState = state.columnSort[catKey];
+            const isSorted = sortState && sortState.fieldKey === f.key;
+            const sortIcon = isSorted ? (sortState.direction === 'asc' ? ' ▲' : ' ▼') : '';
             return `<th${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>
-              <span class="th-label">${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}</span>
+              <span class="th-label th-sortable" data-sort-field="${escapeAttr(f.key)}" title="點擊依此欄位排序">${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}${sortIcon}</span>
               <button class="col-filter-btn${filterActive ? ' col-filter-active' : ''}" data-field-key="${escapeAttr(f.key)}" title="篩選「${escapeAttr(f.label)}」">▾</button>
             </th>`;
           }).join('')}
@@ -410,6 +538,21 @@ function renderCategoryTab(project, catKey) {
   wireGridEvents(project, catKey, cat);
   wireBulkSelection(project, catKey, cat);
   wireRowSearch(catKey, cat, displayRows.length, allRows.length, activePeriod);
+
+  document.querySelectorAll('.th-sortable').forEach(el => {
+    el.addEventListener('click', () => {
+      const fieldKey = el.dataset.sortField;
+      const current = state.columnSort[catKey];
+      if (!current || current.fieldKey !== fieldKey) {
+        state.columnSort[catKey] = { fieldKey, direction: 'asc' };
+      } else if (current.direction === 'asc') {
+        state.columnSort[catKey] = { fieldKey, direction: 'desc' };
+      } else {
+        delete state.columnSort[catKey];
+      }
+      renderContent();
+    });
+  });
 }
 
 // ---------- 表格篩選：文字搜尋 + Excel風格欄位篩選（皆為畫面篩選，不影響匯出範圍——匯出範圍由上方期別篩選決定） ----------
@@ -713,12 +856,29 @@ function wireGridEvents(project, catKey, cat) {
     DataStore.saveData(project.id, catKey, rows);
   };
 
+  // Whether row `r` belongs to the same "sampling event" as `source` for sync
+  // purposes: same import batch, same location, and — unless the field actually
+  // being synced IS the category itself — the same 檢測類別. A physical site can
+  // carry BOTH a 環境噪音/道路交通噪音 sub-report and a separate 振動 sub-report
+  // on the very same day; without the category check, correcting one's coordinate
+  // could silently blank out the other's Y value the moment only X had been typed
+  // in so far — this actually happened with real data, not just a theoretical risk.
+  const matchesSyncGroup = (source, r, { requireCategory = true, requireDate = true } = {}) => {
+    const locField = cat.locationField;
+    if (r._batchId !== source._batchId) return false;
+    if (r[locField] !== source[locField]) return false;
+    if (requireCategory && r['檢測類別'] !== source['檢測類別']) return false;
+    if (requireDate && r['日期(起)'] !== source['日期(起)']) return false;
+    return true;
+  };
+
   // If the person corrects a coordinate on one row, offer to sync all three
   // coordinate fields to every other row that (a) came from the same import batch,
-  // (b) shares the same sampling location, AND (c) shares the same sampling date —
-  // e.g. a site sampled in both April and May can genuinely have slightly different
-  // coordinates between visits, so syncing must never cross dates. Always asks first,
-  // same reasoning as the date/time sync below.
+  // (b) shares the same sampling location, (c) shares the same 檢測類別, AND
+  // (d) shares the same sampling date — e.g. a site sampled in both April and May
+  // can genuinely have slightly different coordinates between visits, so syncing
+  // must never cross dates. Always asks first, same reasoning as the date/time sync
+  // below.
   const offerCoordSync = (rowIdx) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
@@ -726,15 +886,14 @@ function wireGridEvents(project, catKey, cat) {
     if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
     const matches = rows
       .map((r, idx) => ({ r, idx }))
-      .filter(({ r, idx }) => idx !== rowIdx && r._batchId === source._batchId
-        && r[locField] === source[locField] && r['日期(起)'] === source['日期(起)']);
+      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r));
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => COORD_FIELDS.some(f => r[f] !== source[f]));
     if (!anyDiff) return false;
     const ok = confirm(
-      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
+      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
       `是否要將這些資料的座標一併同步更新為與這一筆相同？\n\n` +
-      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。不同採樣日期的資料不會被同步。）`
+      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。不同採樣日期或不同檢測類別的資料不會被同步。）`
     );
     if (!ok) return false;
     matches.forEach(({ r }) => { COORD_FIELDS.forEach(f => { r[f] = source[f]; }); });
@@ -743,13 +902,13 @@ function wireGridEvents(project, catKey, cat) {
   };
 
   // If the person corrects a date/time on one row, offer to sync all four date/time
-  // fields to every other row that (a) came from the same import batch and (b) shares
-  // the same sampling location — e.g. correcting one test item's date in a multi-item
-  // water report should usually update the whole site's rows from that report, since
-  // they're really one sampling event. This always asks first rather than silently
-  // overwriting, both to avoid surprising edits and because some browsers/devices
-  // don't reliably fire events for native time pickers, which made a silent version
-  // of this hard to trust.
+  // fields to every other row that (a) came from the same import batch, (b) shares
+  // the same sampling location, and (c) shares the same 檢測類別 — e.g. correcting
+  // one test item's date in a multi-item water report should usually update the
+  // whole site's rows from that report, since they're really one sampling event.
+  // This always asks first rather than silently overwriting, both to avoid
+  // surprising edits and because some browsers/devices don't reliably fire events
+  // for native time pickers, which made a silent version of this hard to trust.
   const DATE_TIME_FIELDS = ['日期(起)', '時間(起)', '日期(迄)', '時間(迄)'];
   const offerDateTimeSync = (rowIdx) => {
     const rows = DataStore.getData(project.id, catKey);
@@ -758,14 +917,14 @@ function wireGridEvents(project, catKey, cat) {
     if (!source || !source._batchId || !source[locField]) return false;
     const matches = rows
       .map((r, idx) => ({ r, idx }))
-      .filter(({ r, idx }) => idx !== rowIdx && r._batchId === source._batchId && r[locField] === source[locField]);
+      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r, { requireDate: false }));
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => DATE_TIME_FIELDS.some(f => r[f] !== source[f]));
     if (!anyDiff) return false;
     const ok = confirm(
-      `偵測到同一份檔案、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
+      `偵測到同一份檔案、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
       `是否要將這些資料的採樣日期／時間一併同步更新為與這一筆相同？\n\n` +
-      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
+      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。不同檢測類別的資料不會被同步。）`
     );
     if (!ok) return false;
     matches.forEach(({ r }) => { DATE_TIME_FIELDS.forEach(f => { r[f] = source[f]; }); });
@@ -776,7 +935,9 @@ function wireGridEvents(project, catKey, cat) {
   // 檢測類別 sync follows the same rule as coordinates (per the person's own
   // clarification): same batch (file) + same site + same sampling date. Unlike
   // date/time sync, this must NOT cross dates — a site's category classification for
-  // one visit shouldn't silently overwrite a different visit's classification.
+  // one visit shouldn't silently overwrite a different visit's classification. This
+  // is the one sync that can't require "same category" as a matching criterion,
+  // since 檢測類別 is the very field being synced.
   const offerCategorySync = (rowIdx) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
@@ -784,8 +945,7 @@ function wireGridEvents(project, catKey, cat) {
     if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
     const matches = rows
       .map((r, idx) => ({ r, idx }))
-      .filter(({ r, idx }) => idx !== rowIdx && r._batchId === source._batchId
-        && r[locField] === source[locField] && r['日期(起)'] === source['日期(起)']);
+      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r, { requireCategory: false }));
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => r['檢測類別'] !== source['檢測類別']);
     if (!anyDiff) return false;
@@ -801,7 +961,7 @@ function wireGridEvents(project, catKey, cat) {
   };
 
   // Generic sync for every OTHER field (管制標準、管制區、檢測方法、單位代碼、檢測
-  // 機構、備註等等) — same batch/site/date rule as the three specific sync helpers
+  // 機構、備註等等) — same batch/site/category/date rule as the coordinate sync
   // above. Deliberately excludes: the item field itself (each row IS a different
   // item, syncing it would be nonsensical), the location field (editing it would
   // break the very "same location" matching this relies on — see openCoordModal's
@@ -819,14 +979,13 @@ function wireGridEvents(project, catKey, cat) {
     if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
     const matches = rows
       .map((r, idx) => ({ r, idx }))
-      .filter(({ r, idx }) => idx !== rowIdx && r._batchId === source._batchId
-        && r[locField] === source[locField] && r['日期(起)'] === source['日期(起)']);
+      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r));
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => r[fieldKey] !== source[fieldKey]);
     if (!anyDiff) return false;
     const fieldLabel = (cat.fields.find(f => f.key === fieldKey) || {}).label || fieldKey;
     const ok = confirm(
-      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
+      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
       `是否要將這些資料的「${fieldLabel}」一併同步更新為「${source[fieldKey] || '（空白）'}」？\n\n` +
       `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
     );
@@ -1626,19 +1785,28 @@ function renderSmartImportPreview() {
 
   // Fill in method/unit from this project's remembered values (learned from past
   // confirmed imports, any season) wherever the report itself didn't supply one —
-  // done once per parsed result, not on every checklist toggle re-render.
+  // done once per parsed result, not on every checklist toggle re-render. When the
+  // report DOES supply a method but it differs from what's remembered, the report
+  // wins (it's authoritative for this quarter's actual lab work — e.g. dissolved
+  // oxygen legitimately measured by either 電極法/NIEA W455 or 碘定量法/NIEA W422
+  // depending on which the lab used that season), but it's flagged so the person
+  // can confirm it's an intentional change rather than a parsing fluke.
   if (!result._memoryApplied && (cat.methodField || cat.unitField)) {
     const memory = DataStore.getItemMemory(project.id, catKey);
+    const methodDiffsByItem = {};
     result.rows.forEach(row => {
       const mem = memory[row[cat.itemField]];
       if (!mem) return;
       if (cat.methodField && !row[cat.methodField] && mem.method) {
         row[cat.methodField] = mem.method; row._methodFromMemory = true;
+      } else if (cat.methodField && row[cat.methodField] && mem.method && row[cat.methodField] !== mem.method) {
+        methodDiffsByItem[row[cat.itemField]] = { reportMethod: row[cat.methodField], memoryMethod: mem.method };
       }
       if (cat.unitField && !row[cat.unitField] && mem.unitCode) {
         row[cat.unitField] = mem.unitCode; row._unitFromMemory = true;
       }
     });
+    result._methodDiffs = Object.entries(methodDiffsByItem).map(([item, d]) => ({ item, ...d }));
     result._memoryApplied = true;
   }
   if (!result._rowUidsAssigned) {
@@ -1702,6 +1870,19 @@ function renderSmartImportPreview() {
     }
   }
 
+  const existingMethodDiffNotice = document.getElementById('smartImportMethodDiffNotice');
+  if (existingMethodDiffNotice) existingMethodDiffNotice.remove();
+  if (result._methodDiffs && result._methodDiffs.length > 0) {
+    const notice = document.createElement('div');
+    notice.id = 'smartImportMethodDiffNotice';
+    notice.className = 'warning';
+    notice.style.background = '#e8f0fe';
+    notice.style.borderColor = '#a8c7fa';
+    notice.innerHTML = `ℹ️ 以下項目本次報告使用的檢測方法跟先前記錄不同，系統已依「本次報告」為準（例如溶氧的電極法 NIEA W455 與碘定量法 NIEA W422 都是合法方法，不同季節實驗室可能採用不同方法）。若並非實驗室刻意更換方法，請確認是否為判讀誤差：<br>` +
+      result._methodDiffs.map(d => `・${escapeHtml(d.item)}：本次「${escapeHtml(d.reportMethod)}」，先前記錄為「${escapeHtml(d.memoryMethod)}」`).join('<br>');
+    document.getElementById('smartImportItemsWrap').after(notice);
+  }
+
   const existingPdfWarning = document.getElementById('smartImportPdfWarning');
   if (existingPdfWarning) existingPdfWarning.remove();
   if (result.hasPdfSource) {
@@ -1746,7 +1927,7 @@ function renderSmartImportPreview() {
   const itemsByLoc = {}; // confirmedLoc -> Set(itemName)
   const siteKeysByLoc = {}; // confirmedLoc -> [siteKey, ...] (may span multiple raw sites)
   siteEntries.forEach(([key, site]) => {
-    const saved = savedAliases[key] || {};
+    const saved = savedAliases[siteAliasKey(site, result, cat)] || {};
     const confirmedLoc = saved[locField] || site.rawLocation;
     if (!itemsByLoc[confirmedLoc]) { itemsByLoc[confirmedLoc] = new Set(); siteKeysByLoc[confirmedLoc] = []; }
     site.rowIndices.forEach(i => itemsByLoc[confirmedLoc].add(result.rows[i][cat.itemField]));
@@ -1769,6 +1950,24 @@ function renderSmartImportPreview() {
       });
     }
   });
+  // A whole location can be entirely absent from this import — e.g. this quarter's
+  // report simply doesn't cover site A or B at all, even though they were sampled
+  // last quarter. Those locations never show up in itemsByLoc above (there's no
+  // current row for them at all), so they need a separate pass over the full
+  // history to be offered — with no row from this import to copy shared fields
+  // (date/coordinates/etc) from, buildSuggestedRows falls back to the remembered
+  // site profile and leaves the date blank for the person to fill in themselves.
+  Object.entries(siteHistory).forEach(([histLoc, historyForLoc]) => {
+    if (itemsByLoc[histLoc]) return; // already handled above — this location DID appear
+    const historicalEntries = Array.isArray(historyForLoc)
+      ? historyForLoc.map(item => [item, ''])
+      : Object.entries(historyForLoc);
+    if (historicalEntries.length === 0) return;
+    suggestions.push({
+      siteKeys: [], location: histLoc, entirelyAbsent: true,
+      missingItems: historicalEntries.map(([item, category]) => ({ item, category })),
+    });
+  });
   state.missingItemSuggestions = suggestions;
 
   if (suggestions.length === 0) {
@@ -1781,7 +1980,7 @@ function renderSmartImportPreview() {
           ${suggestions.map((s, i) => `
             <div style="margin-top:6px">
               <label style="font-weight:700">
-                <input type="checkbox" class="missing-item-group" data-group-idx="${i}" checked> ${escapeHtml(s.location)}
+                <input type="checkbox" class="missing-item-group" data-group-idx="${i}" checked> ${escapeHtml(s.location)}${s.entirelyAbsent ? ' <span class="hint">（本次報告完全沒有這個測站，建議新增的資料日期需要您自行填寫）</span>' : ''}
               </label>
               <div style="margin-left:22px">
                 ${s.missingItems.map(({ item, category }) => {
@@ -1817,7 +2016,7 @@ function renderSmartImportPreview() {
     </tr></thead>
     <tbody id="smartSitesBody">
       ${siteEntries.map(([key, site]) => {
-        const saved = savedAliases[key] || {};
+        const saved = savedAliases[siteAliasKey(site, result, cat)] || {};
         const firstRow = result.rows[site.rowIndices[0]] || {};
         const defaults = { [locField]: site.rawLocation, ...firstRow };
         return `<tr data-site-key="${escapeAttr(key)}">
@@ -1971,6 +2170,7 @@ function buildSuggestedRows(project, catKey, cat, result) {
   const checkedBoxes = [...document.querySelectorAll('.missing-item-single:checked')];
   if (checkedBoxes.length === 0) return [];
   const itemMemory = DataStore.getItemMemory(project.id, catKey);
+  const savedAliases = DataStore.getSiteAliases(project.id, catKey);
   const newRows = [];
   checkedBoxes.forEach(cb => {
     const suggestion = state.missingItemSuggestions?.[Number(cb.dataset.groupIdx)];
@@ -1989,10 +2189,24 @@ function buildSuggestedRows(project, catKey, cat, result) {
       const site = result.sites[sk];
       if (site) site.rowIndices.forEach(i => candidateRows.push(result.rows[i]));
     });
-    if (candidateRows.length === 0) return;
-    const template = candidateRows.find(r => !historicalCategory || r['檢測類別'] === historicalCategory) || candidateRows[0];
 
-    const newRow = { ...template };
+    let newRow;
+    if (candidateRows.length > 0) {
+      const template = candidateRows.find(r => !historicalCategory || r['檢測類別'] === historicalCategory) || candidateRows[0];
+      newRow = { ...template };
+    } else {
+      // Entirely-absent location (suggestion.entirelyAbsent): this quarter's report
+      // has no rows for this site at all, so there's nothing to copy shared fields
+      // from — build from scratch using whatever site profile was remembered, and
+      // leave date/time blank since there's no genuine reading to attribute a date
+      // to; the person fills that in themselves.
+      newRow = {};
+      cat.fields.forEach(f => { newRow[f.key] = ''; });
+      newRow[cat.locationField] = suggestion.location;
+      const aliasKeyGuess = historicalCategory ? `${suggestion.location}::${historicalCategory}` : suggestion.location;
+      const savedProfile = savedAliases[aliasKeyGuess] || {};
+      Object.entries(savedProfile).forEach(([k, v]) => { if (v) newRow[k] = v; });
+    }
     newRow[cat.itemField] = itemName;
     if (historicalCategory && '檢測類別' in newRow) newRow['檢測類別'] = historicalCategory;
     ['檢測數值', '監測數值', '比較關係', '檢測極限'].forEach(k => { if (k in newRow) newRow[k] = ''; });
@@ -2083,16 +2297,17 @@ function confirmSmartImport() {
   // collect edited values per site from the DOM
   document.querySelectorAll('#smartSitesBody tr').forEach(tr => {
     const siteKey = tr.dataset.siteKey;
+    const site = result.sites[siteKey];
     const overrides = {};
     tr.querySelectorAll('[data-site-field]').forEach(el => {
       overrides[el.dataset.siteField] = el.value;
     });
     const remember = tr.querySelector('[data-site-remember]').checked;
-    if (remember) savedAliases[siteKey] = overrides;
-    else delete savedAliases[siteKey];
+    const aliasKey = siteAliasKey(site, result, cat);
+    if (remember) savedAliases[aliasKey] = overrides;
+    else delete savedAliases[aliasKey];
 
     // apply overrides to every row belonging to this site
-    const site = result.sites[siteKey];
     site.rowIndices.forEach(idx => {
       Object.assign(result.rows[idx], overrides);
     });
