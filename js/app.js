@@ -1590,23 +1590,47 @@ function renderSmartImportPreview() {
 
   const locField = cat.locationField;
 
-  // Compare each site's items in THIS import against the project's site-item
-  // history (accumulated from every past confirmed import for this category) —
-  // if history has items this batch doesn't, offer to add them as blank rows
+  // Compare each LOCATION's items in THIS import against the project's site-item
+  // history (accumulated from every past confirmed import for this category) — if
+  // history has items this batch doesn't, offer to add them as blank rows
   // (method/unit pre-filled from item memory, value left for the person to type,
   // since the source is often a PDF this app can't extract numbers from at all).
+  //
+  // Grouped by CONFIRMED location name, not raw site key: a category like noise
+  // can have several distinct raw "sites" (e.g. a 環境噪音 report and a separate
+  // 振動 report) that all resolve to the same physical location once the person
+  // confirms the official site name — comparing history against just one of those
+  // site keys' items would wrongly "miss" every item that actually belongs to the
+  // other sub-report at the same location.
   const existingMissingWrap = document.getElementById('smartImportMissingItemsWrap');
   const siteHistory = DataStore.getSiteItemHistory(project.id, catKey);
   const itemMemoryForSuggestion = DataStore.getItemMemory(project.id, catKey);
-  const suggestions = [];
+
+  const itemsByLoc = {}; // confirmedLoc -> Set(itemName)
+  const siteKeysByLoc = {}; // confirmedLoc -> [siteKey, ...] (may span multiple raw sites)
   siteEntries.forEach(([key, site]) => {
     const saved = savedAliases[key] || {};
     const confirmedLoc = saved[locField] || site.rawLocation;
-    const historicalItems = siteHistory[confirmedLoc] || [];
-    if (historicalItems.length === 0) return;
-    const currentItems = new Set(site.rowIndices.map(i => result.rows[i][cat.itemField]));
-    const missing = historicalItems.filter(item => !currentItems.has(item));
-    if (missing.length > 0) suggestions.push({ siteKey: key, location: confirmedLoc, missingItems: missing });
+    if (!itemsByLoc[confirmedLoc]) { itemsByLoc[confirmedLoc] = new Set(); siteKeysByLoc[confirmedLoc] = []; }
+    site.rowIndices.forEach(i => itemsByLoc[confirmedLoc].add(result.rows[i][cat.itemField]));
+    siteKeysByLoc[confirmedLoc].push(key);
+  });
+
+  const suggestions = [];
+  Object.entries(itemsByLoc).forEach(([confirmedLoc, currentItemsSet]) => {
+    const historyForLoc = siteHistory[confirmedLoc];
+    if (!historyForLoc) return;
+    // tolerate the older array-only history format (no per-item category)
+    const historicalEntries = Array.isArray(historyForLoc)
+      ? historyForLoc.map(item => [item, ''])
+      : Object.entries(historyForLoc);
+    const missing = historicalEntries.filter(([item]) => !currentItemsSet.has(item));
+    if (missing.length > 0) {
+      suggestions.push({
+        siteKeys: siteKeysByLoc[confirmedLoc], location: confirmedLoc,
+        missingItems: missing.map(([item, category]) => ({ item, category })),
+      });
+    }
   });
   state.missingItemSuggestions = suggestions;
 
@@ -1615,7 +1639,7 @@ function renderSmartImportPreview() {
   } else {
     existingMissingWrap.innerHTML = `
       <div class="warning" style="background:#e8f0fe;border-color:#a8c7fa;">
-        📋 系統比對過去記錄，以下測站過去曾出現、但本次報告未出現的測項。若要一併新增（檢測方法／單位／項目名稱會依過去記錄先幫您填好，檢測數值請自行輸入），請勾選：
+        📋 系統比對過去記錄，以下測站過去曾出現、但本次報告未出現的測項。若要一併新增（檢測方法／單位／項目名稱及對應的檢測類別會依過去記錄先幫您填好，檢測數值請自行輸入），請勾選：
         <div id="missingItemsList" style="margin-top:8px">
           ${suggestions.map((s, i) => `
             <div style="margin-top:6px">
@@ -1623,9 +1647,10 @@ function renderSmartImportPreview() {
                 <input type="checkbox" class="missing-item-group" data-group-idx="${i}" checked> ${escapeHtml(s.location)}
               </label>
               <div style="margin-left:22px">
-                ${s.missingItems.map(item => {
+                ${s.missingItems.map(({ item, category }) => {
                   const mem = itemMemoryForSuggestion[item];
-                  const memNote = mem && (mem.method || mem.unitCode) ? `（已記憶：${[mem.method, mem.unitCode ? `單位代碼${mem.unitCode}` : ''].filter(Boolean).join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
+                  const memParts = [category ? `檢測類別：${category}` : '', mem?.method, mem?.unitCode ? `單位代碼${mem.unitCode}` : ''].filter(Boolean);
+                  const memNote = memParts.length ? `（已記憶：${memParts.join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
                   return `<label style="display:block">
                     <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-item="${escapeAttr(item)}" checked>
                     ${escapeHtml(item)} <span class="hint">${memNote}</span>
@@ -1709,7 +1734,7 @@ function learnItemMemoryFromRows(projectId, catKey, cat, rows) {
  *  lets a later import notice "上次這個測站還有 def 三項" even though this quarter's
  *  raw report only covers abc. Called after every successful import commit. */
 function learnSiteItemHistory(projectId, catKey, cat, rows) {
-  DataStore.learnSiteItems(projectId, catKey, cat.locationField, cat.itemField, rows);
+  DataStore.learnSiteItems(projectId, catKey, cat.locationField, cat.itemField, '檢測類別', rows);
 }
 
 /**
@@ -1813,12 +1838,26 @@ function buildSuggestedRows(project, catKey, cat, result) {
   checkedBoxes.forEach(cb => {
     const suggestion = state.missingItemSuggestions?.[Number(cb.dataset.groupIdx)];
     if (!suggestion) return;
-    const site = result.sites[suggestion.siteKey];
-    if (!site || site.rowIndices.length === 0) return;
-    const template = result.rows[site.rowIndices[0]]; // already has site overrides applied
     const itemName = cb.dataset.item;
+    const missingEntry = suggestion.missingItems.find(m => m.item === itemName);
+    const historicalCategory = missingEntry ? missingEntry.category : '';
+
+    // A location can span several raw "sites" (e.g. a noise sub-report and a
+    // separate vibration sub-report at the same physical site) — gather rows from
+    // ALL of them, then prefer one whose 檢測類別 already matches what history says
+    // this item belongs to, so shared fields like 管制標準/頻率範圍 come from the
+    // right kind of report rather than an arbitrary other category's row.
+    const candidateRows = [];
+    (suggestion.siteKeys || []).forEach(sk => {
+      const site = result.sites[sk];
+      if (site) site.rowIndices.forEach(i => candidateRows.push(result.rows[i]));
+    });
+    if (candidateRows.length === 0) return;
+    const template = candidateRows.find(r => !historicalCategory || r['檢測類別'] === historicalCategory) || candidateRows[0];
+
     const newRow = { ...template };
     newRow[cat.itemField] = itemName;
+    if (historicalCategory && '檢測類別' in newRow) newRow['檢測類別'] = historicalCategory;
     ['檢測數值', '監測數值', '比較關係', '檢測極限'].forEach(k => { if (k in newRow) newRow[k] = ''; });
     const mem = itemMemory[itemName];
     if (mem) {

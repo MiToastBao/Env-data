@@ -196,7 +196,7 @@ table.data-grid td.col-actions { text-align: center; }
 .btn-primary:hover { background: var(--primary-dark); }
 .btn-ghost { background: rgba(255,255,255,0.12); color: #fff; }
 .topbar .btn-ghost { background: rgba(255,255,255,0.14); }
-.content .btn-ghost, .modal .btn-ghost { background: #eef1f0; color: var(--text); }
+.content .btn-ghost, .modal .btn-ghost, .col-filter-popup .btn-ghost { background: #eef1f0; color: var(--text); }
 .btn-ghost:hover { filter: brightness(0.95); }
 .btn-danger { background: #fdecea; color: var(--danger); }
 .btn-sm { padding: 6px 10px; font-size: 12px; }

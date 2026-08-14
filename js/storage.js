@@ -85,15 +85,28 @@ const DataStore = {
   saveSiteItemHistory(projectId, category, history) {
     localStorage.setItem(this._siteItemHistoryKey(projectId, category), JSON.stringify(history));
   },
-  /** Adds (location, item) pairs to the history — additive/idempotent, never removes. */
-  learnSiteItems(projectId, category, locationField, itemField, rows) {
+  /** Adds (location, item) pairs to the history — additive/idempotent, never removes.
+   *  Also remembers which 檢測類別 each item was last seen with, per location — e.g.
+   *  a noise report site and a vibration report site can share the same location
+   *  name but need different 檢測類別 values, so when the app later suggests adding
+   *  a missing item back, it must know which category that specific item actually
+   *  belongs to rather than guessing from an arbitrary other row at that location.
+   *  Stored as { location: { itemName: lastSeenCategory } } — transparently upgrades
+   *  the older { location: [itemName, ...] } array format if found. */
+  learnSiteItems(projectId, category, locationField, itemField, categoryField, rows) {
     const history = this.getSiteItemHistory(projectId, category);
     rows.forEach(r => {
       const loc = r[locationField];
       const item = r[itemField];
       if (!loc || !item) return;
-      if (!history[loc]) history[loc] = [];
-      if (!history[loc].includes(item)) history[loc].push(item);
+      if (Array.isArray(history[loc])) {
+        const converted = {};
+        history[loc].forEach(it => { converted[it] = ''; });
+        history[loc] = converted;
+      }
+      if (!history[loc]) history[loc] = {};
+      const catVal = categoryField ? (r[categoryField] || '') : '';
+      if (catVal || !(item in history[loc])) history[loc][item] = catVal;
     });
     this.saveSiteItemHistory(projectId, category, history);
   },

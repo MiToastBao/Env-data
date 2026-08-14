@@ -3,9 +3,17 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v2.8';
+const APP_VERSION = 'v2.9';
 
 const CHANGELOG = [
+  {
+    version: 'v2.9',
+    date: '2026-08-13',
+    notes: [
+      '修正欄位篩選彈出視窗裡「全選」「清除」按鈕顏色跟背景同色看不到的問題（跟先前彈出視窗按鈕看不到是同一類問題，這次是新的篩選彈窗沒有套用到修正）',
+      '修正「跨季測項比對」的重大誤判：同一測站若橫跨多種檢測類別（例如噪音報告同時有「環境噪音」跟「振動」兩種子報告），系統先前會誤把不同類別的測項互相比對，導致重新匯入完整檔案時，憑空多出幾筆內容錯配（例如把振動的測項標成環境噪音、檢測數值空白）的資料列。現在改為依「正式地點名稱」正確合併同一測站的所有子報告後再比對，且會記住每個測項對應的正確檢測類別，建議新增時不會再錯配類別',
+    ],
+  },
   {
     version: 'v2.8',
     date: '2026-08-13',
