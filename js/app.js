@@ -581,7 +581,14 @@ function renderCategoryTab(project, catKey) {
             const filterActive = activeFilter && activeFilter.size > 0;
             const sortState = state.columnSort[catKey];
             const isSorted = sortState && sortState.fieldKey === f.key;
-            const sortIcon = isSorted ? (sortState.direction === 'asc' ? ' ▲' : ' ▼') : '';
+            // Always show SOME sort affordance next to the label — not just on hover
+            // (which is invisible on touch devices, and easy to miss even with a
+            // mouse if the person doesn't happen to hover before clicking). A
+            // neutral "⇅" hints "click to sort" for unsorted columns; an active
+            // sort shows its direction instead.
+            const sortIcon = isSorted
+              ? `<span class="sort-indicator sort-active">${sortState.direction === 'asc' ? '▲' : '▼'}</span>`
+              : `<span class="sort-indicator">⇅</span>`;
             return `<th${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>
               <span class="th-label th-sortable" data-sort-field="${escapeAttr(f.key)}" title="點擊依此欄位排序">${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}${sortIcon}</span>
               <button class="col-filter-btn${filterActive ? ' col-filter-active' : ''}" data-field-key="${escapeAttr(f.key)}" title="篩選「${escapeAttr(f.label)}」">▾</button>

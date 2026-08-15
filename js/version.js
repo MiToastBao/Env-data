@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.3';
+const APP_VERSION = 'v4.4';
 
 const CHANGELOG = [
+  {
+    version: 'v4.4',
+    date: '2026-08-15',
+    notes: [
+      '修正排序功能難以發現的問題：排序功能其實從 v3.1 就有了（點擊欄位標題文字即可排序），但原本只有滑鼠移到欄位標題上時才會顯示提示（底線），在觸控裝置上、或沒有特別移動滑鼠嘗試的情況下完全看不出來。現在每個可排序欄位標題旁邊會固定顯示一個小小的排序提示符號（⇅），排序中的欄位會改成顯示實心的方向箭頭（▲／▼），不再需要滑鼠懸停才能發現',
+    ],
+  },
   {
     version: 'v4.3',
     date: '2026-08-15',
