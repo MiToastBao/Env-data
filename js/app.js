@@ -15,6 +15,8 @@ const state = {
   importPeriod: '', // the period label chosen for the batch currently being imported
   columnFilters: {}, // { [catKey]: { [fieldKey]: Set of allowed display values } } — Excel-style AutoFilter
   columnSort: {}, // { [catKey]: { fieldKey, direction: 'asc'|'desc' } } — Excel-style column sort
+  undoStack: {}, // { [`${projectId}::${catKey}`]: [{ description, rows, batches }] } — in-memory only, cleared on page reload (matches typical app undo behavior; deliberately not persisted to localStorage)
+  redoStack: {}, // same shape — holds states undone away from, so they can be reapplied; cleared for a key whenever a fresh destructive action is pushed onto its undo stack (standard undo/redo semantics: a new change invalidates the old "future")
 };
 
 // ---------- reporting period (年/季) ----------
@@ -51,6 +53,67 @@ function getKnownPeriods(project, catKey) {
   const periods = [...new Set(rows.map(r => r._period).filter(Boolean))];
   // sort roughly chronologically by the leading ROC year + quarter number embedded in the label
   return periods.sort();
+}
+
+// ---------- undo/redo (in-memory, per project+category, not persisted to localStorage) ----------
+const UNDO_STACK_LIMIT = 10;
+function undoKey(projectId, catKey) { return `${projectId}::${catKey}`; }
+function deepCopy(v) { return JSON.parse(JSON.stringify(v)); }
+/** Snapshots the category's CURRENT full row list — and its import-batch history
+ *  list, since deleting a batch also removes its entry there — before a destructive
+ *  change, so both can be restored together and stay consistent. Call this right
+ *  before the change, not after. A fresh destructive action also clears any pending
+ *  redo history for this key — standard undo/redo semantics: once you make a new
+ *  change, the "future" that redo pointed to no longer makes sense to reapply. */
+function pushUndoSnapshot(projectId, catKey, description) {
+  const key = undoKey(projectId, catKey);
+  if (!state.undoStack[key]) state.undoStack[key] = [];
+  const rows = DataStore.getData(projectId, catKey);
+  const batches = DataStore.getImportBatches(projectId, catKey);
+  state.undoStack[key].push({ description, rows: deepCopy(rows), batches: deepCopy(batches) });
+  if (state.undoStack[key].length > UNDO_STACK_LIMIT) state.undoStack[key].shift();
+  state.redoStack[key] = [];
+}
+function peekUndo(projectId, catKey) {
+  const stack = state.undoStack[undoKey(projectId, catKey)];
+  return stack && stack.length > 0 ? stack[stack.length - 1] : null;
+}
+function peekRedo(projectId, catKey) {
+  const stack = state.redoStack[undoKey(projectId, catKey)];
+  return stack && stack.length > 0 ? stack[stack.length - 1] : null;
+}
+/** Undo: restores the state from BEFORE the most recent tracked action, and pushes
+ *  what was live just now onto the redo stack (tagged with the same description,
+ *  since redoing this entry means "reapply that same action") so it can be brought
+ *  back with redo. */
+function popUndoAndRestore(projectId, catKey) {
+  const key = undoKey(projectId, catKey);
+  const stack = state.undoStack[key];
+  if (!stack || stack.length === 0) return false;
+  const { description, rows: rowsBefore, batches: batchesBefore } = stack.pop();
+  const rowsNow = DataStore.getData(projectId, catKey);
+  const batchesNow = DataStore.getImportBatches(projectId, catKey);
+  if (!state.redoStack[key]) state.redoStack[key] = [];
+  state.redoStack[key].push({ description, rows: deepCopy(rowsNow), batches: deepCopy(batchesNow) });
+  DataStore.saveData(projectId, catKey, rowsBefore);
+  if (batchesBefore) DataStore.saveImportBatches(projectId, catKey, batchesBefore);
+  return true;
+}
+/** Redo: reapplies the most recently undone action, and pushes the state being
+ *  moved away from back onto the undo stack, so the redo itself can be undone
+ *  again if needed. */
+function popRedoAndRestore(projectId, catKey) {
+  const key = undoKey(projectId, catKey);
+  const stack = state.redoStack[key];
+  if (!stack || stack.length === 0) return false;
+  const { description, rows: rowsAfter, batches: batchesAfter } = stack.pop();
+  const rowsNow = DataStore.getData(projectId, catKey);
+  const batchesNow = DataStore.getImportBatches(projectId, catKey);
+  if (!state.undoStack[key]) state.undoStack[key] = [];
+  state.undoStack[key].push({ description, rows: deepCopy(rowsNow), batches: deepCopy(batchesNow) });
+  DataStore.saveData(projectId, catKey, rowsAfter);
+  if (batchesAfter) DataStore.saveImportBatches(projectId, catKey, batchesAfter);
+  return true;
 }
 
 /**
@@ -123,7 +186,7 @@ function renderPeriodPicker(containerId, rows) {
   // per-row diff-and-choose-which-version handling already happens automatically
   // via the conflict-resolution step after confirming, so this is just visibility:
   // the person doesn't have to guess that re-importing will behave sensibly.
-  const project = getCurrentProject();
+  const project = getImportProject();
   const catKey = state.importCatKey;
   let duplicateWarning = '';
   if (project && catKey && state.importPeriod && getKnownPeriods(project, catKey).includes(state.importPeriod)) {
@@ -282,6 +345,15 @@ function getCurrentProject() {
   return DataStore.getProjects().find(p => p.id === state.currentProjectId) || null;
 }
 
+/** The project a currently-open import is locked to (captured in openImportModal at
+ *  the moment the modal opened) — used by every import-flow function (preview
+ *  render, confirm, history learning) instead of a live getCurrentProject() lookup,
+ *  so switching projects in the sidebar while an import is still in progress can
+ *  never cause the parsed file to land in the wrong project. */
+function getImportProject() {
+  return DataStore.getProjects().find(p => p.id === state.importProjectId) || null;
+}
+
 // ---------- project list ----------
 function renderProjectList() {
   const list = document.getElementById('projectList');
@@ -312,6 +384,17 @@ function renderProjectList() {
 }
 
 function selectProject(id) {
+  // If an import is currently in progress (modal open), switching projects would
+  // either abandon that import or — without this guard — silently confuse the
+  // person about which project they're now looking at while data is still being
+  // prepared for the other one. Data safety itself no longer depends on this (see
+  // getImportProject), but switching mid-import is still almost certainly not what
+  // the person meant to do, so ask first rather than silently allowing it.
+  const importModal = document.getElementById('importModal');
+  if (importModal && !importModal.classList.contains('hidden') && state.importProjectId && state.importProjectId !== id) {
+    if (!confirm('目前正在匯入資料尚未完成，切換計畫會取消這次匯入。確定要放棄目前的匯入並切換嗎？')) return;
+    closeImportModal();
+  }
   state.currentProjectId = id;
   state.currentTab = 'basic';
   renderProjectList();
@@ -476,11 +559,14 @@ function renderCategoryTab(project, catKey) {
         <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除篩選</button>
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）${activePeriod ? '（僅目前篩選期別）' : ''}</button>
         <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別${activePeriod ? '（僅目前篩選期別）' : ''}</button>
+        ${(() => { const u = peekUndo(project.id, catKey); return u ? `<button class="btn btn-ghost btn-sm" id="btnUndo" title="復原：${escapeAttr(u.description)}">↩️ 復原上一步</button>` : ''; })()}
+        ${(() => { const r = peekRedo(project.id, catKey); return r ? `<button class="btn btn-ghost btn-sm" id="btnRedo" title="重做：${escapeAttr(r.description)}">↪️ 返回下一步</button>` : ''; })()}
       </div>
       <div class="row-count" id="rowCountDisplay">共 ${displayRows.length} 筆資料${activePeriod ? `（篩選中，全部共 ${allRows.length} 筆）` : ''}</div>
     </div>
     <div class="toolbar bulk-toolbar hidden" id="bulkToolbar">
       <span id="bulkSelCount">已選取 0 筆</span>
+      <button class="btn btn-primary btn-sm" id="btnBulkEdit">✏️ 批次修改欄位</button>
       <button class="btn btn-danger btn-sm" id="btnBulkDelete">🗑 刪除已選取</button>
       <button class="btn btn-ghost btn-sm" id="btnBulkClear">取消選取</button>
     </div>
@@ -533,15 +619,37 @@ function renderCategoryTab(project, catKey) {
       const periodLabel = activePeriod === '__none__' ? '未標示期別' : activePeriod;
       const rowsToKeep = allRows.filter(r => activePeriod === '__none__' ? !!r._period : r._period !== activePeriod);
       const removedCount = allRows.length - rowsToKeep.length;
-      if (!confirm(`確定要清空「${cat.label}」目前篩選的「${periodLabel}」共 ${removedCount} 筆資料嗎？其他期別的資料不會受影響。此操作無法復原。`)) return;
+      if (!confirm(`確定要清空「${cat.label}」目前篩選的「${periodLabel}」共 ${removedCount} 筆資料嗎？其他期別的資料不會受影響。（可用「↩️ 復原上一步」救回）`)) return;
+      pushUndoSnapshot(project.id, catKey, `清空「${periodLabel}」（${removedCount}筆）`);
       DataStore.saveData(project.id, catKey, rowsToKeep);
       state.periodFilter[catKey] = '';
     } else {
-      if (!confirm(`確定要清空「${cat.label}」的全部 ${allRows.length} 筆資料嗎？（含所有期別）此操作無法復原。`)) return;
+      if (!confirm(`確定要清空「${cat.label}」的全部 ${allRows.length} 筆資料嗎？（含所有期別，可用「↩️ 復原上一步」救回）`)) return;
+      pushUndoSnapshot(project.id, catKey, `清空全部（${allRows.length}筆）`);
       DataStore.clearData(project.id, catKey);
     }
     renderContent();
   });
+  const btnUndo = document.getElementById('btnUndo');
+  if (btnUndo) {
+    btnUndo.addEventListener('click', () => {
+      const snapshot = peekUndo(project.id, catKey);
+      if (!snapshot) return;
+      if (!confirm(`確定要復原「${snapshot.description}」嗎？`)) return;
+      popUndoAndRestore(project.id, catKey);
+      renderContent();
+    });
+  }
+  const btnRedo = document.getElementById('btnRedo');
+  if (btnRedo) {
+    btnRedo.addEventListener('click', () => {
+      const snapshot = peekRedo(project.id, catKey);
+      if (!snapshot) return;
+      if (!confirm(`確定要重做「${snapshot.description}」嗎？`)) return;
+      popRedoAndRestore(project.id, catKey);
+      renderContent();
+    });
+  }
 
   wireGridEvents(project, catKey, cat);
   wireBulkSelection(project, catKey, cat);
@@ -752,7 +860,8 @@ function wireBulkSelection(project, catKey, cat) {
     bulkDeleteBtn.addEventListener('click', () => {
       const indices = new Set(getChecked());
       if (indices.size === 0) return;
-      if (!confirm(`確定要刪除已選取的 ${indices.size} 筆資料嗎？此操作無法復原。`)) return;
+      if (!confirm(`確定要刪除已選取的 ${indices.size} 筆資料嗎？（可用「↩️ 復原上一步」救回）`)) return;
+      pushUndoSnapshot(project.id, catKey, `刪除已選取（${indices.size}筆）`);
       const rows = DataStore.getData(project.id, catKey).filter((_, i) => !indices.has(i));
       DataStore.saveData(project.id, catKey, rows);
       renderContent();
@@ -765,6 +874,66 @@ function wireBulkSelection(project, catKey, cat) {
       updateBulkUI();
     });
   }
+  const bulkEditBtn = document.getElementById('btnBulkEdit');
+  if (bulkEditBtn) {
+    bulkEditBtn.addEventListener('click', () => {
+      const indices = getChecked();
+      if (indices.length === 0) return;
+      openBatchEditModal(project, catKey, cat, indices);
+    });
+  }
+}
+
+/**
+ * Lets the person set ONE field to the same value across every currently-selected
+ * (checked + visible under the current search/filter) row at once — e.g. fixing a
+ * misspelled site name across many rows, or setting the same 檢測方法 for a batch
+ * of rows in one go, instead of editing each cell individually. Excludes the actual
+ * measurement value fields (檢測數值/監測數值) — those should always be typed per
+ * row, batch-setting them to one shared value is far more likely to be a mistake
+ * than something genuinely intended.
+ */
+function openBatchEditModal(project, catKey, cat, indices) {
+  const excludedFields = new Set(['檢測數值', '監測數值']);
+  const editableFields = cat.fields.filter(f => !excludedFields.has(f.key));
+
+  document.getElementById('batchEditSummary').textContent =
+    `即將修改已選取的 ${indices.length} 筆資料，其餘未選取的資料不受影響。`;
+
+  const fieldSelect = document.getElementById('batchEditFieldSelect');
+  fieldSelect.innerHTML = editableFields.map(f => `<option value="${escapeAttr(f.key)}">${escapeHtml(f.label)}</option>`).join('');
+
+  const renderValueInput = () => {
+    const field = editableFields.find(f => f.key === fieldSelect.value);
+    document.getElementById('batchEditValueWrap').innerHTML = fieldControlHTML(field, '', '');
+  };
+  renderValueInput();
+  fieldSelect.onchange = renderValueInput;
+
+  const modal = document.getElementById('batchEditModal');
+  modal.classList.remove('hidden');
+
+  document.getElementById('btnBatchEditCancel').onclick = () => modal.classList.add('hidden');
+  document.getElementById('btnBatchEditApply').onclick = () => {
+    const field = editableFields.find(f => f.key === fieldSelect.value);
+    const inputEl = document.querySelector('#batchEditValueWrap [data-field]');
+    let newValue = inputEl.value;
+    if (field.type === 'date') newValue = normalizeDateString(newValue);
+    if (field.type === 'time') newValue = normalizeTimeString(newValue);
+
+    if (!confirm(`確定要把已選取的 ${indices.length} 筆資料的「${field.label}」統一改成「${newValue || '（空白）'}」嗎？（可用「↩️ 復原上一步」救回）`)) return;
+
+    pushUndoSnapshot(project.id, catKey, `批次修改「${field.label}」（${indices.length}筆）`);
+    const rows = DataStore.getData(project.id, catKey);
+    const touchedRows = [];
+    indices.forEach(idx => {
+      if (rows[idx]) { rows[idx][field.key] = newValue; touchedRows.push(rows[idx]); }
+    });
+    DataStore.saveData(project.id, catKey, rows);
+    if (touchedRows.length > 0) learnSiteItemHistory(project.id, catKey, cat, touchedRows);
+    modal.classList.add('hidden');
+    renderContent();
+  };
 }
 
 // ---------- import batch history ----------
@@ -795,7 +964,8 @@ function openBatchHistoryModal(project, catKey) {
       btn.addEventListener('click', () => {
         const batchId = btn.dataset.batchId;
         const row = batches.find(b => b.id === batchId);
-        if (!confirm(`確定要刪除這批匯入資料嗎？（來源：${row.sourceLabel}，共 ${row.rowCount} 筆）此操作無法復原。`)) return;
+        if (!confirm(`確定要刪除這批匯入資料嗎？（來源：${row.sourceLabel}，共 ${row.rowCount} 筆，可到分類頁面用「↩️ 復原上一步」救回）`)) return;
+        pushUndoSnapshot(project.id, catKey, `刪除匯入批次「${row.sourceLabel}」（${row.rowCount}筆）`);
         DataStore.deleteImportBatch(project.id, catKey, batchId);
         openBatchHistoryModal(project, catKey); // refresh list in place
         renderContent();
@@ -1059,7 +1229,8 @@ function wireGridEvents(project, catKey, cat) {
   tbody.addEventListener('click', (e) => {
     const btn = e.target.closest('.row-del-btn');
     if (!btn) return;
-    if (!confirm('確定要刪除這一列資料嗎？')) return;
+    if (!confirm('確定要刪除這一列資料嗎？（可用「↩️ 復原上一步」救回）')) return;
+    pushUndoSnapshot(project.id, catKey, '刪除 1 筆資料');
     const rows = DataStore.getData(project.id, catKey);
     rows.splice(Number(btn.dataset.row), 1);
     DataStore.saveData(project.id, catKey, rows);
@@ -1403,6 +1574,11 @@ function saveProjectModal() {
 function deleteProjectFlow(project) {
   if (!confirm(`確定要刪除計畫「${project.code} ${project.name}」嗎？此操作將刪除該計畫所有已輸入的監測資料，且無法復原。`)) return;
   DataStore.deleteProject(project.id);
+  // Clear this project's undo/redo history too — it's keyed by projectId::catKey so
+  // stale entries here could never be mis-restored into a different project, but
+  // there's no reason to keep holding onto snapshots for data that no longer exists.
+  Object.keys(state.undoStack).forEach(k => { if (k.startsWith(`${project.id}::`)) delete state.undoStack[k]; });
+  Object.keys(state.redoStack).forEach(k => { if (k.startsWith(`${project.id}::`)) delete state.redoStack[k]; });
   if (state.currentProjectId === project.id) state.currentProjectId = null;
   renderProjectList();
   renderContent();
@@ -1740,6 +1916,11 @@ async function handleBatchFiles(fileList) {
 
   if (queue.length === 0) return;
 
+  // Lock the project for the whole batch, same reasoning as openImportModal — the
+  // entire multi-category queue must land in whichever project was active when the
+  // person picked these files, not wherever they happen to be looking by the time
+  // each category in the queue gets confirmed.
+  state.importProjectId = state.currentProjectId;
   state.batchQueue = queue;
   state.batchQueueTotal = queue.length;
   closeBatchImportModal();
@@ -1766,6 +1947,14 @@ function processNextBatchItem() {
 // ---------- import modal ----------
 function openImportModal(catKey) {
   state.importCatKey = catKey;
+  // Lock the project this import is for at the moment the modal opens — every
+  // subsequent step (preview render, confirm, history learning) uses THIS id, not
+  // a fresh getCurrentProject() lookup. Without this, switching projects in the
+  // sidebar while the import modal is still open (before confirming) would silently
+  // commit the parsed file into whichever project happens to be selected at confirm
+  // time — confirmed as a real, serious bug: project A's file ended up entirely
+  // inside project B's data, not just compared against the wrong history.
+  state.importProjectId = state.currentProjectId;
   state.importParsed = null;
   state.importMode = null;
   state.smartResult = null;
@@ -1875,6 +2064,7 @@ async function handleImportFile(fileOrFiles) {
 }
 
 function renderMappingStep() {
+  const project = getImportProject();
   const cat = CATEGORIES[state.importCatKey];
   const { headers, rows } = state.importParsed;
   const mapping = ImportEngine.suggestMapping(headers, cat.fields);
@@ -1918,6 +2108,30 @@ function renderMappingStep() {
       ? mappedRows.filter(r => state.itemSelection.has((r[cat.itemField] || '').trim() || '（未標示）'))
       : mappedRows;
     renderRowDetailTable(document.getElementById('genericImportRowDetailWrap'), itemFilteredRows, cat);
+
+    // Same method-diff notice as the smart-parse path: when the file explicitly
+    // supplies a method that differs from what's remembered for that item, trust
+    // the file (it's authoritative for this quarter's actual lab work), but flag it
+    // so the person can confirm it's an intentional change rather than a mapping
+    // mistake. This re-runs on every mapping change since which column feeds
+    // 檢測方法 can change what gets compared.
+    const noticeEl = document.getElementById('genericImportMethodDiffNotice');
+    if (cat.methodField && noticeEl) {
+      const memory = DataStore.getItemMemory(project.id, cat.key);
+      const diffsByItem = {};
+      mappedRows.forEach(row => {
+        const mem = memory[row[cat.itemField]];
+        if (mem && mem.method && row[cat.methodField] && row[cat.methodField] !== mem.method) {
+          diffsByItem[row[cat.itemField]] = { reportMethod: row[cat.methodField], memoryMethod: mem.method };
+        }
+      });
+      const diffs = Object.entries(diffsByItem).map(([item, d]) => ({ item, ...d }));
+      noticeEl.innerHTML = diffs.length === 0 ? '' : `
+        <div class="warning" style="background:#e8f0fe;border-color:#a8c7fa;">
+          ℹ️ 以下項目本次檔案的檢測方法跟先前記錄不同，系統已依「本次檔案」為準。若並非刻意更換方法，請確認是否為判讀誤差：<br>
+          ${diffs.map(d => `・${escapeHtml(d.item)}：本次「${escapeHtml(d.reportMethod)}」，先前記錄為「${escapeHtml(d.memoryMethod)}」`).join('<br>')}
+        </div>`;
+    }
   };
   refreshGenericItemChecklist();
   const itemSel = tbody.querySelector(`select[data-target-field="${cat.itemField}"]`);
@@ -1935,7 +2149,7 @@ function renderMappingStep() {
 
 // ---------- smart import (report-form parser) preview ----------
 function renderSmartImportPreview() {
-  const project = getCurrentProject();
+  const project = getImportProject();
   const catKey = state.importCatKey;
   const cat = CATEGORIES[catKey];
   const result = state.smartResult;
@@ -2182,10 +2396,19 @@ function renderSmartImportPreview() {
           <button type="button" id="btnMissingClearAllVisible" class="btn btn-ghost btn-sm">全不選（僅目前顯示的測站）</button>
         </div>
         <div id="missingItemsList" style="margin-top:8px">
-          ${suggestions.map((s, i) => `
-            <div class="missing-item-loc-group" data-search-text="${escapeAttr(s.location.toLowerCase())}" style="margin-top:6px">
+          ${suggestions.map((s, i) => {
+            // "Entirely absent" locations default to UNCHECKED — unlike "this site
+            // is still here but missing a few items" (safe, low-risk, same-site
+            // correction), a whole missing site more often means the person is
+            // importing an unrelated batch/project's data as "this quarter" and the
+            // old site genuinely doesn't belong there anymore. Bulk-importing every
+            // vanished site by default risked silently mixing unrelated data across
+            // batches; requiring an explicit opt-in here is the safer default.
+            const defaultChecked = !s.entirelyAbsent;
+            return `
+            <div class="missing-item-loc-group" data-search-text="${escapeAttr(s.location.toLowerCase())}" style="margin-top:6px${s.entirelyAbsent ? ';padding:6px 8px;background:#fff6e0;border-radius:6px' : ''}">
               <label style="font-weight:700">
-                <input type="checkbox" class="missing-item-group" data-group-idx="${i}" checked> ${escapeHtml(s.location)}${s.entirelyAbsent ? ' <span class="hint">（本次報告完全沒有這個測站，建議新增的資料日期需要您自行填寫）</span>' : ''}
+                <input type="checkbox" class="missing-item-group" data-group-idx="${i}" ${defaultChecked ? 'checked' : ''}> ${escapeHtml(s.location)}${s.entirelyAbsent ? ' <span class="hint">（本次報告完全沒有這個測站——若這是不同專案/不相關的批次資料，請保持不勾選；確定要帶回本測站的舊資料才勾選。建議新增的資料日期需要您自行填寫）</span>' : ''}
               </label>
               <div style="margin-left:22px">
                 ${s.missingItems.map(({ identityKey, itemName, timeSegment, category, snapshot, missingCount }) => {
@@ -2197,13 +2420,14 @@ function renderSmartImportPreview() {
                   const memParts = [category ? `檢測類別：${category}` : '', methodNote, unitNote ? `單位代碼${unitNote}` : ''].filter(Boolean);
                   const memNote = memParts.length ? `（已記憶：${memParts.join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
                   return `<label style="display:block">
-                    <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-identity-key="${escapeAttr(identityKey)}" checked>
+                    <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-identity-key="${escapeAttr(identityKey)}" ${defaultChecked ? 'checked' : ''}>
                     ${escapeHtml(displayName)} ${countNote} <span class="hint">${memNote}</span>
                   </label>`;
                 }).join('')}
               </div>
             </div>
-          `).join('')}
+          `;
+          }).join('')}
         </div>
       </div>
     `;
@@ -2596,7 +2820,7 @@ function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assig
 }
 
 function confirmSmartImport() {
-  const project = getCurrentProject();
+  const project = getImportProject();
   const catKey = state.importCatKey;
   const cat = CATEGORIES[catKey];
   const result = state.smartResult;
@@ -2662,7 +2886,7 @@ function confirmSmartImport() {
 function confirmImport() {
   if (state.importMode === 'smart') { confirmSmartImport(); return; }
 
-  const project = getCurrentProject();
+  const project = getImportProject();
   const catKey = state.importCatKey;
   const cat = CATEGORIES[catKey];
   const mapping = {};
