@@ -673,7 +673,7 @@ function renderCategoryTab(project, catKey) {
       } else {
         delete state.columnSort[catKey];
       }
-      renderContent();
+      renderContentPreservingScroll();
     });
   });
 }
@@ -821,7 +821,7 @@ function openColumnFilterPopup(catKey, fieldKey, btnEl) {
       state.columnFilters[catKey][fieldKey] = new Set(checked);
     }
     popup.classList.add('hidden');
-    renderContent();
+    renderContentPreservingScroll();
   });
 
   setTimeout(() => {

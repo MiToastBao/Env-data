@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.4';
+const APP_VERSION = 'v4.5';
 
 const CHANGELOG = [
+  {
+    version: 'v4.5',
+    date: '2026-08-15',
+    notes: [
+      '修正欄位篩選、排序完成後，表格會跳回最左邊欄位的問題：這兩個操作原本重新繪製整個表格時沒有保留原本的水平捲動位置，現在都會正確保留操作前的捲動位置，不會再跳動',
+    ],
+  },
   {
     version: 'v4.4',
     date: '2026-08-15',
