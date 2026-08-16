@@ -275,6 +275,58 @@ function compareForSort(a, b) {
   return av.localeCompare(bv, 'zh-Hant');
 }
 
+/** Normalizes a location name for "are these the same site, just typed
+ *  differently" comparison: strips all whitespace (incl. full-width), and
+ *  collapses full-width/half-width variants of parentheses/dashes/commas to one
+ *  form. Two names that are identical after this but NOT identical as typed are
+ *  almost certainly the same physical site with a formatting difference — the
+ *  exact class of mismatch that broke cross-season memory in earlier testing
+ *  (地點名稱不完全一致 due to full/half-width punctuation or stray spaces). */
+function normalizeLocationForFuzzyMatch(s) {
+  return String(s || '')
+    .replace(/[\s\u3000]/g, '')
+    .replace(/[（(]/g, '(').replace(/[）)]/g, ')')
+    .replace(/[－—–ー-]/g, '-')
+    .replace(/[，,]/g, ',')
+    .toLowerCase();
+}
+function levenshteinDistance(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+/** Looks for a historically-known location name that's a near-miss for `rawLoc` —
+ *  not an exact match (nothing to flag there), but close enough that it's probably
+ *  the same site typed slightly differently rather than a genuinely new site.
+ *  Two tiers: (1) identical once whitespace/punctuation differences are normalized
+ *  away — very high confidence, this is almost certainly the same site; (2) a
+ *  small edit distance relative to length — catches likely single-character typos,
+ *  lower confidence but still worth flagging. Returns null if rawLoc already
+ *  exactly matches a known location (nothing to ask about) or nothing is close. */
+function findSimilarHistoricalLocation(rawLoc, historicalLocs) {
+  if (!rawLoc || !historicalLocs || historicalLocs.length === 0) return null;
+  if (historicalLocs.includes(rawLoc)) return null;
+  const normRaw = normalizeLocationForFuzzyMatch(rawLoc);
+  const normMatch = historicalLocs.find(h => normalizeLocationForFuzzyMatch(h) === normRaw);
+  if (normMatch) return { match: normMatch, confidence: 'high' };
+  let best = null, bestDist = Infinity;
+  historicalLocs.forEach(h => {
+    const dist = levenshteinDistance(rawLoc, h);
+    const threshold = Math.max(1, Math.floor(Math.max(rawLoc.length, h.length) * 0.2));
+    if (dist <= threshold && dist < bestDist) { best = h; bestDist = dist; }
+  });
+  return best ? { match: best, confidence: 'low' } : null;
+}
+
 function escapeHtml(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -358,6 +410,7 @@ function getImportProject() {
 function renderProjectList() {
   const list = document.getElementById('projectList');
   const projects = DataStore.getProjects();
+  renderBackupReminder();
   if (projects.length === 0) {
     list.innerHTML = '<li class="hint" style="padding:10px">尚無計畫，請點上方「＋ 新增計畫」建立</li>';
     return;
@@ -2326,11 +2379,41 @@ function renderSmartImportPreview() {
   const siteHistory = DataStore.getSiteItemHistory(project.id, catKey);
   const itemMemoryForSuggestion = DataStore.getItemMemory(project.id, catKey);
 
+  // Fuzzy location-name matching against history — catches the case where this
+  // season's raw location text differs from a historically-known location only by
+  // punctuation/whitespace/full-width-vs-half-width or a likely typo, which would
+  // otherwise silently look like "this site vanished" + "a brand new site appeared"
+  // instead of being recognized as the same physical site (a class of bug found
+  // and fixed several times over the course of this project). Asked once per
+  // parsed result (result._fuzzyLocationChecked), not on every checklist re-render,
+  // and skipped for any site that already has a confirmed saved alias (nothing
+  // ambiguous left to ask about there).
+  if (!result._fuzzyLocationChecked) {
+    const historicalLocs = Object.keys(siteHistory);
+    const overrides = {};
+    siteEntries.forEach(([key, site]) => {
+      if (!site.rawLocation) return;
+      const saved = savedAliases[siteAliasKey(site, result, cat)] || {};
+      if (saved[locField]) return;
+      const found = findSimilarHistoricalLocation(site.rawLocation, historicalLocs);
+      if (!found) return;
+      const useHistorical = confirm(
+        `本次報告的測站「${site.rawLocation}」，跟歷史記錄裡的「${found.match}」名稱很相似（可能是標點符號、空格不同，或打字有誤）。\n\n` +
+        `是否要視為同一個測站，改用歷史記錄的名稱「${found.match}」？（選「確定」才能正確沿用這個測站上一季的座標、管制標準等記憶內容）\n\n` +
+        `若這其實是不同的測站，請選「取消」，維持原名稱「${site.rawLocation}」另建監測地點。`
+      );
+      if (useHistorical) overrides[key] = found.match;
+    });
+    result._fuzzyLocationOverrides = overrides;
+    result._fuzzyLocationChecked = true;
+  }
+  const fuzzyLocationOverrides = result._fuzzyLocationOverrides || {};
+
   const itemsByLoc = {}; // confirmedLoc -> Map(identityKey -> count)
   const siteKeysByLoc = {}; // confirmedLoc -> [siteKey, ...] (may span multiple raw sites)
   siteEntries.forEach(([key, site]) => {
     const saved = savedAliases[siteAliasKey(site, result, cat)] || {};
-    const confirmedLoc = saved[locField] || site.rawLocation;
+    const confirmedLoc = saved[locField] || fuzzyLocationOverrides[key] || site.rawLocation;
     if (!itemsByLoc[confirmedLoc]) { itemsByLoc[confirmedLoc] = new Map(); siteKeysByLoc[confirmedLoc] = []; }
     site.rowIndices.forEach(i => {
       const idKey = itemIdentityKey(result.rows[i], cat);
@@ -2481,6 +2564,7 @@ function renderSmartImportPreview() {
         const saved = savedAliases[siteAliasKey(site, result, cat)] || {};
         const firstRow = result.rows[site.rowIndices[0]] || {};
         const defaults = { [locField]: site.rawLocation, ...firstRow };
+        if (fuzzyLocationOverrides[key]) defaults[locField] = fuzzyLocationOverrides[key];
         return `<tr data-site-key="${escapeAttr(key)}">
           <td>${escapeHtml(site.siteCode || site.rawLocation || key)}${site.siteCode && site.rawLocation ? `<br><span class="hint">${escapeHtml(site.rawLocation)}</span>` : ''}</td>
           ${profileFields.map(f => {
@@ -2953,6 +3037,32 @@ function confirmImport() {
 }
 
 // ---------- backup export/import ----------
+const BACKUP_REMINDER_THRESHOLD_DAYS = 14;
+function renderBackupReminder() {
+  const banner = document.getElementById('backupReminderBanner');
+  if (!banner) return;
+  const projects = DataStore.getProjects();
+  if (projects.length === 0) { banner.innerHTML = ''; return; }
+  const lastBackupAt = localStorage.getItem('envapp_lastBackupAt');
+  const daysSince = lastBackupAt ? Math.floor((Date.now() - Number(lastBackupAt)) / 86400000) : null;
+  if (daysSince !== null && daysSince < BACKUP_REMINDER_THRESHOLD_DAYS) { banner.innerHTML = ''; return; }
+  // All data lives only in this browser's local storage — no server-side copy at
+  // all — so clearing browser data, switching devices, or an incognito session can
+  // permanently lose already-confirmed filing data. This is unrelated to the
+  // cross-season comparison/memory feature (that's just a convenience — losing it
+  // just means re-typing some fields by hand, nothing is actually destroyed); this
+  // reminder is specifically about protecting the real submission data itself.
+  const message = daysSince === null
+    ? '尚未備份過'
+    : `距離上次備份已 ${daysSince} 天`;
+  banner.innerHTML = `
+    <div class="warning" style="margin-top:10px;font-size:12px;line-height:1.6">
+      💾 ${message}。所有資料只存在這個瀏覽器裡，沒有任何伺服器備份，清除瀏覽器資料或換裝置都會導致資料完全遺失，建議定期備份。
+      <button class="btn btn-primary btn-sm" id="btnBackupReminderExport" style="margin-top:6px;width:100%">立即備份匯出</button>
+    </div>
+  `;
+  document.getElementById('btnBackupReminderExport').addEventListener('click', backupExport);
+}
 function backupExport() {
   const data = DataStore.exportAll();
   if (data.projects.length === 0) { alert('目前尚無任何計畫資料可匯出。'); return; }
@@ -2964,6 +3074,8 @@ function backupExport() {
   a.download = `環評監測資料備份_${ts}.json`;
   a.click();
   URL.revokeObjectURL(url);
+  localStorage.setItem('envapp_lastBackupAt', String(Date.now()));
+  renderBackupReminder();
 }
 
 async function backupImport(file) {
