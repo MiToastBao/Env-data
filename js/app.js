@@ -1556,10 +1556,85 @@ function openAgencyRefModal() {
   document.getElementById('agencyRefModal').classList.remove('hidden');
 }
 
-// ---------- EIAS (環評線上申報) website link — editable in case the URL changes ----------
+// ---------- site-wide shared config — plain TEXT files in clearly-named folders,
+// no JSON/code syntax to get right, safe for a non-programmer to hand-edit in
+// Notepad ----------
+// A static site has no shared write-storage: nothing typed into this app itself can
+// ever reach OTHER people's browsers, since each browser only has its own local
+// storage. The only way an update can reach "everyone who opens this URL" is for it
+// to be part of the deployed static files themselves — same mechanism as any other
+// update to this app. These two folders exist specifically so that updating the
+// shared EIAS link or the template list doesn't require touching app.js OR
+// understanding any file-format syntax: 網址.txt is nothing but the URL itself on
+// one line; 範本清單.txt is one "顯示名稱|檔案名稱" line per template. Replace the
+// text, redeploy, and every visitor gets the update automatically the next time
+// they load the page — with no in-app "anyone can upload something that spreads to
+// other people" feature at all, since that upload path is exactly what would let a
+// malicious file or link reach strangers. Updates only flow through whoever already
+// has push access to the repo — the same trust boundary this app's own updates
+// have always relied on.
+const EIAS_URL_FOLDER = '更新網址的話丟到本資料夾';
+const TEMPLATE_FOLDER = '更新範本的話請將檔案丟到本資料夾';
+function eiasUrlFileUrl() { return `${encodeURIComponent(EIAS_URL_FOLDER)}/${encodeURIComponent('網址.txt')}`; }
+function templateListFileUrl() { return `${encodeURIComponent(TEMPLATE_FOLDER)}/${encodeURIComponent('範本清單.txt')}`; }
+function templateFileUrl(filename) { return `${encodeURIComponent(TEMPLATE_FOLDER)}/${encodeURIComponent(filename)}`; }
+
+let siteConfig = { eiasUrl: null, templates: [] };
+
+/** Parses "顯示名稱|檔案名稱" lines, one per template — far more forgiving to
+ *  hand-edit in Notepad than JSON (no commas/brackets/quotes to get exactly right).
+ *  Lines starting with # are treated as comments (used for the in-file instructions
+ *  shipped in 範本清單.txt) and blank lines are ignored. Strips a UTF-8 BOM in case
+ *  Notepad added one when saving. */
+function parseTemplateListText(text) {
+  return String(text || '')
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+    .map(line => {
+      const idx = line.indexOf('|');
+      if (idx === -1) return null;
+      const label = line.slice(0, idx).trim();
+      const file = line.slice(idx + 1).trim();
+      return (label && file) ? { label, file } : null;
+    })
+    .filter(Boolean);
+}
+
+async function loadSiteConfig() {
+  try {
+    const resp = await fetch(eiasUrlFileUrl());
+    if (resp.ok) {
+      const text = (await resp.text()).replace(/^\uFEFF/, '').trim();
+      if (/^https?:\/\/.+/i.test(text)) siteConfig.eiasUrl = text;
+    }
+  } catch (e) {
+    // Opened via file:// (double-clicked instead of served over http), offline, or
+    // the file is missing — fall back to the hardcoded default rather than
+    // breaking the page.
+    console.warn('無法載入共用的申報網站網址設定，改用內建預設值。', e);
+  }
+  try {
+    const resp = await fetch(templateListFileUrl());
+    if (resp.ok) siteConfig.templates = parseTemplateListText(await resp.text());
+  } catch (e) {
+    console.warn('無法載入範本清單，範本下載功能將暫不顯示。', e);
+  }
+  renderEiasLink();
+  renderTemplateDownloadButton();
+}
+
+// ---------- EIAS (環評線上申報) website link ----------
+// Two layers: the SHARED default comes from 網址.txt (see above) — the same for
+// everyone who opens this site. A person can additionally set a PERSONAL override
+// in their own browser (localStorage) if, for whatever reason, they want their own
+// browser to point somewhere different without needing repo access — but that
+// override only ever affects their own browser, never anyone else's.
 const EIAS_DEFAULT_URL = 'https://eias.moenv.gov.tw/';
+function getSharedEiasUrl() { return siteConfig.eiasUrl || EIAS_DEFAULT_URL; }
 function getEiasUrl() {
-  return localStorage.getItem('envapp_eiasUrl') || EIAS_DEFAULT_URL;
+  return localStorage.getItem('envapp_eiasUrl') || getSharedEiasUrl();
 }
 function renderEiasLink() {
   const link = document.getElementById('btnEiasLink');
@@ -1578,6 +1653,53 @@ function saveEiasLinkEdit() {
   localStorage.setItem('envapp_eiasUrl', raw);
   renderEiasLink();
   document.getElementById('eiasLinkEditModal').classList.add('hidden');
+}
+
+// ---------- template downloads (blank filing templates, listed in 範本清單.txt) ----------
+// The toolbar always has exactly ONE "📥 範本下載" button regardless of how many
+// templates exist — adding, removing, or renaming templates only ever changes what
+// shows up INSIDE this one modal (via 範本清單.txt), never adds more toolbar
+// clutter. Each template gets its own individual download link so picking a single
+// category never means downloading all of them.
+function renderTemplateDownloadButton() {
+  const btn = document.getElementById('btnTemplateDownload');
+  if (btn) btn.style.display = siteConfig.templates.length > 0 ? '' : 'none';
+}
+function markTemplateFileMissing(idx, filename) {
+  const li = document.querySelector(`.template-download-item[data-idx="${idx}"]`);
+  if (!li) return;
+  li.classList.add('template-missing');
+  const note = document.createElement('div');
+  note.className = 'hint template-missing-note';
+  note.textContent = `⚠️ 在資料夾裡找不到「${filename}」這個檔案，請確認檔案已放進「${TEMPLATE_FOLDER}」資料夾，且檔名跟範本清單.txt裡寫的完全一致（含副檔名）。`;
+  li.appendChild(note);
+}
+function openTemplateDownloadModal() {
+  const body = document.getElementById('templateDownloadBody');
+  if (siteConfig.templates.length === 0) {
+    body.innerHTML = '<li class="hint">目前沒有可下載的範本。</li>';
+    document.getElementById('templateDownloadModal').classList.remove('hidden');
+    return;
+  }
+  body.innerHTML = siteConfig.templates.map((t, i) => `
+    <li class="template-download-item" data-idx="${i}">
+      <span>${escapeHtml(t.label)}</span>
+      <a class="btn btn-primary btn-sm" href="${templateFileUrl(t.file)}" download="${escapeAttr(t.file)}">⬇️ 下載</a>
+    </li>
+  `).join('');
+  document.getElementById('templateDownloadModal').classList.remove('hidden');
+
+  // Quietly verify each file actually exists (a HEAD request, not a real download)
+  // so a typo in 範本清單.txt or a forgotten file shows up as a visible warning
+  // right where the person would notice it, instead of a silently broken link.
+  siteConfig.templates.forEach(async (t, i) => {
+    try {
+      const resp = await fetch(templateFileUrl(t.file), { method: 'HEAD' });
+      if (!resp.ok) markTemplateFileMissing(i, t.file);
+    } catch (e) {
+      markTemplateFileMissing(i, t.file);
+    }
+  });
 }
 
 // ---------- export selection (choose which categories to include) ----------
@@ -3171,12 +3293,23 @@ function init() {
   document.getElementById('agencyRefSearch').addEventListener('input', (e) => renderAgencyRefTable(e.target.value));
 
   renderEiasLink();
+  loadSiteConfig(); // async — re-renders link/template button once config.json loads
   document.getElementById('btnEiasLinkEdit').addEventListener('click', openEiasLinkEditModal);
   document.getElementById('btnEiasLinkCancel').addEventListener('click', () => document.getElementById('eiasLinkEditModal').classList.add('hidden'));
   document.getElementById('btnEiasLinkSave').addEventListener('click', saveEiasLinkEdit);
   document.getElementById('btnEiasLinkReset').addEventListener('click', () => {
-    document.getElementById('eiasLinkInput').value = EIAS_DEFAULT_URL;
+    // "Reset" clears the PERSONAL override and returns to the shared config.json
+    // value — not a hardcoded constant — so if the site owner already updated the
+    // shared link, resetting correctly lands on that, not on a stale built-in URL.
+    // Takes effect immediately (not just in the input box) so no leftover personal
+    // override lingers in localStorage if the person doesn't also click Save.
+    localStorage.removeItem('envapp_eiasUrl');
+    document.getElementById('eiasLinkInput').value = getSharedEiasUrl();
+    renderEiasLink();
   });
+
+  document.getElementById('btnTemplateDownload').addEventListener('click', openTemplateDownloadModal);
+  document.getElementById('btnTemplateDownloadClose').addEventListener('click', () => document.getElementById('templateDownloadModal').classList.add('hidden'));
 
   document.getElementById('batchFileInput').addEventListener('change', (e) => handleBatchFiles(e.target.files));
   document.getElementById('btnBatchCancel').addEventListener('click', closeBatchImportModal);

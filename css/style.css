@@ -281,3 +281,11 @@ table.conflict-diff-table td.diff-new { color: var(--primary-dark); font-weight:
 }
 .toast strong { color: #a8e0c4; }
 .toast.toast-visible { opacity: 1; transform: translateY(0); }
+
+.template-download-list { list-style: none; padding: 0; margin: 10px 0; }
+.template-download-item {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; font-size: 13.5px;
+}
+.template-download-item.template-missing { flex-wrap: wrap; border-color: var(--danger); background: #fdf1ef; }
+.template-missing-note { width: 100%; margin-top: 6px; color: var(--danger); }

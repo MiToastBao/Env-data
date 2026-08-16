@@ -14,6 +14,7 @@
   <header class="topbar">
     <div class="brand">📋 環評監測資料填報小工具 <span class="version-badge" id="versionBadge" title="點擊查看版本紀錄"></span></div>
     <div class="topbar-actions">
+      <button id="btnTemplateDownload" class="btn btn-ghost" title="下載空白填寫範本" style="display:none">📥 範本下載</button>
       <button id="btnUnitCodeRef" class="btn btn-ghost" title="查詢單位代碼表">📖 單位代碼表</button>
       <button id="btnAgencyCodeRef" class="btn btn-ghost" title="查詢檢測機構代碼表">🏢 檢測機構代碼表</button>
       <a id="btnEiasLink" class="btn btn-ghost" href="https://eias.moenv.gov.tw/" target="_blank" rel="noopener" title="開啟環評線上申報網站（另開新分頁）">🔗 環評申報網站</a>
@@ -257,19 +258,31 @@
   </div>
 </div>
 
+<!-- Template Download Modal -->
+<div id="templateDownloadModal" class="modal-overlay hidden">
+  <div class="modal">
+    <h3>📥 範本下載</h3>
+    <p class="hint">下載空白填寫範本，適合沒有原始檢測報告、需要手動整理資料的情況；也可以用來對照系統匯出格式是否一致。這份清單由網站管理者統一維護，所有使用者看到的內容都相同。</p>
+    <ul id="templateDownloadBody" class="template-download-list"></ul>
+    <div class="modal-actions">
+      <button id="btnTemplateDownloadClose" class="btn btn-primary">關閉</button>
+    </div>
+  </div>
+</div>
+
 <!-- EIAS Link Edit Modal -->
 <div id="eiasLinkEditModal" class="modal-overlay hidden">
   <div class="modal">
     <h3>修改環評申報網站連結</h3>
-    <p class="hint">若環境部的申報網站網址未來變動，可在此手動修正，之後上方「環評申報網站」按鈕會改用新的網址。</p>
+    <p class="hint">⚠️ 這裡的修改只會影響「您自己這個瀏覽器」，不會讓其他使用者也看到更新（本系統是純靜態網站，沒有共用的伺服器儲存空間）。若要讓所有使用者都看到新網址，需要請網站管理者把新網址存進「更新網址的話丟到本資料夾／網址.txt」這個檔案並重新部署——那樣的更新才會讓每個人打開網站時都自動看到最新版本。</p>
     <label style="display:flex;flex-direction:column;gap:5px;margin:10px 0;font-size:13px;font-weight:600;">
-      網址
+      網址（僅供您個人使用）
       <input type="text" id="eiasLinkInput" placeholder="https://eias.moenv.gov.tw/" style="padding:9px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
     </label>
     <div class="modal-actions">
-      <button id="btnEiasLinkReset" class="btn btn-ghost" title="恢復成系統預設網址">恢復預設</button>
+      <button id="btnEiasLinkReset" class="btn btn-ghost" title="恢復成網站目前的共用設定">恢復預設</button>
       <button id="btnEiasLinkCancel" class="btn btn-ghost">取消</button>
-      <button id="btnEiasLinkSave" class="btn btn-primary">儲存</button>
+      <button id="btnEiasLinkSave" class="btn btn-primary">儲存（僅此瀏覽器）</button>
     </div>
   </div>
 </div>
