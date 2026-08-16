@@ -15,6 +15,9 @@
     <div class="brand">📋 環評監測資料填報小工具 <span class="version-badge" id="versionBadge" title="點擊查看版本紀錄"></span></div>
     <div class="topbar-actions">
       <button id="btnUnitCodeRef" class="btn btn-ghost" title="查詢單位代碼表">📖 單位代碼表</button>
+      <button id="btnAgencyCodeRef" class="btn btn-ghost" title="查詢檢測機構代碼表">🏢 檢測機構代碼表</button>
+      <a id="btnEiasLink" class="btn btn-ghost" href="https://eias.moenv.gov.tw/" target="_blank" rel="noopener" title="開啟環評線上申報網站（另開新分頁）">🔗 環評申報網站</a>
+      <button id="btnEiasLinkEdit" class="btn btn-ghost btn-sm" title="若網站網址未來變動，可在此手動修正">✏️</button>
       <button id="btnBackupExport" class="btn btn-ghost" title="將所有計畫資料匯出成一個備份檔（JSON），可用於換瀏覽器或分享">匯出備份</button>
       <button id="btnBackupImport" class="btn btn-ghost" title="匯入先前匯出的備份檔">匯入備份</button>
       <input type="file" id="backupFileInput" accept=".json" style="display:none">
@@ -232,6 +235,41 @@
     </div>
     <div class="modal-actions">
       <button id="btnUnitRefClose" class="btn btn-primary">關閉</button>
+    </div>
+  </div>
+</div>
+
+<!-- Agency Code Reference Modal -->
+<div id="agencyRefModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>檢測機構代碼表</h3>
+    <p class="hint">輸入代碼或機構名稱關鍵字即可搜尋，用於核對「檢測機構許可證號」欄位。</p>
+    <input type="text" id="agencyRefSearch" placeholder="搜尋代碼或機構名稱，例如 36 或 華光" style="width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;margin-bottom:10px;">
+    <div class="mapping-table-wrap" style="max-height:60vh">
+      <table class="mapping-table">
+        <thead><tr><th style="width:80px">代碼</th><th>檢測機構</th></tr></thead>
+        <tbody id="agencyRefBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-actions">
+      <button id="btnAgencyRefClose" class="btn btn-primary">關閉</button>
+    </div>
+  </div>
+</div>
+
+<!-- EIAS Link Edit Modal -->
+<div id="eiasLinkEditModal" class="modal-overlay hidden">
+  <div class="modal">
+    <h3>修改環評申報網站連結</h3>
+    <p class="hint">若環境部的申報網站網址未來變動，可在此手動修正，之後上方「環評申報網站」按鈕會改用新的網址。</p>
+    <label style="display:flex;flex-direction:column;gap:5px;margin:10px 0;font-size:13px;font-weight:600;">
+      網址
+      <input type="text" id="eiasLinkInput" placeholder="https://eias.moenv.gov.tw/" style="padding:9px 10px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
+    </label>
+    <div class="modal-actions">
+      <button id="btnEiasLinkReset" class="btn btn-ghost" title="恢復成系統預設網址">恢復預設</button>
+      <button id="btnEiasLinkCancel" class="btn btn-ghost">取消</button>
+      <button id="btnEiasLinkSave" class="btn btn-primary">儲存</button>
     </div>
   </div>
 </div>

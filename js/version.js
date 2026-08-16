@@ -3,9 +3,17 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.6';
+const APP_VERSION = 'v4.7';
 
 const CHANGELOG = [
+  {
+    version: 'v4.7',
+    date: '2026-08-15',
+    notes: [
+      '新增「檢測機構代碼表」（頁面上方按鈕），跟既有的單位代碼表一樣可以輸入代碼或機構名稱關鍵字搜尋，共 104 筆機構資料',
+      '新增「環評申報網站」連結（頁面上方按鈕），點擊可直接開新分頁前往 https://eias.moenv.gov.tw/；旁邊的 ✏️ 按鈕可手動修改網址，若環境部未來調整申報網站網址，不需要更新整個系統，直接在畫面上修改即可，修改後的網址會保留在瀏覽器裡',
+    ],
+  },
   {
     version: 'v4.6',
     date: '2026-08-15',

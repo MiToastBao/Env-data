@@ -1540,6 +1540,46 @@ function openUnitRefModal() {
   document.getElementById('unitRefModal').classList.remove('hidden');
 }
 
+function renderAgencyRefTable(filterText) {
+  const body = document.getElementById('agencyRefBody');
+  const q = (filterText || '').trim().toLowerCase();
+  const entries = Object.entries(AGENCY_CODES).filter(([code, name]) =>
+    !q || code.toLowerCase().includes(q) || String(name).toLowerCase().includes(q)
+  );
+  body.innerHTML = entries.length
+    ? entries.map(([code, name]) => `<tr><td>${escapeHtml(code)}</td><td>${escapeHtml(name)}</td></tr>`).join('')
+    : '<tr><td colspan="2" class="hint">找不到符合的檢測機構</td></tr>';
+}
+function openAgencyRefModal() {
+  document.getElementById('agencyRefSearch').value = '';
+  renderAgencyRefTable('');
+  document.getElementById('agencyRefModal').classList.remove('hidden');
+}
+
+// ---------- EIAS (環評線上申報) website link — editable in case the URL changes ----------
+const EIAS_DEFAULT_URL = 'https://eias.moenv.gov.tw/';
+function getEiasUrl() {
+  return localStorage.getItem('envapp_eiasUrl') || EIAS_DEFAULT_URL;
+}
+function renderEiasLink() {
+  const link = document.getElementById('btnEiasLink');
+  if (link) link.href = getEiasUrl();
+}
+function openEiasLinkEditModal() {
+  document.getElementById('eiasLinkInput').value = getEiasUrl();
+  document.getElementById('eiasLinkEditModal').classList.remove('hidden');
+}
+function saveEiasLinkEdit() {
+  const raw = document.getElementById('eiasLinkInput').value.trim();
+  if (!/^https?:\/\/.+/i.test(raw)) {
+    alert('請輸入完整的網址，需以 http:// 或 https:// 開頭。');
+    return;
+  }
+  localStorage.setItem('envapp_eiasUrl', raw);
+  renderEiasLink();
+  document.getElementById('eiasLinkEditModal').classList.add('hidden');
+}
+
 // ---------- export selection (choose which categories to include) ----------
 function openExportSelectModal(project) {
   const list = document.getElementById('exportSelectList');
@@ -3125,6 +3165,18 @@ function init() {
   document.getElementById('btnUnitCodeRef').addEventListener('click', openUnitRefModal);
   document.getElementById('btnUnitRefClose').addEventListener('click', () => document.getElementById('unitRefModal').classList.add('hidden'));
   document.getElementById('unitRefSearch').addEventListener('input', (e) => renderUnitRefTable(e.target.value));
+
+  document.getElementById('btnAgencyCodeRef').addEventListener('click', openAgencyRefModal);
+  document.getElementById('btnAgencyRefClose').addEventListener('click', () => document.getElementById('agencyRefModal').classList.add('hidden'));
+  document.getElementById('agencyRefSearch').addEventListener('input', (e) => renderAgencyRefTable(e.target.value));
+
+  renderEiasLink();
+  document.getElementById('btnEiasLinkEdit').addEventListener('click', openEiasLinkEditModal);
+  document.getElementById('btnEiasLinkCancel').addEventListener('click', () => document.getElementById('eiasLinkEditModal').classList.add('hidden'));
+  document.getElementById('btnEiasLinkSave').addEventListener('click', saveEiasLinkEdit);
+  document.getElementById('btnEiasLinkReset').addEventListener('click', () => {
+    document.getElementById('eiasLinkInput').value = EIAS_DEFAULT_URL;
+  });
 
   document.getElementById('batchFileInput').addEventListener('change', (e) => handleBatchFiles(e.target.files));
   document.getElementById('btnBatchCancel').addEventListener('click', closeBatchImportModal);
