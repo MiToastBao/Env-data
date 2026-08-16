@@ -436,18 +436,25 @@ function renderProjectList() {
   });
 }
 
-function selectProject(id) {
-  // If an import is currently in progress (modal open), switching projects would
-  // either abandon that import or — without this guard — silently confuse the
-  // person about which project they're now looking at while data is still being
-  // prepared for the other one. Data safety itself no longer depends on this (see
-  // getImportProject), but switching mid-import is still almost certainly not what
-  // the person meant to do, so ask first rather than silently allowing it.
+/** Returns true if it's safe to change state.currentProjectId to `newProjectId`
+ *  right now — false if the person was asked and chose to keep their in-progress
+ *  import instead. Centralizes the "don't silently switch away from the project an
+ *  open import is locked to" guard so EVERY code path that can change the active
+ *  project — not just clicking a project in the sidebar, but also creating a brand
+ *  new project while an import is open — gets the same protection. Data safety
+ *  itself never depended on this (see getImportProject), but silently switching the
+ *  screen out from under an in-progress import is still confusing and worth
+ *  confirming rather than allowing unannounced. */
+function confirmProjectSwitchIfImporting(newProjectId) {
   const importModal = document.getElementById('importModal');
-  if (importModal && !importModal.classList.contains('hidden') && state.importProjectId && state.importProjectId !== id) {
-    if (!confirm('目前正在匯入資料尚未完成，切換計畫會取消這次匯入。確定要放棄目前的匯入並切換嗎？')) return;
+  if (importModal && !importModal.classList.contains('hidden') && state.importProjectId && state.importProjectId !== newProjectId) {
+    if (!confirm('目前正在匯入資料尚未完成，切換計畫會取消這次匯入。確定要放棄目前的匯入並切換嗎？')) return false;
     closeImportModal();
   }
+  return true;
+}
+function selectProject(id) {
+  if (!confirmProjectSwitchIfImporting(id)) return;
   state.currentProjectId = id;
   state.currentTab = 'basic';
   renderProjectList();
@@ -1394,6 +1401,11 @@ function saveCoordModal() {
   const locField = cat.locationField;
   const touchedRows = [];
 
+  // Coordinate manager can touch many rows at once, same as bulk delete/bulk edit —
+  // it should get the same undo protection as every other multi-row change, not be
+  // the one exception a person can't recover from if they mistype a coordinate.
+  pushUndoSnapshot(projectId, catKey, `套用測站座標`);
+
   document.querySelectorAll('#coordSitesBody tr').forEach(tr => {
     const [loc, date] = tr.dataset.groupKey.split('\u0001');
     const values = {};
@@ -1481,6 +1493,12 @@ function saveMethodModal() {
   const rows = DataStore.getData(projectId, catKey);
   const itemField = cat.itemField;
   const memoryUpdates = {};
+  const touchedRows = [];
+
+  // Same undo protection as every other multi-row change (bulk delete/edit, coord
+  // manager) — mistyping a method/unit here shouldn't be the one thing a person
+  // can't recover from.
+  pushUndoSnapshot(projectId, catKey, `套用檢測方法／單位代碼`);
 
   document.querySelectorAll('#methodItemsBody tr').forEach(tr => {
     const item = tr.dataset.item;
@@ -1491,7 +1509,7 @@ function saveMethodModal() {
     });
     rows.forEach(row => {
       const rowItem = (row[itemField] || '').trim() || '（未命名項目）';
-      if (rowItem === item) Object.assign(row, values);
+      if (rowItem === item) { Object.assign(row, values); touchedRows.push(row); }
     });
     const memFields = {};
     if (values[cat.methodField]) memFields.method = values[cat.methodField];
@@ -1501,6 +1519,12 @@ function saveMethodModal() {
 
   DataStore.saveData(projectId, catKey, rows);
   if (Object.keys(memoryUpdates).length) DataStore.updateItemMemory(projectId, catKey, memoryUpdates);
+  // Also refresh the FULL per-location snapshot memory, not just the flat item-name
+  // memory above — otherwise a correction made here wouldn't carry through to next
+  // season's "entirely absent location" reconstruction, which prefers the fuller
+  // snapshot over the flat item memory whenever both exist, and would keep
+  // resurrecting the pre-correction method/unit indefinitely.
+  if (touchedRows.length > 0) learnSiteItemHistory(projectId, catKey, cat, touchedRows);
   closeMethodModal();
   renderContent();
   alert('已套用檢測方法／單位代碼到符合的資料列，並記住這些設定供下次（含下一季）匯入同一測項時自動帶入。');
@@ -1787,7 +1811,11 @@ function saveProjectModal() {
     // keep basic info's 計畫代碼 in sync if user wants — do not force overwrite, just leave as-is
   } else {
     const p = DataStore.createProject(code, name);
-    state.currentProjectId = p.id;
+    // The new project itself is always created (harmless), but switching the
+    // screen to it goes through the same guard as selectProject — if an import is
+    // open and the person chooses to keep it, the new project still exists (they
+    // can switch to it later from the sidebar) but the screen stays put.
+    if (confirmProjectSwitchIfImporting(p.id)) state.currentProjectId = p.id;
   }
   closeProjectModal();
   renderProjectList();
@@ -3074,6 +3102,7 @@ function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assig
 
 function confirmSmartImport() {
   const project = getImportProject();
+  if (!project) { alert('這次匯入鎖定的計畫已經不存在（可能已被刪除），請重新開啟匯入視窗。'); closeImportModal(); return; }
   const catKey = state.importCatKey;
   const cat = CATEGORIES[catKey];
   const result = state.smartResult;
@@ -3140,6 +3169,7 @@ function confirmImport() {
   if (state.importMode === 'smart') { confirmSmartImport(); return; }
 
   const project = getImportProject();
+  if (!project) { alert('這次匯入鎖定的計畫已經不存在（可能已被刪除），請重新開啟匯入視窗。'); closeImportModal(); return; }
   const catKey = state.importCatKey;
   const cat = CATEGORIES[catKey];
   const mapping = {};
