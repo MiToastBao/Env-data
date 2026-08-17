@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.17';
+const APP_VERSION = 'v4.18';
 
 const CHANGELOG = [
+  {
+    version: 'v4.18',
+    date: '2026-08-17',
+    notes: [
+      '修正「捲動越多、勾選框反而視覺消失，但實際上仍可點選」的問題：這代表方框本身跟固定定位都沒問題，是瀏覽器在處理多個緊鄰的固定欄位時，重繪時機的疊層問題，把方框畫到別的內容下面去了。已強制讓所有勾選框固定顯示在最上層，不受任何背景或相鄰欄位的重繪順序影響',
+    ],
+  },
   {
     version: 'v4.17',
     date: '2026-08-17',

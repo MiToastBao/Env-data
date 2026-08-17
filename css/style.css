@@ -172,6 +172,18 @@ table.mapping-table th { position: relative; }
    checkbox's own rendering at all. */
 input[type="checkbox"] {
   accent-color: var(--primary);
+  /* Defensive fix for a real, confirmed browser rendering issue: scrolling a
+     sticky column far enough right made the checkbox itself visually disappear
+     (while remaining fully clickable underneath — confirmed the bulk-select
+     toolbar still activated) even though its cell's background stayed correctly
+     pinned. That's a paint-order quirk, not a positioning bug — something in the
+     sticky column's own stacking context was compositing on top of the checkbox
+     during scroll repaint. Giving the checkbox its own explicit stacking context
+     with a z-index higher than any sticky column (max 4 elsewhere in this file)
+     forces the browser to always composite it above everything else nearby,
+     regardless of the exact repaint quirk that was hiding it. */
+  position: relative;
+  z-index: 5;
 }
 
 .col-check input[type="checkbox"], table.mapping-table input[type="checkbox"] {
