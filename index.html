@@ -74,7 +74,10 @@
           比對基準是「您最近一次確認匯入的內容」，不是依季別標籤強制對應到「上一季」——只是一般情況下季度是照順序匯入，所以看起來就像是跟前一季比對。若想指定要比對哪一份資料，只要<strong>先匯入並確認那份資料</strong>，再匯入這次真正要處理的資料即可。
         </p>
       </details>
-      <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
+      <div class="dropzone" id="importDropzone">
+        <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
+        <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡</p>
+      </div>
       <div id="importPdfWarning" class="warning hidden">⚠️ PDF 為自動判讀表格內容，準確度有限，請務必於下方逐欄核對後再匯入。</div>
     </div>
     <div id="importStep2" class="hidden">
@@ -214,7 +217,10 @@
   <div class="modal modal-wide">
     <h3>批次匯入監測報告</h3>
     <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告，也支援單一 PDF 內含多類別內容，會逐頁嘗試判斷），系統會自動判斷每個檔案（或工作表／頁面）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前僅噪音／水質／空氣品質三類支援自動判斷；地質／生態尚無法自動判斷，請於各分類頁面用一般匯入方式處理。<strong>PDF 判讀準確度低於 Excel，來自 PDF 的資料請務必逐項核對。</strong></p>
-    <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
+    <div class="dropzone" id="batchDropzone">
+      <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
+      <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡</p>
+    </div>
     <div id="batchDetectStatus" class="hint" style="margin-top:12px"></div>
     <div class="modal-actions">
       <button id="btnBatchCancel" class="btn btn-ghost">取消</button>
@@ -264,6 +270,13 @@
     <h3>☑️ 常用測項新增</h3>
     <p class="hint">勾選要新增的測項，若某測項有多種檢測方法可選，會出現下拉選單讓您選擇，系統會依照選定的方法自動帶入對應單位。每個勾選的測項會新增一筆空白資料，地點／日期／時間／數值請自行填寫。</p>
     <div id="commonItemsPresets" class="common-items-presets"></div>
+    <div class="common-items-toolbar">
+      <input type="text" id="commonItemsSearch" placeholder="🔍 搜尋測項名稱或方法，快速篩選">
+      <label class="common-items-checked-only">
+        <input type="checkbox" id="commonItemsShowCheckedOnly"> 只顯示已勾選
+      </label>
+      <span class="hint" id="commonItemsCheckedCount">已勾選 0 項</span>
+    </div>
     <div id="commonItemsList" class="common-items-list"></div>
     <div class="custom-item-add">
       <div class="custom-item-add-title">＋ 新增自訂測項（會記住供這個計畫下次使用）</div>

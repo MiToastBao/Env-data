@@ -70,7 +70,8 @@ function pushUndoSnapshot(projectId, catKey, description) {
   if (!state.undoStack[key]) state.undoStack[key] = [];
   const rows = DataStore.getData(projectId, catKey);
   const batches = DataStore.getImportBatches(projectId, catKey);
-  state.undoStack[key].push({ description, rows: deepCopy(rows), batches: deepCopy(batches) });
+  const presets = getItemPresets(catKey);
+  state.undoStack[key].push({ description, rows: deepCopy(rows), batches: deepCopy(batches), presets: deepCopy(presets) });
   if (state.undoStack[key].length > UNDO_STACK_LIMIT) state.undoStack[key].shift();
   state.redoStack[key] = [];
 }
@@ -85,18 +86,24 @@ function peekRedo(projectId, catKey) {
 /** Undo: restores the state from BEFORE the most recent tracked action, and pushes
  *  what was live just now onto the redo stack (tagged with the same description,
  *  since redoing this entry means "reapply that same action") so it can be brought
- *  back with redo. */
+ *  back with redo. Also restores the "常用測項新增" preset list (getItemPresets) to
+ *  whatever it was before — that action auto-saves a preset as a side effect, so
+ *  undoing it needs to remove that preset too, not just the rows it added; every
+ *  other undoable action's presets snapshot is identical before/after, so this is a
+ *  no-op for them. */
 function popUndoAndRestore(projectId, catKey) {
   const key = undoKey(projectId, catKey);
   const stack = state.undoStack[key];
   if (!stack || stack.length === 0) return false;
-  const { description, rows: rowsBefore, batches: batchesBefore } = stack.pop();
+  const { description, rows: rowsBefore, batches: batchesBefore, presets: presetsBefore } = stack.pop();
   const rowsNow = DataStore.getData(projectId, catKey);
   const batchesNow = DataStore.getImportBatches(projectId, catKey);
+  const presetsNow = getItemPresets(catKey);
   if (!state.redoStack[key]) state.redoStack[key] = [];
-  state.redoStack[key].push({ description, rows: deepCopy(rowsNow), batches: deepCopy(batchesNow) });
+  state.redoStack[key].push({ description, rows: deepCopy(rowsNow), batches: deepCopy(batchesNow), presets: deepCopy(presetsNow) });
   DataStore.saveData(projectId, catKey, rowsBefore);
   if (batchesBefore) DataStore.saveImportBatches(projectId, catKey, batchesBefore);
+  if (presetsBefore) saveItemPresets(catKey, presetsBefore);
   return true;
 }
 /** Redo: reapplies the most recently undone action, and pushes the state being
@@ -106,13 +113,15 @@ function popRedoAndRestore(projectId, catKey) {
   const key = undoKey(projectId, catKey);
   const stack = state.redoStack[key];
   if (!stack || stack.length === 0) return false;
-  const { description, rows: rowsAfter, batches: batchesAfter } = stack.pop();
+  const { description, rows: rowsAfter, batches: batchesAfter, presets: presetsAfter } = stack.pop();
   const rowsNow = DataStore.getData(projectId, catKey);
   const batchesNow = DataStore.getImportBatches(projectId, catKey);
+  const presetsNow = getItemPresets(catKey);
   if (!state.undoStack[key]) state.undoStack[key] = [];
-  state.undoStack[key].push({ description, rows: deepCopy(rowsNow), batches: deepCopy(batchesNow) });
+  state.undoStack[key].push({ description, rows: deepCopy(rowsNow), batches: deepCopy(batchesNow), presets: deepCopy(presetsNow) });
   DataStore.saveData(projectId, catKey, rowsAfter);
   if (batchesAfter) DataStore.saveImportBatches(projectId, catKey, batchesAfter);
+  if (presetsAfter) saveItemPresets(catKey, presetsAfter);
   return true;
 }
 
@@ -635,7 +644,7 @@ function renderCategoryTab(project, catKey) {
       <table class="data-grid">
         <thead><tr>
           <th class="col-check"><input type="checkbox" id="checkAllRows" ${displayRows.length === 0 ? 'disabled' : ''}></th>
-          <th>操作</th>
+          <th class="col-actions">操作</th>
           <th>#</th>
           ${cat.fields.map(f => {
             const activeFilter = state.columnFilters[catKey]?.[f.key];
@@ -1100,6 +1109,20 @@ function wireGridEvents(project, catKey, cat) {
     const rows = DataStore.getData(project.id, catKey);
     if (!rows[rowIdx]) return;
     rows[rowIdx][fieldKey] = value;
+    // 比較關係 is derived from whatever's actually in 檢測數值/監測數值, not an
+    // independently-set attribute — keep it in sync automatically whenever the
+    // value field itself changes, so editing the value never leaves a stale
+    // comparison symbol behind (e.g. a row inherited "ND" from history/import but
+    // now has a real number typed in). Silent, not a sync-prompt: this is
+    // maintaining internal consistency WITHIN one row, not propagating a change to
+    // OTHER rows, so there's nothing to ask permission for.
+    if ((fieldKey === '檢測數值' || fieldKey === '監測數值') && '比較關係' in rows[rowIdx]) {
+      const derived = deriveComparisonRelation(value);
+      if (derived) {
+        rows[rowIdx]['比較關係'] = derived.cmp;
+        if (derived.val !== value) rows[rowIdx][fieldKey] = derived.val;
+      }
+    }
     DataStore.saveData(project.id, catKey, rows);
     // Keep the site-item history snapshot current with manual corrections too — not
     // just at import time — so a value the person fixes by hand (e.g. filling in
@@ -1376,7 +1399,12 @@ function applyItemPreset(catKey, presetIdx) {
   const presets = getItemPresets(catKey);
   const preset = presets[presetIdx];
   if (!preset) return;
-  // uncheck everything first, so applying a preset always starts from a clean slate
+  // Clear any active search/checked-only filter first, so every row the preset is
+  // about to check is actually visible afterward — otherwise a stale filter could
+  // hide the very rows this just checked, making it look like nothing happened.
+  document.getElementById('commonItemsSearch').value = '';
+  document.getElementById('commonItemsShowCheckedOnly').checked = false;
+  document.querySelectorAll('.common-item-row').forEach(row => row.classList.remove('row-hidden'));
   document.querySelectorAll('.common-item-check').forEach(cb => { cb.checked = false; });
   let skipped = 0;
   preset.items.forEach(({ itemName, method }) => {
@@ -1392,7 +1420,38 @@ function applyItemPreset(catKey, presetIdx) {
       if (sel) sel.value = String(variantIdx);
     }
   });
+  document.getElementById('commonItemsCheckedCount').textContent = `已勾選 ${preset.items.length - skipped} 項`;
   if (skipped > 0) alert(`有 ${skipped} 個項目已經不在目前的測項清單裡，已略過（可能是清單被更新過）。`);
+}
+
+/** Wires drag-and-drop onto a dropzone container that already contains a
+ *  <input type="file">, so a person can drop files directly instead of clicking to
+ *  open the OS file picker — same end result, just a faster path for the same
+ *  three import entry points (regular import, batch import). `onFiles` receives
+ *  the dropped FileList exactly as `<input>.files`/`.change` would. */
+function wireDropzone(dropzoneId, onFiles) {
+  const zone = document.getElementById(dropzoneId);
+  if (!zone) return;
+  let dragDepth = 0; // dragenter/dragleave fire for every child element too; only
+                      // toggle the active style when depth returns to 0
+  zone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dragDepth++;
+    zone.classList.add('dropzone-active');
+  });
+  zone.addEventListener('dragover', (e) => { e.preventDefault(); });
+  zone.addEventListener('dragleave', (e) => {
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) zone.classList.remove('dropzone-active');
+  });
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dragDepth = 0;
+    zone.classList.remove('dropzone-active');
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length > 0) onFiles(files);
+  });
 }
 
 function addEmptyRow(project, catKey) {
@@ -1446,8 +1505,9 @@ function renderCommonItemsList(cat) {
   }
   listEl.innerHTML = entries.map((entry, i) => {
     const hasMultiple = entry.variants.length > 1;
+    const searchText = [entry.itemName, ...entry.variants.map(v => v.method)].filter(Boolean).join(' ').toLowerCase();
     return `
-      <label class="common-item-row">
+      <label class="common-item-row" data-idx="${i}" data-search-text="${escapeAttr(searchText)}">
         <input type="checkbox" class="common-item-check" data-idx="${i}">
         <span class="common-item-name">${escapeHtml(entry.itemName)}</span>
         ${hasMultiple
@@ -1459,6 +1519,40 @@ function renderCommonItemsList(cat) {
       </label>
     `;
   }).join('');
+  wireCommonItemsListFilters();
+}
+/** Wires the search box, "只顯示已勾選" toggle, and live selected-count indicator
+ *  for the common-items checklist. Uses DOM show/hide (not re-rendering the list)
+ *  so checkbox/method-select state is never lost while filtering — same pattern as
+ *  the main data grid's search/column-filter. Re-run this after any re-render of
+ *  the list itself (e.g. after adding a custom item). */
+function wireCommonItemsListFilters() {
+  const searchInput = document.getElementById('commonItemsSearch');
+  const showCheckedOnly = document.getElementById('commonItemsShowCheckedOnly');
+  const countEl = document.getElementById('commonItemsCheckedCount');
+  const rows = () => [...document.querySelectorAll('.common-item-row')];
+
+  const updateCount = () => {
+    const n = document.querySelectorAll('.common-item-check:checked').length;
+    countEl.textContent = `已勾選 ${n} 項`;
+  };
+  const applyFilters = () => {
+    const q = searchInput.value.trim().toLowerCase();
+    rows().forEach(row => {
+      const matchesSearch = !q || row.dataset.searchText.includes(q);
+      const matchesChecked = !showCheckedOnly.checked || row.querySelector('.common-item-check').checked;
+      row.classList.toggle('row-hidden', !(matchesSearch && matchesChecked));
+    });
+  };
+  searchInput.value = '';
+  showCheckedOnly.checked = false;
+  searchInput.oninput = applyFilters;
+  showCheckedOnly.onchange = applyFilters;
+  rows().forEach(row => {
+    row.querySelector('.common-item-check').addEventListener('change', updateCount);
+  });
+  updateCount();
+  applyFilters();
 }
 
 // ---------- coordinate manager (bulk-fill site coordinates, e.g. for handwritten/scanned reports) ----------
@@ -2619,6 +2713,18 @@ function renderSmartImportPreview() {
           Object.entries(histEntry.snapshot).forEach(([k, v]) => { if (v && !row[k]) row[k] = v; });
         }
       }
+      // No history to fall back on doesn't have to mean typing the unit code by
+      // hand — if the parsed unit field holds readable text (e.g. "mg/L") rather
+      // than a valid code (some report parsers, e.g. air quality, don't always
+      // resolve this themselves), try reverse-matching it against the unit code
+      // table. A code that's already valid is left untouched.
+      if (cat.unitField && row[cat.unitField] && !UNIT_CODES[row[cat.unitField]]) {
+        const lookup = SmartParse.reverseUnitLookup(row[cat.unitField], row[cat.itemField]);
+        if (lookup.code) {
+          row[cat.unitField] = lookup.code;
+          if (!lookup.confident) row._uncertainUnit = true;
+        }
+      }
     });
     result._methodDiffs = Object.entries(methodDiffsByItem).map(([item, d]) => ({ item, ...d }));
     result._memoryApplied = true;
@@ -3002,7 +3108,31 @@ function hasTimeSegmentField(cat) {
 function itemIdentityKey(row, cat) {
   return hasTimeSegmentField(cat) ? `${row[cat.itemField]}::${row['監測時段'] || ''}` : row[cat.itemField];
 }
-const SNAPSHOT_EXCLUDED_FIELDS = new Set(['日期(起)', '時間(起)', '日期(迄)', '時間(迄)', '檢測數值', '監測數值']);
+// 比較關係 is DERIVED from 檢測數值/監測數值 (see deriveComparisonRelation below),
+// not an independent site/method attribute — it must never be historically
+// inherited the way 座標/管制標準/檢測方法 are. Confirmed as a real bug: a site
+// whose value was ND last season (比較關係="ND") got a real number this season,
+// but the history-fill mechanism kept re-stamping 比較關係 back to "ND" because it
+// was blank on the freshly-parsed row and got silently filled from the old
+// snapshot — producing an internally-inconsistent row (a real number "10" tagged
+// as 比較關係="ND") that would be wrong on an official filing.
+/** Recomputes 比較關係 (comparison relation) from a value the person just typed
+ *  into 檢測數值/監測數值, mirroring the exact rule SmartParse.parseValueCell uses
+ *  when reading the same kind of value out of a lab report: a plain number ->
+ *  比較關係 blank; "<0.3" or ">100" -> 比較關係 '<' or '>' (the value field keeps
+ *  just the number, not the symbol); "ND" -> 比較關係 'ND'. Always returns a
+ *  result (never null/undefined) — clearing the value to blank must also clear a
+ *  stale comparison symbol left over from before, not leave one behind. */
+function deriveComparisonRelation(rawValue) {
+  const s = String(rawValue ?? '').trim();
+  if (s === '') return { cmp: '', val: '' };
+  if (/^ND$/i.test(s)) return { cmp: 'ND', val: 'ND' };
+  if (/^(NA|未檢測|N\.A\.?)$/i.test(s)) return { cmp: '未檢測', val: '未檢測' };
+  const m = s.match(/^([<>])\s*([\d.]+)$/);
+  if (m) return { cmp: m[1], val: m[2] };
+  return { cmp: '', val: s };
+}
+const SNAPSHOT_EXCLUDED_FIELDS = new Set(['日期(起)', '時間(起)', '日期(迄)', '時間(迄)', '檢測數值', '監測數值', '比較關係']);
 /** Every field's value except the row's own location/item identity and its actual
  *  measurement (date/time/value) — this is what gets carried forward wholesale when
  *  reconstructing a historically-known-but-currently-absent row, so a person only
@@ -3147,7 +3277,11 @@ function buildSuggestedRows(project, catKey, cat, result) {
   });
   if (checkedBoxes.length === 0) return [];
   const itemMemory = DataStore.getItemMemory(project.id, catKey);
-  const newRows = [];
+
+  // Build each checked item's single-row template first (without expanding
+  // copiesToAdd yet), then interleave by OCCURRENCE index below rather than
+  // finishing one item's copies before moving to the next.
+  const perItemRows = []; // { template, copiesToAdd }
   checkedBoxes.forEach(cb => {
     const suggestion = state.missingItemSuggestions?.[Number(cb.dataset.groupIdx)];
     if (!suggestion) return;
@@ -3199,13 +3333,22 @@ function buildSuggestedRows(project, catKey, cat, result) {
       if (cat.methodField && !newRow[cat.methodField] && mem.method) newRow[cat.methodField] = mem.method;
       if (cat.unitField && !newRow[cat.unitField] && mem.unitCode) newRow[cat.unitField] = mem.unitCode;
     }
-    // A site sampled both 平日 and 假日 in the same quarter legitimately has
-    // MULTIPLE rows sharing this exact identity (same item, same 監測時段,
-    // different sampling date) — add back however many were actually missing,
-    // not just one. Each copy is a fresh object (not the same reference) so later
-    // per-row edits don't accidentally affect siblings.
-    for (let i = 0; i < copiesToAdd; i++) newRows.push({ ...newRow });
+    perItemRows.push({ template: newRow, copiesToAdd });
   });
+
+  // A site sampled both 平日 and 假日 historically appears GROUPED BY OCCURRENCE
+  // — the weekday's full 日/晚/夜 set together, then the holiday's full set — not
+  // grouped by time segment (both 日間 copies together, then both 晚間 copies).
+  // Interleaving by occurrence index here reproduces that original grouping, so a
+  // person filling in dates afterward sees each sampling occasion's rows already
+  // sitting together instead of scattered by measurement type.
+  const maxCopies = perItemRows.reduce((max, p) => Math.max(max, p.copiesToAdd), 0);
+  const newRows = [];
+  for (let occurrence = 0; occurrence < maxCopies; occurrence++) {
+    perItemRows.forEach(({ template, copiesToAdd }) => {
+      if (occurrence < copiesToAdd) newRows.push({ ...template });
+    });
+  }
   return newRows;
 }
 
@@ -3376,6 +3519,19 @@ function confirmImport() {
         Object.entries(histEntry.snapshot).forEach(([k, v]) => { if (v && !row[k]) row[k] = v; });
       }
     }
+    // No history to fall back on (brand-new project, or this item's first
+    // appearance) doesn't have to mean the person types the unit code by hand —
+    // if the imported file's own 單位 column holds readable text (e.g. "mg/L")
+    // rather than the code the schema expects, try reverse-matching it against the
+    // unit code table, the same lookup the report-form parsers already use for
+    // noise/water. A code that's already valid is left untouched.
+    if (cat.unitField && row[cat.unitField] && !UNIT_CODES[row[cat.unitField]]) {
+      const lookup = SmartParse.reverseUnitLookup(row[cat.unitField], row[cat.itemField]);
+      if (lookup.code) {
+        row[cat.unitField] = lookup.code;
+        if (!lookup.confident) row._uncertainUnit = true;
+      }
+    }
   });
   const selectedRows = filterRowsBySelection(newRows, cat.itemField);
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
@@ -3480,6 +3636,7 @@ function init() {
   document.getElementById('backupFileInput').addEventListener('change', (e) => backupImport(e.target.files[0]));
 
   document.getElementById('importFileInput').addEventListener('change', (e) => handleImportFile(e.target.files));
+  wireDropzone('importDropzone', (files) => handleImportFile(files));
   document.getElementById('btnImportCancel').addEventListener('click', closeImportModal);
   document.getElementById('btnImportConfirm').addEventListener('click', confirmImport);
 
@@ -3547,28 +3704,40 @@ function init() {
     const rows = DataStore.getData(project.id, catKey);
     const memoryUpdates = {};
     const presetItems = []; // { itemName, method } — remembered as a quick-reapply preset after this
-    checkedBoxes.forEach(cb => {
+
+    // Build each checked item's chosen variant once, up front (not inside the
+    // per-group loop), so picking a method doesn't get re-evaluated per group.
+    const picks = checkedBoxes.map(cb => {
       const idx = Number(cb.dataset.idx);
       const entry = state.commonItemsEntries[idx];
       const methodSelect = document.querySelector(`.common-item-method-select[data-idx="${idx}"]`);
       const variant = methodSelect ? entry.variants[Number(methodSelect.value)] : entry.variants[0];
+      return { entry, variant };
+    });
+    picks.forEach(({ entry, variant }) => {
       presetItems.push({ itemName: entry.itemName, method: variant.method || '' });
-      // "幾份" (quantity) lets one click create N identical blank rows per item —
-      // e.g. 10 items × 3 stations = 30 rows in one go — instead of reopening this
-      // modal three times. Rows are otherwise blank (地點/日期/時間/數值 empty) for
-      // the person to fill in per station afterward.
-      for (let i = 0; i < quantity; i++) {
+      if (variant.method || variant.unitCode) {
+        memoryUpdates[entry.itemName] = { method: variant.method, unitCode: variant.unitCode };
+      }
+    });
+
+    // "幾份" (quantity) creates N groups of rows — outer loop over groups, inner
+    // loop over the checked items — so all items for group 1 land together, then
+    // all items for group 2, etc. This matters for how the table reads afterward:
+    // grouped-by-station means the person can fill in one 地點 for a contiguous
+    // block of rows (or select that block and batch-edit 地點 in one go), rather
+    // than having the same item's N copies scattered together and every OTHER
+    // item's copies elsewhere, which is awkward to assign locations against.
+    for (let g = 0; g < quantity; g++) {
+      picks.forEach(({ entry, variant }) => {
         const blank = {};
         cat.fields.forEach(f => { blank[f.key] = ''; });
         blank[cat.itemField] = entry.itemName;
         if (cat.methodField && variant.method) blank[cat.methodField] = variant.method;
         if (cat.unitField && variant.unitCode) blank[cat.unitField] = variant.unitCode;
         rows.push(blank);
-      }
-      if (variant.method || variant.unitCode) {
-        memoryUpdates[entry.itemName] = { method: variant.method, unitCode: variant.unitCode };
-      }
-    });
+      });
+    }
     DataStore.saveData(project.id, catKey, rows);
     if (Object.keys(memoryUpdates).length) DataStore.updateItemMemory(project.id, catKey, memoryUpdates);
     rememberItemPreset(catKey, presetItems);
@@ -3577,6 +3746,7 @@ function init() {
   });
 
   document.getElementById('batchFileInput').addEventListener('change', (e) => handleBatchFiles(e.target.files));
+  wireDropzone('batchDropzone', (files) => handleBatchFiles(files));
   document.getElementById('btnBatchCancel').addEventListener('click', closeBatchImportModal);
 
   document.getElementById('btnBatchHistoryClose').addEventListener('click', () => document.getElementById('batchHistoryModal').classList.add('hidden'));

@@ -170,7 +170,7 @@ table.data-grid th.col-item, table.data-grid td.col-item {
 }
 table.data-grid th.col-check, table.data-grid th.col-actions, table.data-grid th.col-loc, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
 table.data-grid td.col-check, table.data-grid th.col-check { left: 0; }
-table.data-grid .col-actions { width: 44px; }
+table.data-grid .col-actions { width: 44px; overflow: hidden; }
 table.data-grid td.col-actions, table.data-grid th.col-actions { left: 34px; }
 /* 採樣地點 (or equivalent per category) sits right after checkbox+delete, since it
    comes before the item column in every category's field order — pinned so you know
@@ -320,3 +320,7 @@ table.conflict-diff-table td.diff-new { color: var(--primary-dark); font-weight:
 .common-items-quantity { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; }
 .common-items-quantity label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
 .common-items-quantity input { width: 60px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; font-family: inherit; }
+
+.dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 10px; transition: border-color 0.15s, background 0.15s; }
+.dropzone.dropzone-active { border-color: var(--primary); background: #eef7f2; }
+.dropzone-hint { text-align: center; color: var(--text-muted); font-size: 12px; margin: 6px 0 0 0; pointer-events: none; }
