@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.16';
+const APP_VERSION = 'v4.17';
 
 const CHANGELOG = [
+  {
+    version: 'v4.17',
+    date: '2026-08-17',
+    notes: [
+      '撤回 v4.16 用 outline 加強勾選框的做法——在真實瀏覽器裡，該做法會讓相鄰資料列的外框彼此沾黏成一整條灰色色塊，看起來像故障而非勾選框，感謝回報。已改用更安全的方式：只保留「勾選後改用系統主色調」這個不會有副作用的效果，並把勾選框所在儲存格的背景，從純白改成跟頁面同色調的極淡灰綠色，讓原生勾選框的邊框能有基本的對比可辨識，不會再變成怪異的色塊',
+    ],
+  },
   {
     version: 'v4.16',
     date: '2026-08-17',

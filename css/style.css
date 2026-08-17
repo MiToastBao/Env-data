@@ -159,20 +159,19 @@ table.mapping-table th { position: relative; }
 }
 .bulk-toolbar.hidden { display: none; }
 .col-check { width: 34px; text-align: center; }
-/* Global checkbox visibility fix: the native unchecked checkbox in most browsers
-   renders as a very light gray border on a white/near-white fill — against this
-   app's white or near-white cell backgrounds (especially the sticky columns'
-   white background), that border is faint enough to be genuinely hard to see,
-   confirmed from a real screenshot where the checkbox effectively disappeared
-   into its surroundings while scrolled. This isn't a layout/sticky-positioning
-   problem (that part is fixed separately) — it's pure color contrast. Applying a
-   visible outline (not `border`, which some browsers render inconsistently on
-   native checkbox controls) and a branded accent-color for the checked state
-   fixes every checkbox in the app at once, including ones added later. */
+/* Global checkbox visibility fix, take 2: the first attempt used `outline`, which
+   in a real browser (confirmed from screenshots) bled outside each checkbox's own
+   box and smeared together with the neighboring rows' outlines in the narrow
+   sticky column, looking like a broken gray bar rather than distinct checkboxes —
+   worse than the original problem. Reverted that entirely. The actual fix now:
+   only `accent-color` (which purely recolors the CHECKED-state fill, has no
+   footprint outside the control's own box, and cannot bleed into neighboring
+   rows) plus tinting the sticky columns' background from pure white to the same
+   very-pale off-white already used for the page background (--bg) — enough for a
+   native checkbox's light gray border to read against, without touching the
+   checkbox's own rendering at all. */
 input[type="checkbox"] {
   accent-color: var(--primary);
-  outline: 1.5px solid #7d8f87;
-  outline-offset: 1px;
 }
 
 .col-check input[type="checkbox"], table.mapping-table input[type="checkbox"] {
@@ -186,6 +185,13 @@ table.data-grid th.col-item, table.data-grid td.col-item {
   position: sticky; z-index: 3; background: #fff;
 }
 table.data-grid th.col-check, table.data-grid th.col-actions, table.data-grid th.col-num, table.data-grid th.col-loc, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
+/* Checkbox's own cell gets a faint off-white tint (same tone as the page
+   background) instead of pure white, purely so the native checkbox's light gray
+   border has something to read against — see the checkbox-visibility comment
+   above. Left as plain white for 操作/#/地點/測項 cells, which don't have this
+   problem (their content — a red trash icon, a number, or actual text — already
+   reads clearly against white). */
+table.data-grid td.col-check { background: var(--bg); }
 table.data-grid td.col-check, table.data-grid th.col-check { left: 0; }
 table.data-grid .col-actions { width: 44px; overflow: hidden; }
 table.data-grid td.col-actions, table.data-grid th.col-actions { left: 34px; }
@@ -277,7 +283,7 @@ table.mapping-table td { padding: 6px 10px; border-top: 1px solid var(--border);
    generic mapping-table used elsewhere (e.g. the import column-mapping step). */
 .row-detail-toggle table.mapping-table th:first-child,
 .row-detail-toggle table.mapping-table td:first-child {
-  position: sticky; left: 0; z-index: 2; background: #fff; width: 34px; text-align: center;
+  position: sticky; left: 0; z-index: 2; background: var(--bg); width: 34px; text-align: center;
 }
 .row-detail-toggle table.mapping-table th:first-child { z-index: 3; background: #eef3f1; }
 table.mapping-table select { width: 100%; min-width: 160px; padding: 6px; font-family: inherit; border: 1px solid var(--border); border-radius: 5px; }
