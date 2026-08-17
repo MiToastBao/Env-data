@@ -606,6 +606,7 @@ function renderCategoryTab(project, catKey) {
       <div class="toolbar-left">
         <button class="btn btn-primary btn-sm" id="btnImport">📥 匯入資料（Excel/PDF）</button>
         <button class="btn btn-ghost btn-sm" id="btnAddRow">＋ 新增一筆</button>
+        <button class="btn btn-ghost btn-sm" id="btnAddCommonItems">☑️ 常用測項新增</button>
         <button class="btn btn-ghost btn-sm" id="btnCoordManager">📍 測站座標管理</button>
         ${cat.methodField ? `<button class="btn btn-ghost btn-sm" id="btnMethodManager">🧪 檢測方法管理</button>` : ''}
         <button class="btn btn-ghost btn-sm" id="btnBatchHistory">📜 匯入紀錄${batches.length ? ` (${batches.length})` : ''}</button>
@@ -664,6 +665,7 @@ function renderCategoryTab(project, catKey) {
 
   document.getElementById('btnImport').addEventListener('click', () => openImportModal(catKey));
   document.getElementById('btnAddRow').addEventListener('click', () => addEmptyRow(project, catKey));
+  document.getElementById('btnAddCommonItems').addEventListener('click', () => openCommonItemsModal(project, catKey));
   document.getElementById('btnCoordManager').addEventListener('click', () => openCoordModal(project, catKey));
   if (cat.methodField) {
     document.getElementById('btnMethodManager').addEventListener('click', () => openMethodModal(project, catKey));
@@ -1315,6 +1317,84 @@ function wireGridEvents(project, catKey, cat) {
   });
 }
 
+// ---------- item-selection presets ("記憶標籤") for 常用測項新增 ----------
+// Stored per-category, shared across ALL projects in this browser (not tied to one
+// project) — the person's "typical combo of 10 items for 3 stations" recurs across
+// different projects, so a global-per-browser scope is more useful here than a
+// per-project one. Stores { itemName, method } pairs (not variant array indices),
+// so a preset still applies correctly even if the shared catalog's variant order
+// later changes — matching is done by method text at apply time, skipping any item
+// that's no longer findable rather than silently misapplying the wrong method.
+const ITEM_PRESET_LIMIT = 8;
+function presetStorageKey(catKey) { return `envapp_itemPresets_${catKey}`; }
+function getItemPresets(catKey) {
+  try { return JSON.parse(localStorage.getItem(presetStorageKey(catKey))) || []; }
+  catch (e) { return []; }
+}
+function saveItemPresets(catKey, presets) {
+  localStorage.setItem(presetStorageKey(catKey), JSON.stringify(presets.slice(0, ITEM_PRESET_LIMIT)));
+}
+function rememberItemPreset(catKey, checkedItems) {
+  // checkedItems: [{ itemName, method }]
+  if (checkedItems.length === 0) return;
+  const presets = getItemPresets(catKey);
+  const signature = checkedItems.map(i => `${i.itemName}::${i.method}`).sort().join('|');
+  const withoutDupe = presets.filter(p => p.items.map(i => `${i.itemName}::${i.method}`).sort().join('|') !== signature);
+  const names = checkedItems.map(i => i.itemName);
+  const label = names.length <= 3 ? names.join('、') : `${names.slice(0, 3).join('、')}…等${names.length}項`;
+  withoutDupe.unshift({ label, items: checkedItems });
+  saveItemPresets(catKey, withoutDupe);
+}
+function renderItemPresets(catKey) {
+  const wrap = document.getElementById('commonItemsPresets');
+  const presets = getItemPresets(catKey);
+  if (presets.length === 0) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = `
+    <div class="hint" style="width:100%;margin-bottom:4px">🏷️ 最近使用的組合（點擊可快速套用同樣的勾選）：</div>
+    ${presets.map((p, i) => `
+      <span class="item-preset-chip" data-idx="${i}">
+        <span class="item-preset-label">${escapeHtml(p.label)}</span>
+        <button type="button" class="item-preset-remove" data-idx="${i}" title="刪除這個組合">✕</button>
+      </span>
+    `).join('')}
+  `;
+  wrap.querySelectorAll('.item-preset-label').forEach(el => {
+    el.addEventListener('click', () => applyItemPreset(catKey, Number(el.closest('.item-preset-chip').dataset.idx)));
+  });
+  wrap.querySelectorAll('.item-preset-remove').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = Number(btn.dataset.idx);
+      const presets2 = getItemPresets(catKey);
+      presets2.splice(idx, 1);
+      saveItemPresets(catKey, presets2);
+      renderItemPresets(catKey);
+    });
+  });
+}
+function applyItemPreset(catKey, presetIdx) {
+  const presets = getItemPresets(catKey);
+  const preset = presets[presetIdx];
+  if (!preset) return;
+  // uncheck everything first, so applying a preset always starts from a clean slate
+  document.querySelectorAll('.common-item-check').forEach(cb => { cb.checked = false; });
+  let skipped = 0;
+  preset.items.forEach(({ itemName, method }) => {
+    const entryIdx = state.commonItemsEntries.findIndex(e => e.itemName === itemName);
+    if (entryIdx === -1) { skipped++; return; }
+    const entry = state.commonItemsEntries[entryIdx];
+    const cb = document.querySelector(`.common-item-check[data-idx="${entryIdx}"]`);
+    if (!cb) { skipped++; return; }
+    cb.checked = true;
+    const variantIdx = entry.variants.findIndex(v => v.method === method);
+    if (variantIdx !== -1) {
+      const sel = document.querySelector(`.common-item-method-select[data-idx="${entryIdx}"]`);
+      if (sel) sel.value = String(variantIdx);
+    }
+  });
+  if (skipped > 0) alert(`有 ${skipped} 個項目已經不在目前的測項清單裡，已略過（可能是清單被更新過）。`);
+}
+
 function addEmptyRow(project, catKey) {
   const cat = CATEGORIES[catKey];
   const rows = DataStore.getData(project.id, catKey);
@@ -1326,6 +1406,59 @@ function addEmptyRow(project, catKey) {
   // scroll to bottom of table
   const wrap = document.querySelector('.table-wrap');
   if (wrap) wrap.scrollTop = wrap.scrollHeight;
+}
+
+/**
+ * Lets the person pick from a checklist of commonly-used items for this category —
+ * built-in items come from 測項對照表.txt (shared, site-wide — see loadSiteConfig),
+ * merged with any items THIS project has already used before (from its own item
+ * memory) that aren't already in the built-in list, so a project's own history
+ * naturally grows the list over time without needing the built-in catalog touched.
+ * An item with more than one known method (e.g. 溶氧 measured by either 電極法 or
+ * 碘定量法, which can even have different units) shows a method dropdown so the
+ * person picks which one — the unit that gets filled in follows whichever method
+ * they chose, not a fixed default. A person can also type in a brand-new item this
+ * session that isn't in either list yet; that gets remembered into this project's
+ * own item memory (not the shared catalog) for next time.
+ */
+function openCommonItemsModal(project, catKey) {
+  const cat = CATEGORIES[catKey];
+  const builtIn = siteConfig.itemCatalog[catKey] || [];
+  const itemMemory = DataStore.getItemMemory(project.id, catKey);
+  const builtInNames = new Set(builtIn.map(e => e.itemName));
+  const projectOwnItems = Object.entries(itemMemory)
+    .filter(([name]) => name && !builtInNames.has(name))
+    .map(([name, mem]) => ({ itemName: name, variants: [{ method: mem.method || '', unitCode: mem.unitCode || '' }] }));
+
+  state.commonItemsCatKey = catKey;
+  state.commonItemsEntries = [...builtIn, ...projectOwnItems];
+  renderCommonItemsList(cat);
+  renderItemPresets(catKey);
+  document.getElementById('commonItemsQuantity').value = '1';
+  document.getElementById('commonItemsModal').classList.remove('hidden');
+}
+function renderCommonItemsList(cat) {
+  const listEl = document.getElementById('commonItemsList');
+  const entries = state.commonItemsEntries;
+  if (entries.length === 0) {
+    listEl.innerHTML = '<p class="hint">目前沒有內建測項，也還沒有這個計畫自己用過的測項紀錄。可以用下方「新增自訂測項」開始建立。</p>';
+    return;
+  }
+  listEl.innerHTML = entries.map((entry, i) => {
+    const hasMultiple = entry.variants.length > 1;
+    return `
+      <label class="common-item-row">
+        <input type="checkbox" class="common-item-check" data-idx="${i}">
+        <span class="common-item-name">${escapeHtml(entry.itemName)}</span>
+        ${hasMultiple
+          ? `<select class="common-item-method-select" data-idx="${i}">
+              ${entry.variants.map((v, vi) => `<option value="${vi}">${escapeHtml(v.method || '（無方法資訊）')}${v.unitCode ? `（${escapeHtml(UNIT_CODES[v.unitCode] || v.unitCode)}）` : ''}</option>`).join('')}
+            </select>`
+          : `<span class="hint">${entry.variants[0] ? escapeHtml([entry.variants[0].method, entry.variants[0].unitCode ? (UNIT_CODES[entry.variants[0].unitCode] || entry.variants[0].unitCode) : ''].filter(Boolean).join('，')) : ''}</span>`
+        }
+      </label>
+    `;
+  }).join('');
 }
 
 // ---------- coordinate manager (bulk-fill site coordinates, e.g. for handwritten/scanned reports) ----------
@@ -1603,7 +1736,7 @@ function eiasUrlFileUrl() { return `${encodeURIComponent(EIAS_URL_FOLDER)}/${enc
 function templateListFileUrl() { return `${encodeURIComponent(TEMPLATE_FOLDER)}/${encodeURIComponent('範本清單.txt')}`; }
 function templateFileUrl(filename) { return `${encodeURIComponent(TEMPLATE_FOLDER)}/${encodeURIComponent(filename)}`; }
 
-let siteConfig = { eiasUrl: null, templates: [] };
+let siteConfig = { eiasUrl: null, templates: [], itemCatalog: { air: [], water: [], noise: [], geo: [], eco: [] } };
 
 /** Parses "顯示名稱|檔案名稱" lines, one per template — far more forgiving to
  *  hand-edit in Notepad than JSON (no commas/brackets/quotes to get exactly right).
@@ -1626,6 +1759,42 @@ function parseTemplateListText(text) {
     .filter(Boolean);
 }
 
+const ITEM_CATALOG_FOLDER = '更新測項單位方法對照表的話請編輯本資料夾';
+function itemCatalogFileUrl() { return `${encodeURIComponent(ITEM_CATALOG_FOLDER)}/${encodeURIComponent('測項對照表.txt')}`; }
+
+/** Parses "類別|測項名稱|檢測方法|單位代碼" lines into { air: [...], water: [...], ... }
+ *  where each category's array holds { itemName, variants: [{method, unitCode}] } —
+ *  multiple lines with the same category+itemName merge into one entry with
+ *  multiple variants (e.g. 溶氧 measured by either 電極法/W455 or 碘定量法/W422).
+ *  Same forgiving format as the other shared text files: # comments, blank lines
+ *  ignored, BOM stripped. */
+function parseItemCatalogText(text) {
+  const catalog = { air: [], water: [], noise: [], geo: [], eco: [] };
+  const byKey = {}; // `${cat}::${itemName}` -> entry, so repeated lines merge
+  String(text || '')
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'))
+    .forEach(line => {
+      const parts = line.split('|');
+      if (parts.length < 2) return;
+      const cat = parts[0].trim();
+      const itemName = (parts[1] || '').trim();
+      const method = (parts[2] || '').trim();
+      const unitCode = (parts[3] || '').trim();
+      if (!catalog[cat] || !itemName) return;
+      const key = `${cat}::${itemName}`;
+      if (!byKey[key]) {
+        const entry = { itemName, variants: [] };
+        byKey[key] = entry;
+        catalog[cat].push(entry);
+      }
+      byKey[key].variants.push({ method, unitCode });
+    });
+  return catalog;
+}
+
 async function loadSiteConfig() {
   try {
     const resp = await fetch(eiasUrlFileUrl());
@@ -1644,6 +1813,12 @@ async function loadSiteConfig() {
     if (resp.ok) siteConfig.templates = parseTemplateListText(await resp.text());
   } catch (e) {
     console.warn('無法載入範本清單，範本下載功能將暫不顯示。', e);
+  }
+  try {
+    const resp = await fetch(itemCatalogFileUrl());
+    if (resp.ok) siteConfig.itemCatalog = parseItemCatalogText(await resp.text());
+  } catch (e) {
+    console.warn('無法載入常用測項對照表，「常用測項新增」將暫不提供內建測項（仍可手動新增自訂測項）。', e);
   }
   renderEiasLink();
   renderTemplateDownloadButton();
@@ -3340,6 +3515,66 @@ function init() {
 
   document.getElementById('btnTemplateDownload').addEventListener('click', openTemplateDownloadModal);
   document.getElementById('btnTemplateDownloadClose').addEventListener('click', () => document.getElementById('templateDownloadModal').classList.add('hidden'));
+
+  document.getElementById('btnCustomItemAdd').addEventListener('click', () => {
+    const catKey = state.commonItemsCatKey;
+    const cat = CATEGORIES[catKey];
+    const name = document.getElementById('customItemName').value.trim();
+    const method = document.getElementById('customItemMethod').value.trim();
+    const unitCode = document.getElementById('customItemUnit').value.trim();
+    if (!name) { alert('請輸入測項名稱。'); return; }
+    if (state.commonItemsEntries.some(e => e.itemName === name)) { alert('這個測項名稱已經在清單裡了，請直接勾選它，或使用不同的名稱。'); return; }
+    state.commonItemsEntries.push({ itemName: name, variants: [{ method, unitCode }] });
+    renderCommonItemsList(cat);
+    const newIdx = state.commonItemsEntries.length - 1;
+    const cb = document.querySelector(`.common-item-check[data-idx="${newIdx}"]`);
+    if (cb) cb.checked = true;
+    document.getElementById('customItemName').value = '';
+    document.getElementById('customItemMethod').value = '';
+    document.getElementById('customItemUnit').value = '';
+    document.getElementById('customItemName').focus();
+  });
+  document.getElementById('btnCommonItemsCancel').addEventListener('click', () => document.getElementById('commonItemsModal').classList.add('hidden'));
+  document.getElementById('btnCommonItemsApply').addEventListener('click', () => {
+    const project = getCurrentProject();
+    const catKey = state.commonItemsCatKey;
+    const cat = CATEGORIES[catKey];
+    const checkedBoxes = [...document.querySelectorAll('.common-item-check:checked')];
+    if (checkedBoxes.length === 0) { alert('請至少勾選一個測項。'); return; }
+    const quantity = Math.max(1, Math.min(50, Number(document.getElementById('commonItemsQuantity').value) || 1));
+
+    pushUndoSnapshot(project.id, catKey, `常用測項新增（${checkedBoxes.length}項${quantity > 1 ? `×${quantity}份` : ''}）`);
+    const rows = DataStore.getData(project.id, catKey);
+    const memoryUpdates = {};
+    const presetItems = []; // { itemName, method } — remembered as a quick-reapply preset after this
+    checkedBoxes.forEach(cb => {
+      const idx = Number(cb.dataset.idx);
+      const entry = state.commonItemsEntries[idx];
+      const methodSelect = document.querySelector(`.common-item-method-select[data-idx="${idx}"]`);
+      const variant = methodSelect ? entry.variants[Number(methodSelect.value)] : entry.variants[0];
+      presetItems.push({ itemName: entry.itemName, method: variant.method || '' });
+      // "幾份" (quantity) lets one click create N identical blank rows per item —
+      // e.g. 10 items × 3 stations = 30 rows in one go — instead of reopening this
+      // modal three times. Rows are otherwise blank (地點/日期/時間/數值 empty) for
+      // the person to fill in per station afterward.
+      for (let i = 0; i < quantity; i++) {
+        const blank = {};
+        cat.fields.forEach(f => { blank[f.key] = ''; });
+        blank[cat.itemField] = entry.itemName;
+        if (cat.methodField && variant.method) blank[cat.methodField] = variant.method;
+        if (cat.unitField && variant.unitCode) blank[cat.unitField] = variant.unitCode;
+        rows.push(blank);
+      }
+      if (variant.method || variant.unitCode) {
+        memoryUpdates[entry.itemName] = { method: variant.method, unitCode: variant.unitCode };
+      }
+    });
+    DataStore.saveData(project.id, catKey, rows);
+    if (Object.keys(memoryUpdates).length) DataStore.updateItemMemory(project.id, catKey, memoryUpdates);
+    rememberItemPreset(catKey, presetItems);
+    document.getElementById('commonItemsModal').classList.add('hidden');
+    renderContent();
+  });
 
   document.getElementById('batchFileInput').addEventListener('change', (e) => handleBatchFiles(e.target.files));
   document.getElementById('btnBatchCancel').addEventListener('click', closeBatchImportModal);

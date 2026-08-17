@@ -1,0 +1,188 @@
+# 這個檔案控制「☑️ 常用測項新增」功能裡，各類別可以勾選的測項清單，用記事本開啟即可編輯。
+# 每一行代表「一個測項的其中一種檢測方法」，格式是：類別|測項名稱|檢測方法|單位代碼
+#   類別代碼：air(空氣品質) water(水質) noise(噪音) geo(地質) eco(生態)
+#   單位代碼請對照系統內建的「單位代碼表」按鈕查詢；沒有單位／方法的欄位可以留空，但前後的「|」都要保留。
+# 開頭是 # 的行是說明文字，系統會自動忽略。
+#
+# ▶ 同一個測項如果有「兩種以上」檢測方法（例如溶氧可以用電極法或碘定量法），
+#    就寫兩行，測項名稱要完全一樣、方法跟單位各自填寫該方法對應的內容。
+#    使用者在畫面上勾選這個測項時，系統會自動列出這幾種方法讓使用者選。
+#
+# ▶ 新增測項：直接在對應類別區塊新增一行即可。
+# ▶ 刪除測項：把對應那一行整行刪除即可。
+# ▶ 修改測項的方法或單位：直接編輯那一行的內容即可。
+#
+# 編輯完成後存檔，並照平常方式重新部署到 GitHub，所有使用者就會看到最新的測項清單。
+#
+# 【目前的資料來源說明】以下項目是根據系統開發過程中實際解析驗證過的真實送件檔案建立
+# （115Q1／113Q3 官方完整版申報資料，含一般測項與 SGS 版空氣品質報告），
+# 準確度高，但仍非涵蓋所有情境——尤其水質裡不同水體類型（河川／地下水／放流水）
+# 可能有不同的常見測項組合，若後續有新的監測報告，建議持續提供以便補齊。
+# 生態類別依需求說明暫不建立，目前清單留空。
+
+# ---------- 空氣品質 (air) ----------
+air|SO2|NIEA A416|113
+air|NO2|NIEA A417|113
+air|Nox|NIEA A417|113
+air|CO|NIEA A421|113
+air|O3|NIEA A420|113
+air|THC|NIEA A740|113
+air|PM10|NIEA A206|127
+air|TSP|NIEA A102|127
+air|PM2.5|NIEA A205|127
+air|鉛|NIEA A306|127
+air|氨氣|NIEA A426|113
+air|硫酸|NIEA A435|142
+air|硝酸|NIEA A435|50
+air|磷酸|NIEA A435|50
+air|氯化氫(鹽酸)|NIEA A435|113
+air|氟化氫(氫氟酸)|NIEA A435|50
+air|溴化氫(氫溴酸)|NIEA A435|50
+air|1,1,1-三氯乙烷|NIEA A715|50
+air|1,1,2,2-四氯乙烷|NIEA A715|50
+air|1,1,2-三氯-1,2,2-三氟乙烷|NIEA A715|50
+air|1,1,2-三氯乙烷|NIEA A715|50
+air|1,1-二氯乙烯|NIEA A715|111
+air|1,1-二氯乙烷|NIEA A715|50
+air|1,2,3-三甲基苯|NIEA A715|111
+air|1,2,4-三氯苯|NIEA A715|50
+air|1,2,4-三甲基苯|NIEA A715|111
+air|1,2-二氯丙烷|NIEA A715|50
+air|1,2-二氯乙烷|NIEA A715|111
+air|1,3,5-三甲基苯|NIEA A715|111
+air|1,3-丁二烯|NIEA A715|111
+air|1-己烯|NIEA A741|111
+air|2,2,4-三甲基戊烷|NIEA A715|111
+air|2,3-二甲基戊烷|NIEA A715|111
+air|2,4-二甲基戊烷|NIEA A715|111
+air|2-甲基己烷|NIEA A715|111
+air|2-甲基庚烷|NIEA A715|111
+air|2-甲基戊烷|NIEA A715|111
+air|3-甲基庚烷|NIEA A715|111
+air|3-甲基戊烷|NIEA A715|111
+air|alpha-甲基苯乙烯|NIEA A715|50
+air|一溴二氯甲烷|NIEA A715|111
+air|丁酮(2-丁酮)|NIEA A715|50
+air|三氯乙烯|NIEA A715|111
+air|三氯甲烷(氯仿)|NIEA A715|111
+air|丙烯腈|NIEA A715|111
+air|丙烯酸乙酯|NIEA A715|111
+air|丙烯酸甲酯|NIEA A715|111
+air|丙烯醛|NIEA A715|50
+air|丙烷|NIEA A715|50
+air|丙酮|NIEA A715|50
+air|乙腈|NIEA A715|50
+air|二氯二氟甲烷|NIEA A715|50
+air|二氯甲烷|NIEA A715|111
+air|二溴乙烷(1,2-二溴乙烷)|NIEA A715|111
+air|二溴氯甲烷|NIEA A715|111
+air|六氯丁二烯|NIEA A715|50
+air|反-1,2-二氯乙烯|NIEA A715|50
+air|反-1,3-二氯丙烯|NIEA A715|50
+air|反2-丁烯|NIEA A715|111
+air|反2-戊烯|NIEA A715|111
+air|四氯乙烯|NIEA A715|111
+air|四氯化碳(四氯甲烷)|NIEA A715|111
+air|對-乙基甲苯|NIEA A715|111
+air|對-二乙基苯|NIEA A715|111
+air|對-二氯苯(1,4-二氯苯)|NIEA A715|50
+air|對-四氟二氯乙烷(1,2-二氯-1,1,2,2-四氟乙烷)|NIEA A715|50
+air|戊烷(正戊烷)|NIEA A715|50
+air|正丙基苯|NIEA A715|111
+air|正十一烷|NIEA A715|111
+air|正十二烷|NIEA A741|111
+air|正己烷|NIEA A715|50
+air|正庚烷(庚烷)|NIEA A715|50
+air|正辛烷(辛烷)|NIEA A715|50
+air|氟三氯甲烷(三氯一氟甲烷)|NIEA A715|50
+air|氯丙烯(3-氯-1-丙烯)|NIEA A715|50
+air|氯乙烯|NIEA A715|111
+air|氯乙烷|NIEA A715|50
+air|氯二氟甲烷(一氯二氟甲烷)|NIEA A715|50
+air|氯甲烷|NIEA A715|50
+air|氯甲苯(氯化甲基苯)|NIEA A715|50
+air|氯苯|NIEA A715|50
+air|溴甲烷|NIEA A715|111
+air|環己烷|NIEA A715|50
+air|甲基丙烯酸甲酯|NIEA A715|50
+air|甲基環己烷|NIEA A715|50
+air|甲基環戊烷|NIEA A715|111
+air|甲基異丁酮(4-甲基-2-戊酮)|NIEA A715|50
+air|甲苯|NIEA A715|111
+air|甲醇|NIEA A715|50
+air|異丙苯(異丙基苯)|NIEA A715|50
+air|異戊烷|NIEA A715|111
+air|苯|NIEA A715|111
+air|苯乙烯|NIEA A715|111
+air|苯乙烷(乙苯)|NIEA A715|111
+air|鄰-乙基甲苯|NIEA A715|111
+air|鄰-二氯苯(1,2-二氯苯)|NIEA A715|50
+air|鄰-二甲苯|NIEA A715|111
+air|醋酸乙烯酯(乙烯醋酸酯)|NIEA A715|50
+air|間,對-二甲苯|NIEA A715|111
+air|間-乙基甲苯|NIEA A715|111
+air|間-二乙基苯|NIEA A715|111
+air|間-二氯苯(1,3-二氯苯)|NIEA A715|111
+air|順-1,2-二氯乙烯|NIEA A715|50
+air|順-1,3-二氯丙烯|NIEA A715|50
+air|順2-丁烯|NIEA A715|111
+air|順2-戊烯|NIEA A715|111
+
+# ---------- 水質 (water) ----------
+water|水溫|NIEA W217|4
+water|pH值|NIEA W424|161
+water|導電度|NIEA W203|143
+water|溶氧|NIEA W422|47
+water|溶氧|NIEA W455|47
+water|水量|NIEA W022|34
+water|生化需氧量|NIEA W510|47
+water|化學需氧量|NIEA W517|47
+water|懸浮固體|NIEA W210|47
+water|氨氮|NIEA W437|47
+water|硝酸鹽氮|NIEA W436|47
+water|油脂|NIEA W505|47
+water|總磷|NIEA W442|47
+water|正磷酸鹽|NIEA W443|47
+water|大腸桿菌群|NIEA E202|8
+water|總菌落數|NIEA E204|9
+water|真色色度|NIEA W223|161
+water|硫酸鹽|NIEA W430|47
+water|氯鹽|NIEA W407|47
+water|總有機碳|NIEA W532|47
+water|砷|NIEA W434|47
+water|汞|NIEA W330|47
+water|六價鉻|NIEA W320|47
+water|鉻|NIEA W311|47
+water|鋅|NIEA W311|47
+water|鉛|NIEA W311|47
+water|鎘|NIEA W311|47
+water|鎳|NIEA W311|47
+water|銅|NIEA W311|47
+water|錳|NIEA W311|47
+water|鐵|NIEA W311|47
+water|銀|NIEA W311|47
+water|錫|NIEA W311|47
+water|硒|NIEA W311|47
+water|硒|NIEA W341|47
+water|總溶解固體|NIEA W210|47
+water|總硬度|NIEA W208|47
+
+# ---------- 噪音 (noise，含振動、低頻噪音) ----------
+noise|均能音量(Leq)|NIEA P201|16
+noise|均能音量(Leq,LF)|NIEA P205|16
+noise|Lvd(10)|NIEA P204|159
+noise|事件振動位準(Lveq)|NIEA P204|159
+
+# ---------- 地質 (geo) ----------
+geo|鋅|NIEA S321|44
+geo|鎘|NIEA S321|44
+geo|鉛|NIEA S321|44
+geo|鉻|NIEA S321|44
+geo|鎳|NIEA S321|44
+geo|鐵|NIEA S321|44
+geo|錳|NIEA S321|44
+geo|總汞|NIEA M317|44
+geo|砷|NIEA S310|44
+
+# ---------- 生態 (eco) ----------
+# 依需求說明，生態類別由其他人彙整提供，暫不建立此清單。

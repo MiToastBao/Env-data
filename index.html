@@ -258,6 +258,35 @@
   </div>
 </div>
 
+<!-- Common Items Add Modal -->
+<div id="commonItemsModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>☑️ 常用測項新增</h3>
+    <p class="hint">勾選要新增的測項，若某測項有多種檢測方法可選，會出現下拉選單讓您選擇，系統會依照選定的方法自動帶入對應單位。每個勾選的測項會新增一筆空白資料，地點／日期／時間／數值請自行填寫。</p>
+    <div id="commonItemsPresets" class="common-items-presets"></div>
+    <div id="commonItemsList" class="common-items-list"></div>
+    <div class="custom-item-add">
+      <div class="custom-item-add-title">＋ 新增自訂測項（會記住供這個計畫下次使用）</div>
+      <div class="custom-item-add-row">
+        <input type="text" id="customItemName" placeholder="測項名稱">
+        <input type="text" id="customItemMethod" placeholder="檢測方法（選填）">
+        <input type="text" id="customItemUnit" placeholder="單位代碼（選填，可查單位代碼表）">
+        <button type="button" id="btnCustomItemAdd" class="btn btn-ghost btn-sm">加入清單</button>
+      </div>
+    </div>
+    <div class="common-items-quantity">
+      <label>要建立幾份（例如幾個測站）：
+        <input type="number" id="commonItemsQuantity" min="1" max="50" value="1">
+      </label>
+      <span class="hint">例如勾選10個測項、份數填3，會一次新增 30 筆空白資料（每個測項各3筆）。</span>
+    </div>
+    <div class="modal-actions">
+      <button id="btnCommonItemsCancel" class="btn btn-ghost">取消</button>
+      <button id="btnCommonItemsApply" class="btn btn-primary">新增已選取的測項</button>
+    </div>
+  </div>
+</div>
+
 <!-- Template Download Modal -->
 <div id="templateDownloadModal" class="modal-overlay hidden">
   <div class="modal">
