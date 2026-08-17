@@ -159,6 +159,22 @@ table.mapping-table th { position: relative; }
 }
 .bulk-toolbar.hidden { display: none; }
 .col-check { width: 34px; text-align: center; }
+/* Global checkbox visibility fix: the native unchecked checkbox in most browsers
+   renders as a very light gray border on a white/near-white fill — against this
+   app's white or near-white cell backgrounds (especially the sticky columns'
+   white background), that border is faint enough to be genuinely hard to see,
+   confirmed from a real screenshot where the checkbox effectively disappeared
+   into its surroundings while scrolled. This isn't a layout/sticky-positioning
+   problem (that part is fixed separately) — it's pure color contrast. Applying a
+   visible outline (not `border`, which some browsers render inconsistently on
+   native checkbox controls) and a branded accent-color for the checked state
+   fixes every checkbox in the app at once, including ones added later. */
+input[type="checkbox"] {
+  accent-color: var(--primary);
+  outline: 1.5px solid #7d8f87;
+  outline-offset: 1px;
+}
+
 .col-check input[type="checkbox"], table.mapping-table input[type="checkbox"] {
   width: 15px; height: 15px; margin: 0; cursor: pointer; vertical-align: middle;
 }

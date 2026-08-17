@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.15';
+const APP_VERSION = 'v4.16';
 
 const CHANGELOG = [
+  {
+    version: 'v4.16',
+    date: '2026-08-17',
+    notes: [
+      '修正勾選方框難以辨識的問題：您的判斷正確，這不是固定欄位定位失效，而是瀏覽器原生的未勾選方框顏色（極淺灰色細邊框）跟白色儲存格背景太接近，實際上方框一直都在、也能點擊，只是視覺上很難注意到。已為全站所有勾選方框（主表格、常用測項新增、匯入預覽等）統一加上清楚可見的外框顏色，勾選後的顏色也改用系統主色調，不再需要往左捲動才看得到、才能點選',
+    ],
+  },
   {
     version: 'v4.15',
     date: '2026-08-17',
