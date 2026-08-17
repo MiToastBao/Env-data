@@ -644,26 +644,32 @@ function renderCategoryTab(project, catKey) {
       <table class="data-grid">
         <thead><tr>
           <th class="col-check"><input type="checkbox" id="checkAllRows" ${displayRows.length === 0 ? 'disabled' : ''}></th>
-          <th class="col-actions">操作</th>
-          <th class="col-num">#</th>
-          ${displayFieldOrder(cat).map(f => {
-            const activeFilter = state.columnFilters[catKey]?.[f.key];
-            const filterActive = activeFilter && activeFilter.size > 0;
-            const sortState = state.columnSort[catKey];
-            const isSorted = sortState && sortState.fieldKey === f.key;
-            // Always show SOME sort affordance next to the label — not just on hover
-            // (which is invisible on touch devices, and easy to miss even with a
-            // mouse if the person doesn't happen to hover before clicking). A
-            // neutral "⇅" hints "click to sort" for unsorted columns; an active
-            // sort shows its direction instead.
-            const sortIcon = isSorted
-              ? `<span class="sort-indicator sort-active">${sortState.direction === 'asc' ? '▲' : '▼'}</span>`
-              : `<span class="sort-indicator">⇅</span>`;
-            return `<th${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>
-              <span class="th-label th-sortable" data-sort-field="${escapeAttr(f.key)}" title="點擊依此欄位排序">${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}${sortIcon}</span>
-              <button class="col-filter-btn${filterActive ? ' col-filter-active' : ''}" data-field-key="${escapeAttr(f.key)}" title="篩選「${escapeAttr(f.label)}」">▾</button>
-            </th>`;
-          }).join('')}
+          ${(() => {
+            const renderHeaderField = (f) => {
+              const activeFilter = state.columnFilters[catKey]?.[f.key];
+              const filterActive = activeFilter && activeFilter.size > 0;
+              const sortState = state.columnSort[catKey];
+              const isSorted = sortState && sortState.fieldKey === f.key;
+              // Always show SOME sort affordance next to the label — not just on
+              // hover (which is invisible on touch devices, and easy to miss even
+              // with a mouse if the person doesn't happen to hover before
+              // clicking). A neutral "⇅" hints "click to sort" for unsorted
+              // columns; an active sort shows its direction instead.
+              const sortIcon = isSorted
+                ? `<span class="sort-indicator sort-active">${sortState.direction === 'asc' ? '▲' : '▼'}</span>`
+                : `<span class="sort-indicator">⇅</span>`;
+              return `<th${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}${f.help ? ` title="${escapeAttr(f.help)}"` : ''}>
+                <span class="th-label th-sortable" data-sort-field="${escapeAttr(f.key)}" title="點擊依此欄位排序">${escapeHtml(f.label)}${f.required ? '<span class="req">＊</span>' : ''}${f.help ? ' ℹ️' : ''}${sortIcon}</span>
+                <button class="col-filter-btn${filterActive ? ' col-filter-active' : ''}" data-field-key="${escapeAttr(f.key)}" title="篩選「${escapeAttr(f.label)}」">▾</button>
+              </th>`;
+            };
+            const order = displayFieldOrder(cat);
+            const pinnedHeaders = order.slice(0, 2).map(renderHeaderField).join('');
+            const restHeaders = order.slice(2).map(renderHeaderField).join('');
+            // Same reordering as rowHtml: 操作/# sit right after the pinned 地點/測項
+            // headers, before the rest — see the comment in rowHtml for why.
+            return `${pinnedHeaders}<th class="col-actions">操作</th><th class="col-num">#</th>${restHeaders}`;
+          })()}
         </tr></thead>
         <tbody id="gridBody">${displayEntries.map(({ row, idx }) => rowHtml(cat, row, idx)).join('')}</tbody>
       </table>
@@ -1080,8 +1086,18 @@ function displayFieldOrder(cat) {
   ];
 }
 function rowHtml(cat, row, idx) {
-  const cells = displayFieldOrder(cat).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
-  return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td><td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td class="col-num">${idx + 1}</td>${cells}</tr>`;
+  const pinnedCells = displayFieldOrder(cat).slice(0, 2).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
+  const restCells = displayFieldOrder(cat).slice(2).map(f => `<td>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
+  // 操作 (delete button) and # (row number) sit right after 地點/測項 (the pinned
+  // columns), before the rest of the normally-scrolling fields — reducing the
+  // pinned/sticky column chain from 5 down to 3 (勾選, 地點, 測項). Fewer adjacent
+  // sticky columns means less surface area for the browser's sticky-repaint
+  // compositing quirk that was making the checkbox visually vanish while scrolled
+  // (confirmed real, not a positioning bug — the checkbox stayed fully clickable
+  // underneath). 操作/# were never reported as having this problem themselves, so
+  // they're the columns it's safest to drop from the pinned set — still visible
+  // right after the pinned ones without needing to scroll all the way right.
+  return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td>${pinnedCells}<td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td class="col-num">${idx + 1}</td>${restCells}</tr>`;
 }
 
 function fieldControlHTML(field, value, rowAttr) {

@@ -172,56 +172,48 @@ table.mapping-table th { position: relative; }
    checkbox's own rendering at all. */
 input[type="checkbox"] {
   accent-color: var(--primary);
-  /* Defensive fix for a real, confirmed browser rendering issue: scrolling a
-     sticky column far enough right made the checkbox itself visually disappear
-     (while remaining fully clickable underneath — confirmed the bulk-select
-     toolbar still activated) even though its cell's background stayed correctly
-     pinned. That's a paint-order quirk, not a positioning bug — something in the
-     sticky column's own stacking context was compositing on top of the checkbox
-     during scroll repaint. Giving the checkbox its own explicit stacking context
-     with a z-index higher than any sticky column (max 4 elsewhere in this file)
-     forces the browser to always composite it above everything else nearby,
-     regardless of the exact repaint quirk that was hiding it. */
-  position: relative;
-  z-index: 5;
 }
 
 .col-check input[type="checkbox"], table.mapping-table input[type="checkbox"] {
   width: 15px; height: 15px; margin: 0; cursor: pointer; vertical-align: middle;
 }
 table.data-grid th.col-check, table.data-grid td.col-check,
-table.data-grid th.col-actions, table.data-grid td.col-actions,
-table.data-grid th.col-num, table.data-grid td.col-num,
 table.data-grid th.col-loc, table.data-grid td.col-loc,
 table.data-grid th.col-item, table.data-grid td.col-item {
   position: sticky; z-index: 3; background: #fff;
 }
-table.data-grid th.col-check, table.data-grid th.col-actions, table.data-grid th.col-num, table.data-grid th.col-loc, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
+table.data-grid th.col-check, table.data-grid th.col-loc, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
 /* Checkbox's own cell gets a faint off-white tint (same tone as the page
    background) instead of pure white, purely so the native checkbox's light gray
    border has something to read against — see the checkbox-visibility comment
-   above. Left as plain white for 操作/#/地點/測項 cells, which don't have this
-   problem (their content — a red trash icon, a number, or actual text — already
-   reads clearly against white). */
+   above. Left as plain white for 地點/測項 cells, which don't have this problem
+   (their content — actual text — already reads clearly against white). */
 table.data-grid td.col-check { background: var(--bg); }
 table.data-grid td.col-check, table.data-grid th.col-check { left: 0; }
+/* 操作 (delete button) and # (row number) are DELIBERATELY NOT pinned — see the
+   comment in app.js's rowHtml for why: reducing the pinned-column chain from 5 to
+   just 3 (勾選/地點/測項) meaningfully cuts down the surface area for a real,
+   confirmed browser rendering quirk where scrolling far enough right made the
+   checkbox visually vanish (while remaining fully clickable) despite correct
+   positioning — a sticky-repaint compositing issue that gets more likely to
+   surface the more sticky columns sit immediately adjacent to each other. 操作/#
+   were never reported as having this problem themselves, so dropping just those
+   two from the pinned set (they still display, just scroll away like any normal
+   column) was the lowest-risk way to shrink the sticky chain without losing the
+   part that was actually requested — seeing 地點/測項 (and now being ABLE TO
+   CHECK the row) while scrolled. */
 table.data-grid .col-actions { width: 44px; overflow: hidden; }
-table.data-grid td.col-actions, table.data-grid th.col-actions { left: 34px; }
-/* # (row number) sits right after 操作 — given a fixed width so every later
-   sticky column's `left` offset can be computed precisely; without a fixed width
-   here the browser would size it to content, and the sticky columns after it
-   would drift out of alignment. */
 table.data-grid .col-num { width: 36px; text-align: center; overflow: hidden; }
-table.data-grid td.col-num, table.data-grid th.col-num { left: 78px; }
-/* 採樣地點 (or equivalent per category) sits right after checkbox+操作+#, since
-   the on-screen field order is rearranged (see displayFieldOrder in app.js) so
-   the pinned columns are truly DOM-adjacent — position:sticky's `left` only lines
-   up correctly when there's no non-sticky column sitting between pinned ones.
-   Pinned so you know which site a row belongs to while scrolling right. */
-table.data-grid td.col-loc, table.data-grid th.col-loc { left: 114px; width: 140px; min-width: 140px; }
+/* 採樣地點 (or equivalent per category) sits right after 勾選, since the on-screen
+   field order is rearranged (see displayFieldOrder in app.js) so the pinned
+   columns are truly DOM-adjacent — position:sticky's `left` only lines up
+   correctly when there's no non-sticky column sitting between pinned ones.
+   Pinned so you know which site a row belongs to — and can select it — while
+   scrolling right. */
+table.data-grid td.col-loc, table.data-grid th.col-loc { left: 34px; width: 140px; min-width: 140px; }
 /* 檢測項目 (or equivalent) pinned right after 採樣地點 — the boundary shadow sits here
    since this is the last pinned column before normally-scrolling content. */
-table.data-grid td.col-item, table.data-grid th.col-item { left: 254px; min-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
+table.data-grid td.col-item, table.data-grid th.col-item { left: 174px; min-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
 
 .table-wrap {
   overflow: auto; max-width: 100%; max-height: 65vh;

@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.18';
+const APP_VERSION = 'v4.19';
 
 const CHANGELOG = [
+  {
+    version: 'v4.19',
+    date: '2026-08-17',
+    notes: [
+      '改用結構性的方式（而非強制圖層堆疊）解決勾選框視覺消失的問題：固定欄位從原本5個（勾選、操作、序號、地點、測項）簡化為3個（勾選、地點、測項），操作按鈕跟序號改成一般欄位、緊接在地點測項之後（不用捲到最右邊也看得到，只是不再固定），減少緊鄰固定欄位的數量，降低這類瀏覽器重繪疊層問題的發生機會',
+    ],
+  },
   {
     version: 'v4.18',
     date: '2026-08-17',
