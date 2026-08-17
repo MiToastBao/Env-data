@@ -15,8 +15,28 @@ const ExportEngine = {
   _dateCell(isoStr) {
     const m = String(isoStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return isoStr || '';
-    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-    return { t: 'd', v: d, z: 'yyyy/mm/dd' };
+    // Compute the Excel date SERIAL NUMBER directly (days since the 1900 date
+    // system's epoch) instead of handing SheetJS a JS Date object. Confirmed as a
+    // real bug: constructing `new Date(Date.UTC(y, m-1, d))` and letting SheetJS
+    // convert it produced a cell whose underlying value showed a non-zero time
+    // (e.g. "08:00:00 AM" in the formula bar for a plain "2026-05-13" date) —
+    // SheetJS's Date->serial conversion reads the JS Date through local-timezone
+    // getters internally, so a UTC-midnight Date silently picked up the browser's
+    // UTC+8 offset as a fractional day. Computing the serial via pure arithmetic
+    // on the calendar numbers actually typed in sidesteps that path entirely: no
+    // Date object is ever handed to SheetJS, so no timezone conversion can happen.
+    const y = +m[1], mo = +m[2], d = +m[3];
+    // Days between this date and 1899-12-31 (Excel's day-0 reference under the
+    // 1900 date system), computed via UTC millisecond arithmetic — both sides are
+    // UTC timestamps, so the subtraction itself is timezone-agnostic.
+    const utcMs = Date.UTC(y, mo - 1, d);
+    const epochMs = Date.UTC(1899, 11, 31);
+    let serial = Math.round((utcMs - epochMs) / 86400000);
+    // Excel (for backward compatibility with a Lotus 1-2-3 bug) treats 1900 as a
+    // leap year even though it isn't one — every real date on or after 1900-03-01
+    // needs its serial bumped by 1 to match Excel's actual numbering.
+    if (serial > 59) serial += 1;
+    return { t: 'n', v: serial, z: 'yyyy/mm/dd' };
   },
   /** "HH:MM:SS" -> a SheetJS time cell object (stored as a fraction-of-day number,
    *  which is how Excel represents time-only values internally), or '' passthrough. */

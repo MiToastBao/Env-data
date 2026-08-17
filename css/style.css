@@ -290,15 +290,22 @@ table.conflict-diff-table td.diff-new { color: var(--primary-dark); font-weight:
 .template-download-item.template-missing { flex-wrap: wrap; border-color: var(--danger); background: #fdf1ef; }
 .template-missing-note { width: 100%; margin-top: 6px; color: var(--danger); }
 
-.common-items-list { max-height: 45vh; overflow-y: auto; margin: 10px 0; border: 1px solid var(--border); border-radius: 6px; }
-.common-item-row {
-  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
-  border-bottom: 1px solid var(--border); font-size: 13.5px; cursor: pointer;
+.common-items-table-wrap { max-height: 45vh; overflow-y: auto; margin: 10px 0; border: 1px solid var(--border); border-radius: 6px; }
+.common-items-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.common-items-table thead th {
+  position: sticky; top: 0; z-index: 1; background: #eef3f1; color: var(--primary-dark);
+  text-align: left; padding: 8px 10px; font-size: 12.5px; border-bottom: 1px solid var(--border);
 }
+.common-items-table .ci-col-check { width: 34px; text-align: center; }
+.common-items-table th.ci-sortable { cursor: pointer; user-select: none; }
+.common-items-table th.ci-sortable:hover { text-decoration: underline; }
+.common-item-row { border-bottom: 1px solid var(--border); cursor: pointer; }
 .common-item-row:last-child { border-bottom: none; }
 .common-item-row:hover { background: var(--bg); }
-.common-item-name { flex: 1; }
-.common-item-method-select { font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; font-family: inherit; max-width: 55%; }
+.common-item-row td { padding: 7px 10px; vertical-align: middle; }
+.common-item-name { font-weight: 500; }
+.common-item-method { color: var(--text-muted); font-size: 12.5px; }
+.common-item-method-select { font-size: 12px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; font-family: inherit; width: 100%; }
 .custom-item-add { margin-top: 12px; padding: 10px; border: 1px dashed var(--border); border-radius: 6px; }
 .custom-item-add-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .custom-item-add-row { display: flex; gap: 6px; flex-wrap: wrap; }

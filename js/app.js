@@ -1121,6 +1121,20 @@ function wireGridEvents(project, catKey, cat) {
       if (derived) {
         rows[rowIdx]['比較關係'] = derived.cmp;
         if (derived.val !== value) rows[rowIdx][fieldKey] = derived.val;
+        // Typing "NA"/"未檢測" into the value field means "未檢測" belongs in 備註,
+        // not in 比較關係/檢測數值 — same rule the import parsers use. Only touch
+        // 備註 when there's actually a note to record or a stale one to clear (so
+        // this never clobbers unrelated text the person already wrote in 備註).
+        if ('備註' in rows[rowIdx]) {
+          const existingNote = rows[rowIdx]['備註'] || '';
+          if (derived.note && !existingNote.includes(derived.note)) {
+            rows[rowIdx]['備註'] = existingNote ? `${existingNote}；${derived.note}` : derived.note;
+          } else if (!derived.note && existingNote === '未檢測') {
+            // the value was corrected away from NA — drop the now-stale auto-note,
+            // but leave any note the person wrote themselves untouched.
+            rows[rowIdx]['備註'] = '';
+          }
+        }
       }
     }
     DataStore.saveData(project.id, catKey, rows);
@@ -1497,40 +1511,102 @@ function openCommonItemsModal(project, catKey) {
   document.getElementById('commonItemsModal').classList.remove('hidden');
 }
 function renderCommonItemsList(cat) {
-  const listEl = document.getElementById('commonItemsList');
   const entries = state.commonItemsEntries;
+  state.commonItemsSort = null;
+  state.commonItemsDisplayOrder = entries.map((_, i) => i);
+  renderCommonItemsTableBody(cat);
+  wireCommonItemsSortHeaders(cat);
+}
+/** Redraws just the table BODY in whatever order state.commonItemsDisplayOrder
+ *  currently specifies — used both for the initial render and after re-sorting.
+ *  `data-idx` always refers to the position in state.commonItemsEntries (the
+ *  underlying data), never the on-screen row position, so re-sorting never
+ *  scrambles which entry a checkbox/method-select belongs to. Preserves whatever
+ *  was already checked/selected before this redraw (sorting shouldn't lose the
+ *  person's in-progress selections). */
+function renderCommonItemsTableBody(cat) {
+  const tbody = document.getElementById('commonItemsTableBody');
+  const entries = state.commonItemsEntries;
+  const order = state.commonItemsDisplayOrder;
   if (entries.length === 0) {
-    listEl.innerHTML = '<p class="hint">目前沒有內建測項，也還沒有這個計畫自己用過的測項紀錄。可以用下方「新增自訂測項」開始建立。</p>';
+    tbody.innerHTML = '<tr><td colspan="3" class="hint" style="padding:16px;text-align:center">目前沒有內建測項，也還沒有這個計畫自己用過的測項紀錄。可以用下方「新增自訂測項」開始建立。</td></tr>';
     return;
   }
-  listEl.innerHTML = entries.map((entry, i) => {
+  const checkedIdxSet = new Set([...document.querySelectorAll('.common-item-check:checked')].map(cb => Number(cb.dataset.idx)));
+  const selectedVariantByIdx = {};
+  document.querySelectorAll('.common-item-method-select').forEach(sel => { selectedVariantByIdx[Number(sel.dataset.idx)] = sel.value; });
+
+  tbody.innerHTML = order.map(i => {
+    const entry = entries[i];
     const hasMultiple = entry.variants.length > 1;
     const searchText = [entry.itemName, ...entry.variants.map(v => v.method)].filter(Boolean).join(' ').toLowerCase();
+    const isChecked = checkedIdxSet.has(i);
+    const selectedVariantIdx = selectedVariantByIdx[i] !== undefined ? selectedVariantByIdx[i] : '0';
+    const methodCell = hasMultiple
+      ? `<select class="common-item-method-select" data-idx="${i}">
+          ${entry.variants.map((v, vi) => `<option value="${vi}" ${String(vi) === selectedVariantIdx ? 'selected' : ''}>${escapeHtml(v.method || '（無方法資訊）')}${v.unitCode ? `（${escapeHtml(UNIT_CODES[v.unitCode] || v.unitCode)}）` : ''}</option>`).join('')}
+        </select>`
+      : escapeHtml(entry.variants[0] ? [entry.variants[0].method, entry.variants[0].unitCode ? (UNIT_CODES[entry.variants[0].unitCode] || entry.variants[0].unitCode) : ''].filter(Boolean).join('，') : '');
     return `
-      <label class="common-item-row" data-idx="${i}" data-search-text="${escapeAttr(searchText)}">
-        <input type="checkbox" class="common-item-check" data-idx="${i}">
-        <span class="common-item-name">${escapeHtml(entry.itemName)}</span>
-        ${hasMultiple
-          ? `<select class="common-item-method-select" data-idx="${i}">
-              ${entry.variants.map((v, vi) => `<option value="${vi}">${escapeHtml(v.method || '（無方法資訊）')}${v.unitCode ? `（${escapeHtml(UNIT_CODES[v.unitCode] || v.unitCode)}）` : ''}</option>`).join('')}
-            </select>`
-          : `<span class="hint">${entry.variants[0] ? escapeHtml([entry.variants[0].method, entry.variants[0].unitCode ? (UNIT_CODES[entry.variants[0].unitCode] || entry.variants[0].unitCode) : ''].filter(Boolean).join('，')) : ''}</span>`
-        }
-      </label>
+      <tr class="common-item-row" data-idx="${i}" data-search-text="${escapeAttr(searchText)}">
+        <td class="ci-col-check"><input type="checkbox" class="common-item-check" data-idx="${i}" ${isChecked ? 'checked' : ''}></td>
+        <td class="common-item-name">${escapeHtml(entry.itemName)}</td>
+        <td class="common-item-method">${methodCell}</td>
+      </tr>
     `;
   }).join('');
   wireCommonItemsListFilters();
 }
-/** Wires the search box, "只顯示已勾選" toggle, and live selected-count indicator
- *  for the common-items checklist. Uses DOM show/hide (not re-rendering the list)
- *  so checkbox/method-select state is never lost while filtering — same pattern as
- *  the main data grid's search/column-filter. Re-run this after any re-render of
- *  the list itself (e.g. after adding a custom item). */
+/** Click-to-sort on the table headers, Excel-style: cycles asc → desc → original
+ *  order. Bound once per modal-open (the <th> elements themselves are static HTML,
+ *  not regenerated by renderCommonItemsTableBody), using onclick assignment so
+ *  reopening the modal never double-binds a second handler. */
+function wireCommonItemsSortHeaders(cat) {
+  document.querySelectorAll('.ci-sortable').forEach(th => {
+    th.onclick = () => {
+      const sortKey = th.dataset.sort;
+      const current = state.commonItemsSort;
+      let direction = 'asc';
+      if (current && current.key === sortKey) {
+        direction = current.direction === 'asc' ? 'desc' : (current.direction === 'desc' ? null : 'asc');
+      }
+      const entries = state.commonItemsEntries;
+      if (!direction) {
+        state.commonItemsDisplayOrder = entries.map((_, i) => i);
+        state.commonItemsSort = null;
+      } else {
+        const getKey = (i) => sortKey === 'name' ? entries[i].itemName : (entries[i].variants[0]?.method || '');
+        state.commonItemsDisplayOrder = entries.map((_, i) => i).sort((a, b) => {
+          const cmp = String(getKey(a)).localeCompare(String(getKey(b)), 'zh-Hant');
+          return direction === 'asc' ? cmp : -cmp;
+        });
+        state.commonItemsSort = { key: sortKey, direction };
+      }
+      document.querySelectorAll('.ci-sortable .sort-indicator').forEach(el => { el.textContent = '⇅'; el.classList.remove('sort-active'); });
+      if (direction) {
+        const indicator = th.querySelector('.sort-indicator');
+        indicator.textContent = direction === 'asc' ? '▲' : '▼';
+        indicator.classList.add('sort-active');
+      }
+      renderCommonItemsTableBody(cat);
+    };
+  });
+}
+/** Wires the search box, "只顯示已勾選" toggle, "全選目前顯示的" checkbox, and
+ *  live selected-count indicator. Uses DOM show/hide (not re-rendering) so
+ *  checkbox/method-select state is never lost while filtering. Shows an explicit
+ *  message when the filtered result is empty — including the specific case where
+ *  "只顯示已勾選" is on but nothing is checked yet, which otherwise looks
+ *  indistinguishable from "the search box is broken" (confirmed real confusion:
+ *  the list going blank with zero explanation looked exactly like a bug). Re-run
+ *  after any re-render of the table body. */
 function wireCommonItemsListFilters() {
   const searchInput = document.getElementById('commonItemsSearch');
   const showCheckedOnly = document.getElementById('commonItemsShowCheckedOnly');
+  const checkAllVisible = document.getElementById('commonItemsCheckAllVisible');
   const countEl = document.getElementById('commonItemsCheckedCount');
-  const rows = () => [...document.querySelectorAll('.common-item-row')];
+  const tbody = document.getElementById('commonItemsTableBody');
+  const rows = () => [...tbody.querySelectorAll('.common-item-row')];
 
   const updateCount = () => {
     const n = document.querySelectorAll('.common-item-check:checked').length;
@@ -1538,16 +1614,43 @@ function wireCommonItemsListFilters() {
   };
   const applyFilters = () => {
     const q = searchInput.value.trim().toLowerCase();
+    let anyVisible = false;
     rows().forEach(row => {
       const matchesSearch = !q || row.dataset.searchText.includes(q);
       const matchesChecked = !showCheckedOnly.checked || row.querySelector('.common-item-check').checked;
-      row.classList.toggle('row-hidden', !(matchesSearch && matchesChecked));
+      const visible = matchesSearch && matchesChecked;
+      row.classList.toggle('row-hidden', !visible);
+      if (visible) anyVisible = true;
     });
+    let emptyRow = tbody.querySelector('.common-items-empty-row');
+    if (!anyVisible && rows().length > 0) {
+      if (!emptyRow) {
+        emptyRow = document.createElement('tr');
+        emptyRow.className = 'common-items-empty-row';
+        tbody.appendChild(emptyRow);
+      }
+      const noneCheckedYet = showCheckedOnly.checked && document.querySelectorAll('.common-item-check:checked').length === 0;
+      const msg = noneCheckedYet
+        ? '目前還沒有勾選任何測項。取消「只顯示已勾選」即可看到完整清單。'
+        : '找不到符合搜尋條件的測項，請換個關鍵字試試。';
+      emptyRow.innerHTML = `<td colspan="3" class="hint" style="padding:16px;text-align:center">${msg}</td>`;
+    } else if (emptyRow) {
+      emptyRow.remove();
+    }
   };
   searchInput.value = '';
   showCheckedOnly.checked = false;
   searchInput.oninput = applyFilters;
   showCheckedOnly.onchange = applyFilters;
+  if (checkAllVisible) {
+    checkAllVisible.checked = false;
+    checkAllVisible.onchange = () => {
+      rows().forEach(row => {
+        if (!row.classList.contains('row-hidden')) row.querySelector('.common-item-check').checked = checkAllVisible.checked;
+      });
+      updateCount();
+    };
+  }
   rows().forEach(row => {
     row.querySelector('.common-item-check').addEventListener('change', updateCount);
   });
@@ -3125,12 +3228,14 @@ function itemIdentityKey(row, cat) {
  *  stale comparison symbol left over from before, not leave one behind. */
 function deriveComparisonRelation(rawValue) {
   const s = String(rawValue ?? '').trim();
-  if (s === '') return { cmp: '', val: '' };
-  if (/^ND$/i.test(s)) return { cmp: 'ND', val: 'ND' };
-  if (/^(NA|未檢測|N\.A\.?)$/i.test(s)) return { cmp: '未檢測', val: '未檢測' };
+  if (s === '') return { cmp: '', val: '', note: '' };
+  // ND: 比較關係="ND", 檢測數值 stays BLANK — same rule as SmartParse.parseValueCell.
+  if (/^ND$/i.test(s)) return { cmp: 'ND', val: '', note: '' };
+  // NA/未檢測: neither 比較關係 nor 檢測數值 carries this — it belongs in 備註.
+  if (/^(NA|未檢測|N\.A\.?)$/i.test(s)) return { cmp: '', val: '', note: '未檢測' };
   const m = s.match(/^([<>])\s*([\d.]+)$/);
-  if (m) return { cmp: m[1], val: m[2] };
-  return { cmp: '', val: s };
+  if (m) return { cmp: m[1], val: m[2], note: '' };
+  return { cmp: '', val: s, note: '' };
 }
 const SNAPSHOT_EXCLUDED_FIELDS = new Set(['日期(起)', '時間(起)', '日期(迄)', '時間(迄)', '檢測數值', '監測數值', '比較關係']);
 /** Every field's value except the row's own location/item identity and its actual

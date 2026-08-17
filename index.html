@@ -277,7 +277,18 @@
       </label>
       <span class="hint" id="commonItemsCheckedCount">已勾選 0 項</span>
     </div>
-    <div id="commonItemsList" class="common-items-list"></div>
+    <div id="commonItemsList" class="common-items-table-wrap">
+      <table class="common-items-table">
+        <thead>
+          <tr>
+            <th class="ci-col-check"><input type="checkbox" id="commonItemsCheckAllVisible" title="全選目前顯示的測項"></th>
+            <th class="ci-sortable" data-sort="name">測項名稱 <span class="sort-indicator">⇅</span></th>
+            <th class="ci-sortable" data-sort="method">方法／單位 <span class="sort-indicator">⇅</span></th>
+          </tr>
+        </thead>
+        <tbody id="commonItemsTableBody"></tbody>
+      </table>
+    </div>
     <div class="custom-item-add">
       <div class="custom-item-add-title">＋ 新增自訂測項（會記住供這個計畫下次使用）</div>
       <div class="custom-item-add-row">

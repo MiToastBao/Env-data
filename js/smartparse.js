@@ -214,24 +214,32 @@ const SmartParse = {
   /** Parse a raw "檢測值" cell into {比較關係, 檢測數值} pairs, handling ND / </> / scientific-ish notation. */
   parseValueCell(raw) {
     const s = String(raw ?? '').trim();
-    if (s === '') return { cmp: '', val: '' };
-    if (/^ND$/i.test(s)) return { cmp: 'ND', val: 'ND' };
-    if (/^(NA|未檢測|N\.A\.?)$/i.test(s)) return { cmp: '未檢測', val: '未檢測' };
+    if (s === '') return { cmp: '', val: '', note: '' };
+    // ND: 比較關係 filled, 檢測數值 stays BLANK — "ND" is not itself a measured
+    // value, so it has no business sitting in the value field once 比較關係
+    // already records it. Detection limit (if the report has one) still applies
+    // here — see call sites below.
+    if (/^ND$/i.test(s)) return { cmp: 'ND', val: '', note: '' };
+    // NA / 未檢測: neither 比較關係 nor 檢測數值 should carry "未檢測" text — that
+    // belongs in 備註 instead (returned via `note`), since 比較關係 is meant to
+    // hold only the ND/</> symbols, not free-text explanations. Call sites are
+    // responsible for merging `note` into the row's 備註 field.
+    if (/^(NA|未檢測|N\.A\.?)$/i.test(s)) return { cmp: '', val: '', note: '未檢測' };
     // "<10.0(6.9)" style: the instrument actually read 6.9, but that's below the
     // report's required first calibration-curve point (a different threshold from
     // the plain detection limit), so the filing must show "<10.0" — the parenthetical
     // raw reading is informational only and is intentionally dropped, not stored.
     let m = s.match(/^([<>])\s*([\d.]+)\s*\(\s*[\d.]+\s*\)$/);
-    if (m) return { cmp: m[1], val: m[2] };
+    if (m) return { cmp: m[1], val: m[2], note: '' };
     m = s.match(/^([<>])\s*([\d.]+)$/);
-    if (m) return { cmp: m[1], val: m[2] };
+    if (m) return { cmp: m[1], val: m[2], note: '' };
     // e.g. "6.0×104" meaning 6.0×10^4 (single trailing exponent digit)
     m = s.match(/^([\d.]+)\s*[×xX]\s*10\^?(\d)$/);
     if (m) {
       const val = parseFloat(m[1]) * Math.pow(10, parseInt(m[2], 10));
-      return { cmp: '', val: String(val) };
+      return { cmp: '', val: String(val), note: '' };
     }
-    return { cmp: '', val: s };
+    return { cmp: '', val: s, note: '' };
   },
 
   // ---------- report-type detectors & parsers ----------
@@ -482,7 +490,7 @@ const SmartParse = {
         dateEnd = `${y2}-${pad(m2)}-${pad(d2)}`;
       }
 
-      const { cmp, val } = this.parseValueCell(valRaw);
+      const { cmp, val, note } = this.parseValueCell(valRaw);
       rows.push({
         '日期(起)': dateStart, '時間(起)': '', '日期(迄)': dateEnd, '時間(迄)': '',
         '採樣地點': location, '座標系統': '', '採樣座標-經度 X': '', '採樣座標-緯度 Y': '',
@@ -491,6 +499,7 @@ const SmartParse = {
         '檢測濃度/質量單位': unitLookup.code, '其他檢測濃度/質量單位': unitLookup.code ? '' : unitText,
         '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
         '檢測方法': method, '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
+        '備註': note || '',
         _siteCode: siteCode, _rawLocation: location,
         _uncertainUnit: !!unitText && !unitLookup.confident,
       });
@@ -593,29 +602,33 @@ const SmartParse = {
     // Use the same ND/"< X" parser as the water-table reader — a daily average like
     // "< 0.3" (below detection limit) must never be silently dropped just because
     // parseFloat can't read the "<" prefix; every pollutant column can show this.
+    // "Has content" now checks cmp/note rather than val alone, since ND's val is
+    // intentionally blank (see parseValueCell) — checking val==='' alone would
+    // wrongly treat a real "ND" reading as an empty cell to skip.
     this.AIR_POLLUTANT_DEFS.forEach(def => {
       const col = cols[def.key];
       if (col < 0) return;
       if (hiddenCols.has(col)) { skippedPlaceholderItems.push(def.key); return; }
       const v = this.cellStr(avgRow[col]);
       if (v === '') return;
-      const { cmp, val } = this.parseValueCell(v);
-      if (val === '' || (cmp === '' && isNaN(parseFloat(val)))) return;
+      const { cmp, val, note } = this.parseValueCell(v);
+      const hasContent = cmp !== '' || note !== '' || (val !== '' && !isNaN(parseFloat(val)));
+      if (!hasContent) return;
       const methodKey = (def.methodFrom || def.key).toUpperCase();
       rows.push({
         ...baseRow, '檢測項目': def.key, '檢測濃度/質量單位': def.unit,
         '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
-        '檢測方法': methodMap[methodKey] || '',
+        '檢測方法': methodMap[methodKey] || '', '備註': note || '',
       });
     });
     if (cols.TSP >= 0 && hiddenCols.has(cols.TSP)) {
       skippedPlaceholderItems.push('TSP');
     } else if (tspVal) {
-      const { cmp, val } = this.parseValueCell(tspVal);
+      const { cmp, val, note } = this.parseValueCell(tspVal);
       rows.push({
         ...baseRow, '檢測項目': 'TSP', '檢測濃度/質量單位': '127',
         '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
-        '檢測方法': methodMap.TSP || '',
+        '檢測方法': methodMap.TSP || '', '備註': note || '',
       });
     }
     if (cols.pm25 >= 0 && hiddenCols.has(cols.pm25)) {
@@ -623,12 +636,13 @@ const SmartParse = {
     } else if (cols.pm25 >= 0) {
       const pm25Raw = this.cellStr(grid[unitRow]?.[cols.pm25]);
       if (pm25Raw !== '') {
-        const { cmp, val } = this.parseValueCell(pm25Raw);
-        if (val !== '' && !(cmp === '' && isNaN(parseFloat(val)))) {
+        const { cmp, val, note } = this.parseValueCell(pm25Raw);
+        const hasContent = cmp !== '' || note !== '' || (val !== '' && !isNaN(parseFloat(val)));
+        if (hasContent) {
           rows.push({
             ...baseRow, '檢測項目': 'PM2.5', '檢測濃度/質量單位': '127',
             '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
-            '檢測方法': pm25Method,
+            '檢測方法': pm25Method, '備註': note || '',
           });
         }
       }
@@ -688,13 +702,18 @@ const SmartParse = {
       let methodText = '';
       if (cells[idx] && /^NIEA/i.test(cells[idx])) { methodText = cells[idx]; idx++; }
 
-      const { cmp, val } = this.parseValueCell(valueRaw);
+      const { cmp, val, note } = this.parseValueCell(valueRaw);
       // No unit column at all for this item (e.g. pH is dimensionless) means "無" —
       // official unit code 161 — not a blank/unknown unit. Only missing/unmatched
       // unit *text* (unitText present but not found in the code table) is uncertain.
       const unitLookup = unitText ? this.reverseUnitLookup(unitText, itemName) : (this.ITEM_UNIT_OVERRIDES[itemName] ? { code: this.ITEM_UNIT_OVERRIDES[itemName], confident: true } : { code: '161', confident: true });
       const valFormatted = /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val;
-      const limitFormatted = /^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : limitRaw;
+      // 檢測極限 only makes sense alongside "ND" (below detection limit entirely)
+      // or "<X" (below this specific threshold) — a plain measured value or a
+      // ">X" reading isn't characterized by a detection limit, so leave it blank
+      // even if the report's own 偵測極限 column happened to have something in it.
+      const limitApplies = cmp === 'ND' || cmp === '<';
+      const limitFormatted = limitApplies && /^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : '';
 
       rows.push({
         '日期(起)': sampleDateISO, '時間(起)': sampleTime, '日期(迄)': sampleDateISO, '時間(迄)': sampleTime,
@@ -705,6 +724,7 @@ const SmartParse = {
         '比較關係': cmp, '檢測數值': valFormatted, '檢測極限': limitFormatted,
         '檢測方法': this.extractMethodCode(methodText) || defaultMethod,
         '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
+        '備註': note || '',
         _siteCode: siteCode, _rawLocation: location,
         _uncertainUnit: unitText && !unitLookup.confident,
       });
