@@ -645,8 +645,8 @@ function renderCategoryTab(project, catKey) {
         <thead><tr>
           <th class="col-check"><input type="checkbox" id="checkAllRows" ${displayRows.length === 0 ? 'disabled' : ''}></th>
           <th class="col-actions">操作</th>
-          <th>#</th>
-          ${cat.fields.map(f => {
+          <th class="col-num">#</th>
+          ${displayFieldOrder(cat).map(f => {
             const activeFilter = state.columnFilters[catKey]?.[f.key];
             const filterActive = activeFilter && activeFilter.size > 0;
             const sortState = state.columnSort[catKey];
@@ -820,7 +820,14 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
     renderContent();
   });
 
-  document.querySelectorAll('.col-filter-btn').forEach(btn => {
+  // Scoped to #gridBody's own <thead> siblings (the main data table itself), not a
+  // bare document-wide selector — a global `.col-filter-btn` query here would also
+  // pick up the SAME class used by the 常用測項新增 table's column-filter buttons
+  // (shared styling, deliberately reused), double-binding a click handler onto
+  // those buttons that calls this function with the wrong arguments and throws.
+  // Scoping to the table this function actually belongs to avoids that collision
+  // entirely, regardless of what else on the page happens to reuse the class name.
+  document.querySelectorAll('table.data-grid .col-filter-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       openColumnFilterPopup(catKey, fieldKeyOf(btn), btn);
@@ -1053,9 +1060,28 @@ function openBatchHistoryModal(project, catKey) {
   document.getElementById('batchHistoryModal').classList.remove('hidden');
 }
 
+/** Reorders fields for on-screen DISPLAY ONLY — never touches cat.fields itself,
+ *  which must stay in the official schema order everywhere else (export, data
+ *  storage, mapping tables) — so the pinned/sticky columns (地點, 測項) are truly
+ *  DOM-adjacent to the other pinned columns (勾選, 操作). This matters because
+ *  position:sticky's `left` offset only works correctly when the pinned columns
+ *  are contiguous in actual document order. Confirmed as a real bug: 採樣地點 sits
+ *  5th in the schema (after 日期/時間 columns), so its CSS `left:78px` — written
+ *  assuming it directly follows 操作 — didn't match where it actually sat in the
+ *  DOM, breaking sticky positioning enough that the checkbox column effectively
+ *  disappeared while scrolling right. */
+function displayFieldOrder(cat) {
+  const locField = cat.locationField;
+  const itemField = cat.itemField;
+  return [
+    ...cat.fields.filter(f => f.key === locField),
+    ...cat.fields.filter(f => f.key === itemField && f.key !== locField),
+    ...cat.fields.filter(f => f.key !== locField && f.key !== itemField),
+  ];
+}
 function rowHtml(cat, row, idx) {
-  const cells = cat.fields.map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
-  return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td><td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td>${idx + 1}</td>${cells}</tr>`;
+  const cells = displayFieldOrder(cat).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
+  return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td><td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td class="col-num">${idx + 1}</td>${cells}</tr>`;
 }
 
 function fieldControlHTML(field, value, rowAttr) {
@@ -1468,6 +1494,69 @@ function wireDropzone(dropzoneId, onFiles) {
   });
 }
 
+/**
+ * Lets files ACCUMULATE across multiple separate drag-and-drop actions (or
+ * multiple file-picker selections) before actually starting the import — rather
+ * than each drop immediately kicking off processing. This matters because the OS
+ * file picker/drag-and-drop can only select files from ONE folder view at a time;
+ * someone with files scattered across several folders had no way to combine them
+ * into a single import short of dragging one at a time and re-running the import
+ * flow for each — confirmed as a real workflow pain point. Each new drop/selection
+ * is MERGED into the running list (by name+size, so re-dropping the same file
+ * twice by accident doesn't duplicate it), individually removable, with an
+ * explicit confirm button that only appears once at least one file is staged.
+ * Returns { reset() } so the caller can clear the staged list when its modal closes.
+ */
+function wireFileStaging({ dropzoneId, fileInputId, listId, confirmBtnId, onConfirm }) {
+  const fileInput = document.getElementById(fileInputId);
+  const listEl = document.getElementById(listId);
+  const confirmBtn = document.getElementById(confirmBtnId);
+  let staged = [];
+
+  const renderList = () => {
+    if (staged.length === 0) {
+      listEl.innerHTML = '';
+      confirmBtn.classList.add('hidden');
+      return;
+    }
+    listEl.innerHTML = staged.map((f, i) => `
+      <div class="staged-file-item">
+        <span class="staged-file-name">📄 ${escapeHtml(f.name)}</span>
+        <button type="button" class="staged-file-remove" data-idx="${i}" title="移除這個檔案">✕</button>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('.staged-file-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        staged.splice(Number(btn.dataset.idx), 1);
+        renderList();
+      });
+    });
+    confirmBtn.classList.remove('hidden');
+    confirmBtn.textContent = `✅ 開始判讀這 ${staged.length} 個檔案`;
+  };
+
+  const addFiles = (fileList) => {
+    [...fileList].forEach(f => {
+      if (!staged.some(s => s.name === f.name && s.size === f.size)) staged.push(f);
+    });
+    renderList();
+  };
+
+  fileInput.addEventListener('change', (e) => {
+    addFiles(e.target.files);
+    fileInput.value = ''; // reset so picking the same file again still fires 'change'
+  });
+  wireDropzone(dropzoneId, addFiles);
+  confirmBtn.addEventListener('click', () => {
+    const filesToImport = staged;
+    staged = [];
+    renderList();
+    onConfirm(filesToImport);
+  });
+
+  return { reset: () => { staged = []; renderList(); } };
+}
+
 function addEmptyRow(project, catKey) {
   const cat = CATEGORIES[catKey];
   const rows = DataStore.getData(project.id, catKey);
@@ -1505,9 +1594,14 @@ function openCommonItemsModal(project, catKey) {
 
   state.commonItemsCatKey = catKey;
   state.commonItemsEntries = [...builtIn, ...projectOwnItems];
+  state.commonItemsColumnFilters = {};
   renderCommonItemsList(cat);
   renderItemPresets(catKey);
   document.getElementById('commonItemsQuantity').value = '1';
+  document.getElementById('commonItemsFilterName').classList.remove('col-filter-active');
+  document.getElementById('commonItemsFilterMethod').classList.remove('col-filter-active');
+  document.getElementById('commonItemsFilterName').onclick = (e) => openCommonItemsColumnFilterPopup('name', e.currentTarget);
+  document.getElementById('commonItemsFilterMethod').onclick = (e) => openCommonItemsColumnFilterPopup('method', e.currentTarget);
   document.getElementById('commonItemsModal').classList.remove('hidden');
 }
 function renderCommonItemsList(cat) {
@@ -1548,7 +1642,7 @@ function renderCommonItemsTableBody(cat) {
         </select>`
       : escapeHtml(entry.variants[0] ? [entry.variants[0].method, entry.variants[0].unitCode ? (UNIT_CODES[entry.variants[0].unitCode] || entry.variants[0].unitCode) : ''].filter(Boolean).join('，') : '');
     return `
-      <tr class="common-item-row" data-idx="${i}" data-search-text="${escapeAttr(searchText)}">
+      <tr class="common-item-row" data-idx="${i}" data-search-text="${escapeAttr(searchText)}" data-name-value="${escapeAttr(entry.itemName)}" data-method-value="${escapeAttr(entry.variants[0]?.method || '')}">
         <td class="ci-col-check"><input type="checkbox" class="common-item-check" data-idx="${i}" ${isChecked ? 'checked' : ''}></td>
         <td class="common-item-name">${escapeHtml(entry.itemName)}</td>
         <td class="common-item-method">${methodCell}</td>
@@ -1592,6 +1686,72 @@ function wireCommonItemsSortHeaders(cat) {
     };
   });
 }
+/** Excel-style column filter for the common-items table — a checkbox list of
+ *  distinct values (not just sort) for 測項名稱 or 方法／單位, reusing the same
+ *  #colFilterPopup element and interaction pattern as the main data grid's column
+ *  filter and the import row-detail table's, for a consistent feel. Filter state
+ *  lives in state.commonItemsColumnFilters and is combined with search/checked-only
+ *  in applyFilters below — a row must pass every active filter simultaneously. */
+function openCommonItemsColumnFilterPopup(filterKey, btnEl) {
+  const popup = document.getElementById('colFilterPopup');
+  const entries = state.commonItemsEntries;
+  const uniqueValues = filterKey === 'name'
+    ? [...new Set(entries.map(e => e.itemName))].sort((a, b) => a.localeCompare(b, 'zh-Hant'))
+    : [...new Set(entries.map(e => e.variants[0]?.method || ''))].sort((a, b) => a.localeCompare(b, 'zh-Hant'));
+  if (!state.commonItemsColumnFilters) state.commonItemsColumnFilters = {};
+  const currentFilter = state.commonItemsColumnFilters[filterKey];
+
+  popup.innerHTML = `
+    <div class="col-filter-search"><input type="text" id="colFilterSearchInput" placeholder="搜尋選項..."></div>
+    <div class="col-filter-actions">
+      <button type="button" id="colFilterSelectAll" class="btn btn-ghost btn-sm">全選</button>
+      <button type="button" id="colFilterClearAll" class="btn btn-ghost btn-sm">清除</button>
+    </div>
+    <div class="col-filter-list" id="colFilterList">
+      ${uniqueValues.map(v => `
+        <label class="col-filter-item">
+          <input type="checkbox" value="${escapeAttr(v)}" ${!currentFilter || currentFilter.has(v) ? 'checked' : ''}>
+          <span>${escapeHtml(v === '' ? '（空白）' : v)}</span>
+        </label>
+      `).join('')}
+    </div>
+    <div class="col-filter-buttons">
+      <button type="button" id="colFilterCancel" class="btn btn-ghost btn-sm">取消</button>
+      <button type="button" id="colFilterApply" class="btn btn-primary btn-sm">確定</button>
+    </div>
+  `;
+
+  const rect = btnEl.getBoundingClientRect();
+  const popupWidth = 240;
+  popup.style.left = Math.max(4, Math.min(rect.left, window.innerWidth - popupWidth - 4)) + 'px';
+  popup.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+  popup.classList.remove('hidden');
+
+  document.getElementById('colFilterSearchInput').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    document.querySelectorAll('#colFilterList .col-filter-item').forEach(label => {
+      label.style.display = (!q || label.textContent.toLowerCase().includes(q)) ? '' : 'none';
+    });
+  });
+  document.getElementById('colFilterSelectAll').addEventListener('click', () => {
+    document.querySelectorAll('#colFilterList input[type="checkbox"]').forEach(cb => { cb.checked = true; });
+  });
+  document.getElementById('colFilterClearAll').addEventListener('click', () => {
+    document.querySelectorAll('#colFilterList input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+  });
+  document.getElementById('colFilterCancel').addEventListener('click', () => { popup.classList.add('hidden'); });
+  document.getElementById('colFilterApply').addEventListener('click', () => {
+    const checked = [...document.querySelectorAll('#colFilterList input[type="checkbox"]:checked')].map(cb => cb.value);
+    if (checked.length === uniqueValues.length) {
+      delete state.commonItemsColumnFilters[filterKey];
+    } else {
+      state.commonItemsColumnFilters[filterKey] = new Set(checked);
+    }
+    popup.classList.add('hidden');
+    btnEl.classList.toggle('col-filter-active', !!state.commonItemsColumnFilters[filterKey]);
+    document.getElementById('commonItemsSearch').dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
 /** Wires the search box, "只顯示已勾選" toggle, "全選目前顯示的" checkbox, and
  *  live selected-count indicator. Uses DOM show/hide (not re-rendering) so
  *  checkbox/method-select state is never lost while filtering. Shows an explicit
@@ -1614,11 +1774,14 @@ function wireCommonItemsListFilters() {
   };
   const applyFilters = () => {
     const q = searchInput.value.trim().toLowerCase();
+    const colFilters = state.commonItemsColumnFilters || {};
     let anyVisible = false;
     rows().forEach(row => {
       const matchesSearch = !q || row.dataset.searchText.includes(q);
       const matchesChecked = !showCheckedOnly.checked || row.querySelector('.common-item-check').checked;
-      const visible = matchesSearch && matchesChecked;
+      const matchesName = !colFilters.name || colFilters.name.has(row.dataset.nameValue);
+      const matchesMethod = !colFilters.method || colFilters.method.has(row.dataset.methodValue);
+      const visible = matchesSearch && matchesChecked && matchesName && matchesMethod;
       row.classList.toggle('row-hidden', !visible);
       if (visible) anyVisible = true;
     });
@@ -1630,9 +1793,12 @@ function wireCommonItemsListFilters() {
         tbody.appendChild(emptyRow);
       }
       const noneCheckedYet = showCheckedOnly.checked && document.querySelectorAll('.common-item-check:checked').length === 0;
+      const hasColFilter = colFilters.name || colFilters.method;
       const msg = noneCheckedYet
         ? '目前還沒有勾選任何測項。取消「只顯示已勾選」即可看到完整清單。'
-        : '找不到符合搜尋條件的測項，請換個關鍵字試試。';
+        : hasColFilter
+          ? '找不到符合目前篩選條件的測項，請調整搜尋或欄位篩選再試試。'
+          : '找不到符合搜尋條件的測項，請換個關鍵字試試。';
       emptyRow.innerHTML = `<td colspan="3" class="hint" style="padding:16px;text-align:center">${msg}</td>`;
     } else if (emptyRow) {
       emptyRow.remove();
@@ -2464,6 +2630,7 @@ const AUTO_DETECT_CATEGORIES = ['noise', 'water', 'air']; // categories with sma
 function openBatchImportModal() {
   document.getElementById('batchFileInput').value = '';
   document.getElementById('batchDetectStatus').textContent = '';
+  if (state._batchStaging) state._batchStaging.reset();
   document.getElementById('batchImportModal').classList.remove('hidden');
 }
 function closeBatchImportModal() {
@@ -2586,6 +2753,7 @@ function openImportModal(catKey) {
   state.importPeriod = '';
   document.getElementById('importModalTitle').textContent = `匯入${CATEGORIES[catKey].label}監測資料`;
   document.getElementById('importFileInput').value = '';
+  if (state._importStaging) state._importStaging.reset();
   document.getElementById('importStep1').classList.remove('hidden');
   document.getElementById('importStep2').classList.add('hidden');
   document.getElementById('importStep3').classList.add('hidden');
@@ -3740,8 +3908,11 @@ function init() {
   document.getElementById('btnBackupImport').addEventListener('click', () => document.getElementById('backupFileInput').click());
   document.getElementById('backupFileInput').addEventListener('change', (e) => backupImport(e.target.files[0]));
 
-  document.getElementById('importFileInput').addEventListener('change', (e) => handleImportFile(e.target.files));
-  wireDropzone('importDropzone', (files) => handleImportFile(files));
+  const importStaging = wireFileStaging({
+    dropzoneId: 'importDropzone', fileInputId: 'importFileInput', listId: 'importStagedList',
+    confirmBtnId: 'btnImportStagedConfirm', onConfirm: (files) => handleImportFile(files),
+  });
+  state._importStaging = importStaging; // so openImportModal can reset it when the modal (re)opens
   document.getElementById('btnImportCancel').addEventListener('click', closeImportModal);
   document.getElementById('btnImportConfirm').addEventListener('click', confirmImport);
 
@@ -3850,8 +4021,11 @@ function init() {
     renderContent();
   });
 
-  document.getElementById('batchFileInput').addEventListener('change', (e) => handleBatchFiles(e.target.files));
-  wireDropzone('batchDropzone', (files) => handleBatchFiles(files));
+  const batchStaging = wireFileStaging({
+    dropzoneId: 'batchDropzone', fileInputId: 'batchFileInput', listId: 'batchStagedList',
+    confirmBtnId: 'btnBatchStagedConfirm', onConfirm: (files) => handleBatchFiles(files),
+  });
+  state._batchStaging = batchStaging;
   document.getElementById('btnBatchCancel').addEventListener('click', closeBatchImportModal);
 
   document.getElementById('btnBatchHistoryClose').addEventListener('click', () => document.getElementById('batchHistoryModal').classList.add('hidden'));

@@ -164,21 +164,30 @@ table.mapping-table th { position: relative; }
 }
 table.data-grid th.col-check, table.data-grid td.col-check,
 table.data-grid th.col-actions, table.data-grid td.col-actions,
+table.data-grid th.col-num, table.data-grid td.col-num,
 table.data-grid th.col-loc, table.data-grid td.col-loc,
 table.data-grid th.col-item, table.data-grid td.col-item {
   position: sticky; z-index: 3; background: #fff;
 }
-table.data-grid th.col-check, table.data-grid th.col-actions, table.data-grid th.col-loc, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
+table.data-grid th.col-check, table.data-grid th.col-actions, table.data-grid th.col-num, table.data-grid th.col-loc, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
 table.data-grid td.col-check, table.data-grid th.col-check { left: 0; }
 table.data-grid .col-actions { width: 44px; overflow: hidden; }
 table.data-grid td.col-actions, table.data-grid th.col-actions { left: 34px; }
-/* 採樣地點 (or equivalent per category) sits right after checkbox+delete, since it
-   comes before the item column in every category's field order — pinned so you know
-   which site a row belongs to while scrolling right. */
-table.data-grid td.col-loc, table.data-grid th.col-loc { left: 78px; width: 140px; min-width: 140px; }
+/* # (row number) sits right after 操作 — given a fixed width so every later
+   sticky column's `left` offset can be computed precisely; without a fixed width
+   here the browser would size it to content, and the sticky columns after it
+   would drift out of alignment. */
+table.data-grid .col-num { width: 36px; text-align: center; overflow: hidden; }
+table.data-grid td.col-num, table.data-grid th.col-num { left: 78px; }
+/* 採樣地點 (or equivalent per category) sits right after checkbox+操作+#, since
+   the on-screen field order is rearranged (see displayFieldOrder in app.js) so
+   the pinned columns are truly DOM-adjacent — position:sticky's `left` only lines
+   up correctly when there's no non-sticky column sitting between pinned ones.
+   Pinned so you know which site a row belongs to while scrolling right. */
+table.data-grid td.col-loc, table.data-grid th.col-loc { left: 114px; width: 140px; min-width: 140px; }
 /* 檢測項目 (or equivalent) pinned right after 採樣地點 — the boundary shadow sits here
    since this is the last pinned column before normally-scrolling content. */
-table.data-grid td.col-item, table.data-grid th.col-item { left: 218px; min-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
+table.data-grid td.col-item, table.data-grid th.col-item { left: 254px; min-width: 130px; box-shadow: 2px 0 4px -2px rgba(0,0,0,0.15); }
 
 .table-wrap {
   overflow: auto; max-width: 100%; max-height: 65vh;
@@ -244,6 +253,17 @@ table.data-grid td.col-actions { text-align: center; }
 table.mapping-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.mapping-table th { background: #eef3f1; text-align: left; padding: 8px 10px; position: sticky; top: 0; white-space: nowrap; }
 table.mapping-table td { padding: 6px 10px; border-top: 1px solid var(--border); }
+/* The row-detail table (in import preview) needs its checkbox column pinned to
+   the left too, same reasoning as the main data grid — without this, scrolling
+   the table right to check a field's value (座標系統, etc) hides the very
+   checkbox needed to select/exclude that row, forcing a scroll back left first
+   just to click it. Scoped to .row-detail-toggle so this doesn't affect the
+   generic mapping-table used elsewhere (e.g. the import column-mapping step). */
+.row-detail-toggle table.mapping-table th:first-child,
+.row-detail-toggle table.mapping-table td:first-child {
+  position: sticky; left: 0; z-index: 2; background: #fff; width: 34px; text-align: center;
+}
+.row-detail-toggle table.mapping-table th:first-child { z-index: 3; background: #eef3f1; }
 table.mapping-table select { width: 100%; min-width: 160px; padding: 6px; font-family: inherit; border: 1px solid var(--border); border-radius: 5px; }
 table.mapping-table input[type="text"] { min-width: 110px; }
 table.mapping-table td.unmatched { color: #b8860b; }
@@ -297,8 +317,10 @@ table.conflict-diff-table td.diff-new { color: var(--primary-dark); font-weight:
   text-align: left; padding: 8px 10px; font-size: 12.5px; border-bottom: 1px solid var(--border);
 }
 .common-items-table .ci-col-check { width: 34px; text-align: center; }
-.common-items-table th.ci-sortable { cursor: pointer; user-select: none; }
-.common-items-table th.ci-sortable:hover { text-decoration: underline; }
+.common-items-table .ci-sortable { cursor: pointer; user-select: none; }
+.common-items-table .ci-sortable:hover { text-decoration: underline; }
+.common-items-table thead th { position: relative; }
+.common-items-table thead .col-filter-btn { margin-left: 4px; }
 .common-item-row { border-bottom: 1px solid var(--border); cursor: pointer; }
 .common-item-row:last-child { border-bottom: none; }
 .common-item-row:hover { background: var(--bg); }
@@ -331,3 +353,15 @@ table.conflict-diff-table td.diff-new { color: var(--primary-dark); font-weight:
 .dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 10px; transition: border-color 0.15s, background 0.15s; }
 .dropzone.dropzone-active { border-color: var(--primary); background: #eef7f2; }
 .dropzone-hint { text-align: center; color: var(--text-muted); font-size: 12px; margin: 6px 0 0 0; pointer-events: none; }
+
+.staged-file-list { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; max-height: 200px; overflow-y: auto; }
+.staged-file-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; font-size: 13px;
+}
+.staged-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.staged-file-remove {
+  border: none; background: transparent; cursor: pointer; color: var(--text-muted); font-size: 13px;
+  padding: 2px 6px; border-radius: 50%; line-height: 1; flex-shrink: 0;
+}
+.staged-file-remove:hover { background: var(--danger); color: #fff; }

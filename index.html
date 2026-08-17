@@ -76,8 +76,10 @@
       </details>
       <div class="dropzone" id="importDropzone">
         <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
-        <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡</p>
+        <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡（可分次拖曳，累積多個檔案後再一次確認）</p>
       </div>
+      <div id="importStagedList" class="staged-file-list"></div>
+      <button type="button" id="btnImportStagedConfirm" class="btn btn-primary hidden" style="width:100%;margin-top:8px">✅ 開始判讀</button>
       <div id="importPdfWarning" class="warning hidden">⚠️ PDF 為自動判讀表格內容，準確度有限，請務必於下方逐欄核對後再匯入。</div>
     </div>
     <div id="importStep2" class="hidden">
@@ -219,8 +221,10 @@
     <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告，也支援單一 PDF 內含多類別內容，會逐頁嘗試判斷），系統會自動判斷每個檔案（或工作表／頁面）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前僅噪音／水質／空氣品質三類支援自動判斷；地質／生態尚無法自動判斷，請於各分類頁面用一般匯入方式處理。<strong>PDF 判讀準確度低於 Excel，來自 PDF 的資料請務必逐項核對。</strong></p>
     <div class="dropzone" id="batchDropzone">
       <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
-      <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡</p>
+      <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡（可分次拖曳，累積多個檔案後再一次確認）</p>
     </div>
+    <div id="batchStagedList" class="staged-file-list"></div>
+    <button type="button" id="btnBatchStagedConfirm" class="btn btn-primary hidden" style="width:100%;margin-top:8px">✅ 開始判讀</button>
     <div id="batchDetectStatus" class="hint" style="margin-top:12px"></div>
     <div class="modal-actions">
       <button id="btnBatchCancel" class="btn btn-ghost">取消</button>
@@ -282,8 +286,14 @@
         <thead>
           <tr>
             <th class="ci-col-check"><input type="checkbox" id="commonItemsCheckAllVisible" title="全選目前顯示的測項"></th>
-            <th class="ci-sortable" data-sort="name">測項名稱 <span class="sort-indicator">⇅</span></th>
-            <th class="ci-sortable" data-sort="method">方法／單位 <span class="sort-indicator">⇅</span></th>
+            <th>
+              <span class="ci-sortable" data-sort="name">測項名稱 <span class="sort-indicator">⇅</span></span>
+              <button type="button" class="col-filter-btn" id="commonItemsFilterName" title="篩選測項名稱">▾</button>
+            </th>
+            <th>
+              <span class="ci-sortable" data-sort="method">方法／單位 <span class="sort-indicator">⇅</span></span>
+              <button type="button" class="col-filter-btn" id="commonItemsFilterMethod" title="篩選方法">▾</button>
+            </th>
           </tr>
         </thead>
         <tbody id="commonItemsTableBody"></tbody>
