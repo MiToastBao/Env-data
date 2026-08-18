@@ -643,7 +643,7 @@ function renderCategoryTab(project, catKey) {
     <div class="table-wrap">
       <table class="data-grid">
         <thead><tr>
-          <th class="col-check"><input type="checkbox" id="checkAllRows" ${displayRows.length === 0 ? 'disabled' : ''}></th>
+          <th class="col-check">${checkboxHTML(` id="checkAllRows" ${displayRows.length === 0 ? 'disabled' : ''}`)}</th>
           ${(() => {
             const renderHeaderField = (f) => {
               const activeFilter = state.columnFilters[catKey]?.[f.key];
@@ -1076,6 +1076,27 @@ function openBatchHistoryModal(project, catKey) {
  *  assuming it directly follows 操作 — didn't match where it actually sat in the
  *  DOM, breaking sticky positioning enough that the checkbox column effectively
  *  disappeared while scrolling right. */
+/**
+ * Renders a checkbox as a hidden native <input> (fully functional — .checked,
+ * change events, :disabled all work exactly as before) paired with a plain CSS
+ * box drawn as a sibling <span>. This exists specifically because the native
+ * checkbox's own rendering, inside a position:sticky cell, was confirmed to
+ * visually vanish while scrolled (while remaining fully clickable underneath) in
+ * real testing — a browser compositing quirk that persisted even after reducing
+ * the sticky column count. Text content in the OTHER sticky columns (地點/測項)
+ * never had this problem, which is the tell: plain box/text rendering is stable
+ * under sticky positioning, but the native checkbox WIDGET specifically was not.
+ * Drawing the visible box ourselves with a `<span>` and `border`/`background`
+ * sidesteps whatever internal compositing path was failing, since a styled span
+ * renders exactly the same simple way as any of the text that was never a
+ * problem. The real `<input>` stays functionally present (opacity:0, same
+ * position/size) so every existing .checked/change-event/:checked selector, and
+ * every test, keeps working unchanged — only the visual box is new.
+ */
+function checkboxHTML(extraAttrs, checked) {
+  return `<label class="cb-wrap"><input type="checkbox"${extraAttrs}${checked ? ' checked' : ''}><span class="cb-box"></span></label>`;
+}
+
 function displayFieldOrder(cat) {
   const locField = cat.locationField;
   const itemField = cat.itemField;
@@ -1097,7 +1118,7 @@ function rowHtml(cat, row, idx) {
   // underneath). 操作/# were never reported as having this problem themselves, so
   // they're the columns it's safest to drop from the pinned set — still visible
   // right after the pinned ones without needing to scroll all the way right.
-  return `<tr data-row="${idx}"><td class="col-check"><input type="checkbox" class="row-check" data-row="${idx}"></td>${pinnedCells}<td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td class="col-num">${idx + 1}</td>${restCells}</tr>`;
+  return `<tr data-row="${idx}"><td class="col-check">${checkboxHTML(` class="row-check" data-row="${idx}"`)}</td>${pinnedCells}<td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td class="col-num">${idx + 1}</td>${restCells}</tr>`;
 }
 
 function fieldControlHTML(field, value, rowAttr) {
@@ -2476,7 +2497,7 @@ function renderRowDetailTable(containerEl, rows, cat) {
       <div class="mapping-table-wrap" style="max-height:320px">
         <table class="mapping-table">
           <thead><tr>
-            <th><input type="checkbox" id="rowDetailCheckAll" checked></th>
+            <th>${checkboxHTML(' id="rowDetailCheckAll"', true)}</th>
             <th>
               <span class="th-label">地點</span>
               <button type="button" class="col-filter-btn${locFilterActive ? ' col-filter-active' : ''}" data-row-detail-field="loc" title="篩選地點">▾</button>
@@ -2490,7 +2511,7 @@ function renderRowDetailTable(containerEl, rows, cat) {
           <tbody id="rowDetailTbody">
             ${rows.map(r => `
               <tr data-search-text="${escapeAttr([r[locField], r[itemField], r['日期(起)'], r['時間(起)'], r[valueField]].filter(Boolean).join(' ').toLowerCase())}" data-loc-value="${escapeAttr(r[locField] || '')}" data-item-value="${escapeAttr(r[itemField] || '')}">
-                <td><input type="checkbox" class="row-detail-check" data-row-uid="${r._rowUid}" ${state.excludedRowIndices.has(r._rowUid) ? '' : 'checked'}></td>
+                <td>${checkboxHTML(` class="row-detail-check" data-row-uid="${r._rowUid}"`, !state.excludedRowIndices.has(r._rowUid))}</td>
                 <td>${escapeHtml(r[locField] || '')}</td>
                 <td>${escapeHtml(r[itemField] || '')}</td>
                 <td>${escapeHtml(r['日期(起)'] || '')}</td>

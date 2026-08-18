@@ -159,35 +159,40 @@ table.mapping-table th { position: relative; }
 }
 .bulk-toolbar.hidden { display: none; }
 .col-check { width: 34px; text-align: center; }
-/* Global checkbox visibility fix, take 2: the first attempt used `outline`, which
-   in a real browser (confirmed from screenshots) bled outside each checkbox's own
-   box and smeared together with the neighboring rows' outlines in the narrow
-   sticky column, looking like a broken gray bar rather than distinct checkboxes —
-   worse than the original problem. Reverted that entirely. The actual fix now:
-   only `accent-color` (which purely recolors the CHECKED-state fill, has no
-   footprint outside the control's own box, and cannot bleed into neighboring
-   rows) plus tinting the sticky columns' background from pure white to the same
-   very-pale off-white already used for the page background (--bg) — enough for a
-   native checkbox's light gray border to read against, without touching the
-   checkbox's own rendering at all. */
-input[type="checkbox"] {
-  accent-color: var(--primary);
+/* Custom-drawn checkbox, take 3. Both prior attempts (an outline ring, then just
+   an off-white cell tint) targeted the NATIVE checkbox's own rendering — but the
+   real cause turned out to be the native checkbox WIDGET itself failing to
+   composite visibly while its cell was position:sticky and scrolled, confirmed
+   even after cutting the sticky column count from 5 down to 3. Plain text in the
+   neighboring sticky columns (地點/測項) never had this problem — only the native
+   form control did. So: stop relying on native checkbox rendering entirely. The
+   real <input> stays fully functional (checked state, change events, :disabled)
+   but is visually hidden (opacity 0) at the same position/size as a plain `<span>`
+   drawn next to it with ordinary border/background — the same simple rendering
+   path that text already proved stable under sticky positioning. See
+   checkboxHTML() in app.js for the markup this pairs with. */
+.cb-wrap { position: relative; display: inline-flex; width: 16px; height: 16px; cursor: pointer; vertical-align: middle; }
+.cb-wrap input[type="checkbox"] {
+  position: absolute; inset: 0; margin: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer;
 }
+.cb-box {
+  display: inline-block; width: 16px; height: 16px; box-sizing: border-box;
+  border: 1.5px solid #7d8f87; border-radius: 3px; background: #fff; pointer-events: none;
+}
+.cb-wrap input[type="checkbox"]:checked + .cb-box { background: var(--primary); border-color: var(--primary); }
+.cb-wrap input[type="checkbox"]:checked + .cb-box::after {
+  content: ''; position: absolute; left: 5px; top: 2px; width: 4px; height: 8px;
+  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg);
+}
+.cb-wrap input[type="checkbox"]:disabled + .cb-box { opacity: 0.4; }
+.cb-wrap input[type="checkbox"]:focus-visible + .cb-box { outline: 2px solid var(--primary); outline-offset: 1px; }
 
-.col-check input[type="checkbox"], table.mapping-table input[type="checkbox"] {
-  width: 15px; height: 15px; margin: 0; cursor: pointer; vertical-align: middle;
-}
 table.data-grid th.col-check, table.data-grid td.col-check,
 table.data-grid th.col-loc, table.data-grid td.col-loc,
 table.data-grid th.col-item, table.data-grid td.col-item {
   position: sticky; z-index: 3; background: #fff;
 }
 table.data-grid th.col-check, table.data-grid th.col-loc, table.data-grid th.col-item { z-index: 4; background: #eef3f1; }
-/* Checkbox's own cell gets a faint off-white tint (same tone as the page
-   background) instead of pure white, purely so the native checkbox's light gray
-   border has something to read against — see the checkbox-visibility comment
-   above. Left as plain white for 地點/測項 cells, which don't have this problem
-   (their content — actual text — already reads clearly against white). */
 table.data-grid td.col-check { background: var(--bg); }
 table.data-grid td.col-check, table.data-grid th.col-check { left: 0; }
 /* 操作 (delete button) and # (row number) are DELIBERATELY NOT pinned — see the

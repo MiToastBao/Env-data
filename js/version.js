@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.19';
+const APP_VERSION = 'v4.20';
 
 const CHANGELOG = [
+  {
+    version: 'v4.20',
+    date: '2026-08-17',
+    notes: [
+      '徹底改用不同做法解決勾選框視覺消失的問題：確認減少固定欄位數量後問題依然存在，代表根源不是欄位數量，而是瀏覽器對「原生勾選框元件」在固定定位欄位裡的渲染方式本身不穩定——旁邊的地點、測項文字從來沒出過問題，代表純文字/色塊的渲染才是穩定的。已改成不再依賴瀏覽器原生勾選框的視覺呈現，改用純 CSS 手繪的方框（跟文字一樣簡單、穩定的渲染方式），原本的勾選功能、快捷鍵、批次選取等完全不受影響，只是換了一種畫面呈現方式',
+    ],
+  },
   {
     version: 'v4.19',
     date: '2026-08-17',
