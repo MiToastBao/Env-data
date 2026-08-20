@@ -2973,18 +2973,52 @@ async function handleImportFile(fileOrFiles) {
           templateLikeFiles.push(file.name);
           continue;
         }
-        for (const [sheetName, grid] of Object.entries(grids)) {
-          const rows = SmartParse.parseSheet(catKey, sheetName, grid);
+        // TWO PASSES PER FILE, and the second one only if the first found nothing.
+        //
+        // Pass 1 runs the template-specific parsers alone. If ANY sheet in the file
+        // is recognized, the file's report format is known — and the sheets that
+        // didn't match are then working sheets, not another report: a 氣象 tab, a
+        // 工作表1 scratch pad, a 主辦 summary the consultant hand-typed for the
+        // client. Turning the layout guesser loose on those invents items that
+        // duplicate readings already read correctly from the real report sheets
+        // (a 主辦 summary produced five bogus "(7～20)"-style rows next to the
+        // 均能音量(Leq) rows the noise parser had already got right).
+        //
+        // Pass 2 — the guesser — therefore runs only when pass 1 came back empty for
+        // the whole file, which is exactly the "unfamiliar lab's report" case it
+        // exists for.
+        const sheetEntries = Object.entries(grids);
+        let fileRows = [];
+        const unmatchedSheets = [];
+        sheetEntries.forEach(([sheetName, grid]) => {
+          const rows = SmartParse.parseSheet(catKey, sheetName, grid, { allowAutoDetect: false });
           if (rows && rows.length) {
-            rows.forEach(r => { r._sourceFile = file.name; r._sourceSheet = sheetName; });
-            aggregate.rows.push(...rows);
+            rows.forEach(r => { r._sourceSheet = sheetName; });
+            fileRows.push(...rows);
             aggregate.matchedSheets.push(`${file.name} / ${sheetName}`);
-            aggregate.sourceFiles.add(file.name);
-            if (isPdf) aggregate.hasPdfSource = true;
-            if (rows.some(r => r._autoDetected)) aggregate.hasAutoDetected = true;
           } else {
-            aggregate.skippedSheets.push(`${file.name} / ${sheetName}`);
+            unmatchedSheets.push(sheetName);
           }
+        });
+        if (fileRows.length === 0) {
+          unmatchedSheets.splice(0).forEach(sheetName => {
+            const rows = AutoDetect.parseSheet(catKey, sheetName, grids[sheetName]);
+            if (rows && rows.length) {
+              rows.forEach(r => { r._sourceSheet = sheetName; });
+              fileRows.push(...rows);
+              aggregate.matchedSheets.push(`${file.name} / ${sheetName}`);
+              aggregate.hasAutoDetected = true;
+            } else {
+              unmatchedSheets.push(sheetName);
+            }
+          });
+        }
+        unmatchedSheets.forEach(sheetName => aggregate.skippedSheets.push(`${file.name} / ${sheetName}`));
+        if (fileRows.length) {
+          fileRows.forEach(r => { r._sourceFile = file.name; });
+          aggregate.rows.push(...fileRows);
+          aggregate.sourceFiles.add(file.name);
+          if (isPdf) aggregate.hasPdfSource = true;
         }
       }
       if (anyTemplateLike && aggregate.rows.length === 0) {

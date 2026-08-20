@@ -479,7 +479,11 @@ const AutoDetect = {
     if (s === '' || s.length > 24) return false;
     if (/[:：]/.test(s)) return false;
     if (/^-?[\d.,%]+$/.test(s)) return false;
-    if (/^\d{1,2}\s*[~～-]\s*\d{1,2}$/.test(s)) return false; // "14~15" is a time, not an item
+    // A bare time window is a WHEN, not a WHAT: "14~15", "(7～20)", "(23～翌日7)".
+    // Reports print these as sub-headings under a real measurement name (日間 L日,
+    // 晚間 L晚…), and treating them as items produces meaningless "(7～20)" rows that
+    // duplicate readings already read properly from the report sheets themselves.
+    if (/^[(（]?\s*\d{1,2}\s*[~～至\-—]\s*(?:翌日)?\s*\d{1,2}\s*[)）]?$/.test(s)) return false;
     if (!/[A-Za-z0-9\u4e00-\u9fff]/.test(s)) return false;      // "*", "—", "※" are placeholders
     if (this._isNumericCell(s)) return false;                    // "< 0.002" is a reading, not a name
     // A standard field heading (單位, 監測項目, 備註…) is a column ABOUT the
