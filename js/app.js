@@ -2446,8 +2446,66 @@ function renderItemChecklist(containerEl, rows, itemField, onChange) {
   });
 }
 
+/**
+ * Some reports state SEVERAL different statistics for the same measurement on the
+ * same day — a 24-hour air-quality report gives每小時測值, 日平均值, 最大小時平均值,
+ * 最小小時平均值 and 最大8小時平均值 for every pollutant. Which one belongs in a filing
+ * is a decision only the person can make, so the parser reads them all, tags each row
+ * with `_statKind`, and this checklist picks. 日平均值 is pre-selected because that is
+ * what these filings normally report.
+ *
+ * Rows for anything other than the daily average carry the statistic in their 檢測項目
+ * name ("CO最大8小時平均值") — see AIR_STAT_ROWS in smartparse.js for why.
+ */
+function renderStatChecklist(containerEl, rows, onChange) {
+  if (!containerEl) return;
+  const kinds = [];
+  rows.forEach(r => {
+    if (!r._statKind) return;
+    let k = kinds.find(x => x.key === r._statKind);
+    if (!k) { k = { key: r._statKind, label: r._statLabel || r._statKind, count: 0 }; kinds.push(k); }
+    k.count++;
+  });
+  if (kinds.length <= 1) { containerEl.innerHTML = ''; state.statSelection = null; return; }
+  if (!state.statSelection) {
+    state.statSelection = new Set(kinds.some(k => k.key === 'avg') ? ['avg'] : [kinds[0].key]);
+  }
+  containerEl.innerHTML = `
+    <div class="warning" style="background:#e8f0fe;border-color:#a8c7fa;">
+      📊 這份報告同一個測項給了不只一種數值，請選擇這次要匯入哪一種（預設為「日平均值」，也就是一般申報用的數值）：
+      <div class="item-checklist" style="margin-top:6px">
+        ${kinds.map(k => `
+          <label class="item-check">
+            <input type="checkbox" data-stat-check value="${escapeAttr(k.key)}" ${state.statSelection.has(k.key) ? 'checked' : ''}>
+            ${escapeHtml(k.label)} <span class="hint">(${k.count})</span>
+          </label>
+        `).join('')}
+      </div>
+      <p class="hint" style="margin:6px 0 0 0">
+        「日平均值」的檢測項目維持原本的名稱（例如 <code>CO</code>）；其他統計值會把名稱寫清楚（例如 <code>CO最大8小時平均值</code>），
+        這樣同一天同一測站同一測項才不會出現兩筆分不出來的資料。若同時勾選多種，兩種都會匯入。
+      </p>
+    </div>`;
+  containerEl.querySelectorAll('[data-stat-check]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) state.statSelection.add(cb.value); else state.statSelection.delete(cb.value);
+      if (state.statSelection.size === 0) { cb.checked = true; state.statSelection.add(cb.value); return; }
+      state.itemSelection = null;      // the item list changes with the statistic
+      state.excludedRowIndices = new Set();
+      if (onChange) onChange();
+    });
+  });
+}
+
+/** Applies ONLY the statistic filter (see renderStatChecklist). Rows with no
+ *  statistic tag — every other report type — always pass through. */
+function filterRowsByStat(rows) {
+  if (!state.statSelection || state.statSelection.size === 0) return rows;
+  return rows.filter(r => !r._statKind || state.statSelection.has(r._statKind));
+}
+
 function filterRowsBySelection(rows, itemField) {
-  let filtered = rows;
+  let filtered = filterRowsByStat(rows);
   if (state.itemSelection) {
     filtered = filtered.filter(r => state.itemSelection.has((r[itemField] || '').trim() || '（未標示）'));
   }
@@ -2780,6 +2838,7 @@ function openImportModal(catKey) {
   state.importMode = null;
   state.smartResult = null;
   state.itemSelection = null;
+  state.statSelection = null;
   state.excludedRowIndices = null;
   state.rowDetailColumnFilters = {};
   state.importPeriod = '';
@@ -3113,6 +3172,7 @@ function renderSmartImportPreview() {
   const siteEntries = Object.entries(result.sites); // [key, {siteCode, rawLocation, rowIndices}]
   state.itemSelection = null; // reset so renderItemChecklist re-seeds with "all checked"
   state.excludedRowIndices = new Set(); // reset row-level exclusions for a fresh parse
+  state.statSelection = null; // reset so the statistic picker re-seeds with its default
 
   renderPeriodPicker('smartPeriodWrap', result.rows);
 
@@ -3131,16 +3191,25 @@ function renderSmartImportPreview() {
   const updateCountsAndRowDetail = () => {
     updateCounts();
     // The row-detail table itself is what excludedRowIndices comes from — show
-    // rows filtered only by item type (not by row exclusion), otherwise a row the
-    // person unchecked would vanish from the list and they could never re-check it.
+    // rows filtered only by statistic and item type (not by row exclusion),
+    // otherwise a row the person unchecked would vanish from the list and they
+    // could never re-check it.
+    const statRows = filterRowsByStat(result.rows);
     const itemFilteredRows = state.itemSelection
-      ? result.rows.filter(r => state.itemSelection.has((r[cat.itemField] || '').trim() || '（未標示）'))
-      : result.rows;
+      ? statRows.filter(r => state.itemSelection.has((r[cat.itemField] || '').trim() || '（未標示）'))
+      : statRows;
     renderRowDetailTable(document.getElementById('smartImportRowDetailWrap'), itemFilteredRows, cat, updateCounts);
   };
 
-  renderItemChecklist(document.getElementById('smartImportItemsWrap'), result.rows, cat.itemField, updateCountsAndRowDetail);
-  updateCountsAndRowDetail();
+  // The statistic picker comes FIRST: which statistic is chosen decides what the
+  // item checklist below it even contains.
+  const renderItemsForCurrentStat = () => {
+    renderItemChecklist(document.getElementById('smartImportItemsWrap'),
+      filterRowsByStat(result.rows), cat.itemField, updateCountsAndRowDetail);
+    updateCountsAndRowDetail();
+  };
+  renderStatChecklist(document.getElementById('smartImportStatWrap'), result.rows, renderItemsForCurrentStat);
+  renderItemsForCurrentStat();
 
   const existingSkippedWarning = document.getElementById('smartImportSkippedItemsWarning');
   if (existingSkippedWarning) existingSkippedWarning.remove();

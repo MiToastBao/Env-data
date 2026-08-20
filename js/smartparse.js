@@ -458,6 +458,26 @@ const SmartParse = {
    * a decision the person makes via the item-selection checklist in the import UI,
    * since different projects/plans report different sets of items.
    */
+  /**
+   * The summary rows a 24hr ambient air-quality report states for each pollutant.
+   *
+   * `plainItemName: true` means rows from this statistic keep the bare pollutant name
+   * ("CO"), because the daily average is what a filing normally reports and the
+   * official template's 檢測項目 column is written that way. Any OTHER statistic gets
+   * its name spelled out in 檢測項目 ("CO最大8小時平均值") — otherwise two rows for the
+   * same site, day and pollutant would be indistinguishable both to a reader and to
+   * this app's own duplicate detection, which keys on date + time + site + item.
+   */
+  AIR_STAT_ROWS: [
+    { key: 'avg', label: '日平均值', re: /^日平均值或$|^日平均值$/, plainItemName: true },
+    { key: 'maxHour', label: '最大小時平均值', re: /^最大小時平均值$/ },
+    { key: 'minHour', label: '最小小時平均值', re: /^最小小時平均值$/ },
+    { key: 'max8', label: '最大8小時平均值', re: /^最大8小時平均值$|^最大八小時平均值$/ },
+  ],
+  /** The hourly block itself, offered as one more choice alongside the summary rows.
+   *  Its rows carry their own clock hour, so they never collide with each other. */
+  AIR_HOURLY_STAT: { key: 'hourly', label: '每小時測值', plainItemName: true },
+
   AIR_POLLUTANT_DEFS: [
     { key: 'SO2', unit: '113' }, { key: 'NO2', unit: '113', methodFrom: 'NOX' }, { key: 'NOx', unit: '113' },
     { key: 'NO', unit: '113' }, { key: 'CO', unit: '113' }, { key: 'O3', unit: '113' },
@@ -561,9 +581,20 @@ const SmartParse = {
 
     // hourly data block: rows after the unit row (headerRow+2) up to the "日平均值或" row
     const unitRow = headerRow + 2;
-    const avgHit = this.findCell(grid, /^日平均值或$/);
-    if (!avgHit) return null;
-    const avgRow = grid[avgHit.r];
+    // Every summary row this report format can carry. The report states several
+    // DIFFERENT statistics for the same pollutant on the same day — the daily
+    // average, the highest and lowest single-hour averages, and the highest rolling
+    // 8-hour average — and which one belongs in a filing is the person's decision,
+    // not something to hard-code. All of them are read; the import preview then asks.
+    const statHits = this.AIR_STAT_ROWS
+      .map(def => ({ def, hit: this.findCell(grid, def.re) }))
+      .filter(x => x.hit);
+    if (statHits.length === 0) return null;
+    // The hourly block runs from just under the unit row down to whichever summary
+    // row sits HIGHEST on the sheet — taken by row position, not by the order the
+    // statistics happen to be declared in AIR_STAT_ROWS, so a report that prints them
+    // in a different order can't leave a summary row inside the hourly block.
+    const avgHit = statHits.reduce((best, x) => (!best || x.hit.r < best.r ? x.hit : best), null);
 
     const location = this.cellStr(grid[unitRow]?.[cols.location]) || (this.labelValueSameCell(grid, /監測地點[:：]/) || '');
     const siteCode = this.labelValueSameCell(grid, /測點編號[:：]/) || '';
@@ -581,6 +612,26 @@ const SmartParse = {
       dateStart = `${y}-${pad(m1)}-${pad(d1)}`;
       const y2 = parseInt(m2, 10) < parseInt(m1, 10) ? y + 1 : y;
       dateEnd = `${y2}-${pad(m2)}-${pad(d2)}`;
+    }
+
+    // Not every version of this report has a 監測時間 column. A very common variant
+    // writes the sampling window DOWN THE FIRST COLUMN instead, one character per
+    // merged cell — "115 / 年 / 6 / 月 / 25 / 日 / 至 / 115 / 年 / 6 / 月 / 26 / 日" —
+    // which is invisible to a column lookup. Stitching that column back together and
+    // splitting it on 至 recovers both ends of the window; without this the whole
+    // report imports with EMPTY dates, which is exactly the sort of silent gap that
+    // only shows up after the filing is submitted.
+    if (!dateStart) {
+      const stitched = [];
+      for (let r = headerRow; r < avgHit.r; r++) stitched.push(this.cellStr(grid[r]?.[0]));
+      const joined = stitched.join('');
+      const parts = joined.split(/至|~|～|－|—/);
+      const a = DateTimeUtil.toISODate(parts[0] || '');
+      const b = parts.length > 1 ? DateTimeUtil.toISODate(parts[1]) : '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(a)) {
+        dateStart = a;
+        dateEnd = /^\d{4}-\d{2}-\d{2}$/.test(b) ? b : a;
+      }
     }
 
     // first/last hourly rows determine the start/end clock time (rolling 24hr window)
@@ -640,22 +691,42 @@ const SmartParse = {
     // "Has content" now checks cmp/note rather than val alone, since ND's val is
     // intentionally blank (see parseValueCell) — checking val==='' alone would
     // wrongly treat a real "ND" reading as an empty cell to skip.
-    this.AIR_POLLUTANT_DEFS.forEach(def => {
-      const col = cols[def.key];
-      if (col < 0) return;
-      if (hiddenCols.has(col)) { skippedPlaceholderItems.push(def.key); return; }
-      const v = this.cellStr(avgRow[col]);
-      if (v === '') return;
-      const { cmp, val, note } = this.parseValueCell(v);
-      const hasContent = cmp !== '' || note !== '' || (val !== '' && !isNaN(parseFloat(val)));
-      if (!hasContent) return;
-      const methodKey = (def.methodFrom || def.key).toUpperCase();
-      rows.push({
-        ...baseRow, '檢測項目': def.key, '檢測濃度/質量單位': def.unit,
-        '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
-        '檢測方法': methodMap[methodKey] || '', '備註': note || '',
+    // One pass PER SUMMARY ROW the report states (日平均值 / 最大小時平均值 /
+    // 最小小時平均值 / 最大8小時平均值). Each row is tagged with `_statKind`, and the
+    // import preview turns those tags into a checklist so the person chooses which
+    // statistic actually goes into the filing — 日平均值 is pre-selected because that
+    // is what these filings normally report, but nothing is silently discarded.
+    statHits.forEach(({ def: statDef, hit }) => {
+      const statRow = grid[hit.r] || [];
+      this.AIR_POLLUTANT_DEFS.forEach(def => {
+        const col = cols[def.key];
+        if (col < 0) return;
+        if (hiddenCols.has(col)) {
+          if (statDef.key === 'avg' && !skippedPlaceholderItems.includes(def.key)) skippedPlaceholderItems.push(def.key);
+          return;
+        }
+        const v = this.cellStr(statRow[col]);
+        if (v === '') return;
+        const { cmp, val, note } = this.parseValueCell(v);
+        const hasContent = cmp !== '' || note !== '' || (val !== '' && !isNaN(parseFloat(val)));
+        if (!hasContent) return;
+        const methodKey = (def.methodFrom || def.key).toUpperCase();
+        rows.push({
+          ...baseRow,
+          '檢測項目': statDef.plainItemName ? def.key : `${def.key}${statDef.label}`,
+          '檢測濃度/質量單位': def.unit,
+          '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
+          '檢測方法': methodMap[methodKey] || '', '備註': note || '',
+          _statKind: statDef.key, _statLabel: statDef.label,
+        });
       });
     });
+
+    // The hourly block itself — 24 rows per pollutant, each with its own clock hour.
+    // Offered as one more choice in the same checklist for anyone who needs to file
+    // hour-by-hour readings rather than a summary.
+    this._pushAirHourlyRows(grid, cols, hiddenCols, methodMap, baseRow, unitRow, avgHit.r, dateStart, dateEnd, rows);
+
     if (cols.TSP >= 0 && hiddenCols.has(cols.TSP)) {
       skippedPlaceholderItems.push('TSP');
     } else if (tspVal) {
@@ -688,7 +759,51 @@ const SmartParse = {
     if (skippedPlaceholderItems.length) {
       rows.forEach(r => { r._skippedPlaceholderItems = skippedPlaceholderItems; });
     }
+    // Rows the summary passes produced carry a stat tag; TSP/PM2.5 (single 24-hour
+    // composite samples, not hourly statistics) don't, so tag them as the daily
+    // figure — otherwise they'd be filtered out whenever the person picks a
+    // statistic, even though there is only ever one value for them.
+    rows.forEach(r => { if (!r._statKind) { r._statKind = 'avg'; r._statLabel = '日平均值'; } });
     return rows.length ? rows : null;
+  },
+
+  /** Reads the hour-by-hour block of a 24hr air report into one row per pollutant per
+   *  hour. The report writes hours as "08 ~ 09" and simply rolls past midnight without
+   *  restating the date, so the calendar day is advanced whenever the clock wraps. */
+  _pushAirHourlyRows(grid, cols, hiddenCols, methodMap, baseRow, unitRow, endRow, dateStart, dateEnd, out) {
+    let day = dateStart;
+    let prevHour = null;
+    for (let r = unitRow + 1; r < endRow; r++) {
+      const hm = this.cellStr(grid[r]?.[1]).match(/(\d{1,2})\s*~\s*(\d{1,2})/);
+      if (!hm) continue;
+      const h1 = parseInt(hm[1], 10), h2 = parseInt(hm[2], 10);
+      if (prevHour !== null && h1 < prevHour) day = dateEnd || this.addDaysISO(day, 1);
+      prevHour = h1;
+      const pad = n => String(n).padStart(2, '0');
+      const tStart = `${pad(h1)}:00:00`;
+      // "23 ~ 24" means 23:00 today through 00:00 tomorrow
+      const rollsOver = h2 >= 24 || h2 <= h1;
+      const tEnd = `${pad(h2 % 24)}:00:00`;
+      const endDay = rollsOver ? this.addDaysISO(day, 1) : day;
+      this.AIR_POLLUTANT_DEFS.forEach(def => {
+        const col = cols[def.key];
+        if (col < 0 || hiddenCols.has(col)) return;
+        const v = this.cellStr(grid[r]?.[col]);
+        if (v === '') return;
+        const { cmp, val, note } = this.parseValueCell(v);
+        const hasContent = cmp !== '' || note !== '' || (val !== '' && !isNaN(parseFloat(val)));
+        if (!hasContent) return;
+        const methodKey = (def.methodFrom || def.key).toUpperCase();
+        out.push({
+          ...baseRow,
+          '日期(起)': day, '時間(起)': tStart, '日期(迄)': endDay, '時間(迄)': tEnd,
+          '檢測項目': def.key, '檢測濃度/質量單位': def.unit,
+          '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
+          '檢測方法': methodMap[methodKey] || '', '備註': note || '',
+          _statKind: this.AIR_HOURLY_STAT.key, _statLabel: this.AIR_HOURLY_STAT.label,
+        });
+      });
+    }
   },
 
   /** W (河川/地下水等) / WU (放流水) style vertical water-quality test-item table. */
