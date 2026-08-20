@@ -45,6 +45,21 @@ const SmartParse = {
       { key: '採樣座標-緯度 Y', label: '座標Y', type: 'text' },
       { key: '管制編號', label: '管制編號', type: 'text' },
     ],
+    // 地質 reports (底泥/土壤 lab sheets) never print coordinates or a 檢測類別 code,
+    // so both are asked for here once per site. 檢測類別 deliberately starts BLANK
+    // rather than being guessed from 樣品特性 — 底泥品質 vs 土壤品質 vs 廢棄物 is a
+    // filing decision, and a wrong auto-filled category is harder to notice than an
+    // obviously empty one.
+    geo: [
+      { key: '採樣地點', label: '正式採樣地點', type: 'text' },
+      { key: '檢測類別', label: '檢測類別（請自行選擇）', type: 'select', options: ['', ...CATEGORY_TYPE_OPTIONS.geo] },
+      { key: '座標系統', label: '座標系統', type: 'select', options: ['', '2', '3'],
+        optionLabels: { '2': '2：WGS84（全球座標）', '3': '3：TWD97-TM2（投影座標系）' } },
+      { key: '採樣座標-經度 X', label: '座標X', type: 'text' },
+      { key: '採樣座標-緯度 Y', label: '座標Y', type: 'text' },
+      { key: '採樣深度(公尺)', label: '採樣深度(公尺)', type: 'text' },
+      { key: '管制編號', label: '管制編號', type: 'text' },
+    ],
   },
 
   // ---------- grid utilities ----------
@@ -197,6 +212,26 @@ const SmartParse = {
     if (/飲用水/.test(s)) return '飲用水';
     return '';
   },
+
+  /** 樣品特性 free text -> the 檢測類別 enum used by the 地質 template. Kept separate
+   *  from sampleTypeToCategory because "底泥"/"土壤" must never be classed as water
+   *  and vice versa — this is also what keeps the water and geo sheet parsers from
+   *  claiming each other's reports during batch auto-detection, since both report
+   *  types share the same 檢驗項目 table layout. */
+  sedimentTypeToCategory(text) {
+    const s = String(text || '');
+    if (/底泥|底質|沉積物/.test(s)) return '底泥品質';
+    if (/土壤/.test(s)) return '土壤品質';
+    if (/廢棄物|灰渣|污泥/.test(s)) return '廢棄物';
+    if (/毒化|毒性化學/.test(s)) return '毒化物質';
+    if (/土砂|沖蝕|淤積/.test(s)) return '土砂觀測';
+    return '';
+  },
+
+  /** True when a 樣品特性 clearly describes a solid/sediment sample rather than water. */
+  isGeoSampleType(text) { return !!this.sedimentTypeToCategory(text); },
+  /** True when a 樣品特性 clearly describes a water sample. */
+  isWaterSampleType(text) { return !!this.sampleTypeToCategory(text); },
 
   /** Normalize a raw test-item name to the conventional short form used in filings. */
   normalizeItemName(text) {
@@ -658,19 +693,63 @@ const SmartParse = {
 
   /** W (河川/地下水等) / WU (放流水) style vertical water-quality test-item table. */
   parseWaterTableSheet(grid) {
-    const hasItemHeader = this.findCell(grid, /檢驗項目/);
+    return this.parseLabItemTableSheet(grid, 'water');
+  },
+
+  /**
+   * 地質 lab report — the 底泥檢測報告 (e.g. 06525DS27) and its 土壤/廢棄物 siblings.
+   * These use exactly the same vertical "檢驗項目 / 檢測值 / 偵測極限 / 單位 / 檢測方法"
+   * table as the water reports from the same consultant, with a 樣品特性 of 底泥/土壤
+   * instead of a water type — so it shares the parser below and only differs in which
+   * template's field names it writes into and how 檢測類別 is derived.
+   */
+  parseGeoSedimentSheet(grid) {
+    return this.parseLabItemTableSheet(grid, 'geo');
+  },
+
+  /**
+   * Shared reader for the consultant's vertical lab-report table, used by both the
+   * water and the 地質 (底泥/土壤) categories.
+   *
+   * `kind` decides two things and nothing else:
+   *   - which template's field names the output rows use (採樣深度/採樣水深 differ), and
+   *   - how 樣品特性 becomes 檢測類別.
+   * It also acts as the gate that stops the two from stealing each other's reports
+   * during batch auto-detection: a sheet whose 樣品特性 says 底泥 is refused by the
+   * water reader, and one that says 放流水 is refused by the geo reader.
+   */
+  parseLabItemTableSheet(grid, kind) {
+    const hasItemHeader = this.findCell(grid, /檢驗項目|檢測項目/);
     if (!hasItemHeader) return null;
 
+    const sampleCharEarly = this.labelValue(grid, /樣品特性[:：]/) || '';
+    if (kind === 'water' && this.isGeoSampleType(sampleCharEarly)) return null;
+    if (kind === 'geo') {
+      // Only claim the sheet when it actually looks like a solid-sample report:
+      // either 樣品特性 says so, or the report titles itself 底泥/土壤/廢棄物.
+      const title = [0, 1, 2, 3].map(r => this.cellStr(grid[r]?.[0]) + this.cellStr(grid[r]?.[1])).join(' ');
+      const titleSaysGeo = /底泥|底質|土壤|廢棄物|事業廢棄物/.test(title)
+        || !!this.findCell(grid, /底泥檢測報告|土壤檢測報告|廢棄物檢測報告/);
+      if (!this.isGeoSampleType(sampleCharEarly) && !titleSaysGeo) return null;
+      if (this.isWaterSampleType(sampleCharEarly) && !this.isGeoSampleType(sampleCharEarly)) return null;
+    }
+
     const location = this.labelValue(grid, /採樣地點[:：]/) || '';
-    const sampleTimeRaw = this.labelValue(grid, /採樣時間[:：]/);
+    const sampleTimeRaw = this.labelValue(grid, /採樣時間[:：]/) || this.labelValue(grid, /採樣日期[:：]/);
     const sampleDateISO = this.rocDateToISO(sampleTimeRaw);
     let sampleTime = '';
     if (sampleTimeRaw) {
       const m = String(sampleTimeRaw).match(/(\d{1,2})時(\d{1,2})分/);
       if (m) sampleTime = `${m[1].padStart(2, '0')}:${m[2].padStart(2, '0')}:00`;
+      else {
+        const hm = String(sampleTimeRaw).match(/(\d{1,2}):(\d{2})/);
+        if (hm) sampleTime = `${hm[1].padStart(2, '0')}:${hm[2]}:00`;
+      }
     }
-    const sampleChar = this.labelValue(grid, /樣品特性[:：]/) || '';
-    const category = this.sampleTypeToCategory(sampleChar);
+    const sampleChar = sampleCharEarly;
+    // 地質: the person picks 檢測類別 themselves in the import preview (see
+    // SITE_PROFILE_FIELDS.geo) — leave it blank here rather than guessing.
+    const category = kind === 'geo' ? '' : this.sampleTypeToCategory(sampleChar);
     const methodRaw = this.labelValue(grid, /採樣方法[:：]/);
     const defaultMethod = this.extractMethodCode(methodRaw);
     const agencyRaw = this.labelValue(grid, /採樣單位[:：]/) || this.labelValue(grid, /公司名稱[:：]/);
@@ -678,6 +757,28 @@ const SmartParse = {
     const siteCode = this.labelValue(grid, /測點編號[:：]/) || '';
 
     const headerHit = hasItemHeader;
+
+    // This reader locates each value BY POSITION (item, then value, then 偵測極限,
+    // then 單位, then 檢測方法), which is only correct for the template it was written
+    // against. Another lab can use the very same heading words in a different order —
+    // 檢驗項目 / 檢測結果 / 單位 / 方法偵測極限 / 分析方法 is a real and common variant —
+    // and reading that by position silently swaps the unit and the detection limit.
+    // So: confirm the heading order before claiming the sheet, and hand anything else
+    // to AutoDetect, which maps by heading text instead of by position.
+    const headerCells = [];
+    for (let r = headerHit.r; r < Math.min(headerHit.r + 3, grid.length); r++) {
+      (grid[r] || []).forEach((v, c) => {
+        const s = this.cellStr(v);
+        if (s !== '' && headerCells[c] === undefined) headerCells[c] = s;
+      });
+    }
+    const colOfLabel = (re) => headerCells.findIndex(s => s !== undefined && re.test(s));
+    const cLimit = colOfLabel(/偵測\s*極限|檢測\s*極限/);
+    const cUnit = colOfLabel(/^單\s*位$/);
+    const cMethod = colOfLabel(/檢測方法|分析方法|檢驗方法/);
+    if (cLimit >= 0 && cUnit >= 0 && cUnit < cLimit) return null;
+    if (cUnit >= 0 && cMethod >= 0 && cMethod < cUnit) return null;
+
     // find the literal "檢測值" marker row that precedes the item rows
     let startRow = headerHit.r + 1;
     for (let r = headerHit.r + 1; r < Math.min(headerHit.r + 4, grid.length); r++) {
@@ -695,7 +796,8 @@ const SmartParse = {
       const itemName = this.normalizeItemName(cells[0]);
       const valueRaw = cells[1];
       let idx = 2;
-      const limitRaw = /^--$/.test(cells[idx] || '') ? '' : (cells[idx] || '');
+      // "--", "—", "─" and friends all mean "no detection limit applies here"
+      const limitRaw = /^[-–—─]{1,2}$/.test(cells[idx] || '') ? '' : (cells[idx] || '');
       if (cells[idx] !== undefined) idx++;
       let unitText = '';
       if (cells[idx] && !/^NIEA/i.test(cells[idx])) { unitText = cells[idx]; idx++; }
@@ -715,10 +817,13 @@ const SmartParse = {
       const limitApplies = cmp === 'ND' || cmp === '<';
       const limitFormatted = limitApplies && /^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : '';
 
+      const depthFields = kind === 'geo'
+        ? { '採樣深度(公尺)': '' }
+        : { '採樣深度(公尺)': '', '採樣水深(公尺)': '' };
       rows.push({
         '日期(起)': sampleDateISO, '時間(起)': sampleTime, '日期(迄)': sampleDateISO, '時間(迄)': sampleTime,
         '採樣地點': location, '座標系統': '', '採樣座標-經度 X': '', '採樣座標-緯度 Y': '',
-        '採樣深度(公尺)': '', '採樣水深(公尺)': '', '管制編號': '',
+        ...depthFields, '管制編號': '',
         '檢測類別': category, '檢測項目': itemName,
         '檢測濃度/質量單位': unitLookup.code, '其他檢測濃度/質量單位': unitLookup.code ? '' : unitText,
         '比較關係': cmp, '檢測數值': valFormatted, '檢測極限': limitFormatted,
@@ -732,17 +837,35 @@ const SmartParse = {
     return rows.length ? rows : null;
   },
 
-  /** Try every known parser for a sheet, category-scoped. Returns rows[] or null if unrecognized. */
-  parseSheet(category, sheetName, grid) {
+  /**
+   * Try every known parser for a sheet, category-scoped. Returns rows[] or null.
+   *
+   * Two passes, in this order:
+   *   1. The template-specific parsers above — precise, written against known report
+   *      layouts, and always preferred when one of them recognizes the sheet.
+   *   2. AutoDetect — the layout-agnostic reader that hunts for the seven required
+   *      fields by heading text. It fires only when no specific parser matched, so an
+   *      unfamiliar lab's report still yields data instead of nothing at all. Rows it
+   *      produces carry `_autoDetected` so the import preview can flag them for
+   *      manual checking. Pass `{ allowAutoDetect:false }` to run pass 1 only (used by
+   *      batch auto-detection, where guessing which CATEGORY an unknown sheet belongs
+   *      to would be a guess on top of a guess).
+   */
+  parseSheet(category, sheetName, grid, { allowAutoDetect = true } = {}) {
     if (!grid || grid.length === 0) return null;
+    let rows = null;
     if (category === 'noise') {
-      return this.parseNoiseEventSheet(grid) || this.parseNoise24hrSheet(sheetName, grid);
+      rows = this.parseNoiseEventSheet(grid) || this.parseNoise24hrSheet(sheetName, grid);
+    } else if (category === 'water') {
+      rows = this.parseWaterTableSheet(grid);
+    } else if (category === 'geo') {
+      rows = this.parseGeoSedimentSheet(grid);
+    } else if (category === 'air') {
+      rows = this.parseAirDustfallSheet(grid) || this.parseAirQualitySheet(grid);
     }
-    if (category === 'water') {
-      return this.parseWaterTableSheet(grid);
-    }
-    if (category === 'air') {
-      return this.parseAirDustfallSheet(grid) || this.parseAirQualitySheet(grid);
+    if (rows && rows.length) return rows;
+    if (allowAutoDetect && typeof AutoDetect !== 'undefined') {
+      return AutoDetect.parseSheet(category, sheetName, grid);
     }
     return null;
   },

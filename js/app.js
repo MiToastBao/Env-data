@@ -341,56 +341,40 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+// Date/time conversion lives in DateTimeUtil (js/datetime.js) — ONE implementation
+// shared by the importers, the grid, the preview tables and the exporter, so a value
+// can't be interpreted one way when it's read and another way when it's shown. These
+// thin wrappers keep the existing call sites in this file readable.
 function toDateInputValue(v) {
-  if (!v) return '';
-  const s = String(v);
-  const m = s.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
-  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
-  return '';
+  const iso = DateTimeUtil.toISODate(v);
+  return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso : '';
 }
-/** ISO "YYYY-MM-DD" (internal storage/export format, unchanged) -> "YYYY/MM/DD" for display. */
+/** ISO "YYYY-MM-DD" (internal storage/export format) -> "YYYY/MM/DD" for display.
+ *  Date fields show a calendar date and nothing else — never a time, never seconds. */
 function toDateDisplayValue(v) {
-  const iso = toDateInputValue(v);
-  return iso ? iso.replace(/-/g, '/') : '';
+  return DateTimeUtil.toDisplayDate(toDateInputValue(v) || v);
 }
-/** Accepts "2026/5/12", "2026-5-12", "20260512" typed free-hand and normalizes to the
- *  canonical ISO "YYYY-MM-DD" used for storage/export/date-math. Returns '' if it
- *  doesn't look like a date at all, rather than silently keeping garbage. */
+/** Accepts "2026/5/12", "2026-5-12", "20260512", "115/06/25", "115年6月25日" and even a
+ *  raw Excel serial, and normalizes to the canonical ISO "YYYY-MM-DD" used for
+ *  storage/export/date-math. Unrecognized input is left as typed so the person can
+ *  see and fix it rather than having it silently discarded. */
 function normalizeDateString(raw) {
-  const s = String(raw ?? '').trim();
-  if (s === '') return '';
-  let m = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
-  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
-  m = s.match(/^(\d{4})(\d{2})(\d{2})$/); // 20260512
-  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
-  return s; // unrecognized — leave as typed so the person can see and fix it
+  return DateTimeUtil.toISODate(raw);
 }
 function toTimeInputValue(v) {
-  if (!v) return '';
-  const s = String(v);
-  const m = s.match(/(\d{1,2}):(\d{2})(:(\d{2}))?/);
-  if (m) return `${m[1].padStart(2, '0')}:${m[2]}:${m[4] || '00'}`;
-  return '';
+  const hms = DateTimeUtil.toHMS(v);
+  return /^\d{2}:\d{2}:\d{2}$/.test(hms) ? hms : '';
 }
-/** HH:MM:SS (internal storage/export format, unchanged) -> HH:MM for display — the
- *  official template's own time format is "h:mm" with no seconds shown anyway. */
+/** Internal storage format -> "HH:MM" for display. Time fields show hours and minutes
+ *  only — the official template's own time format is "h:mm" and no seconds value is
+ *  ever meaningful for a sampling time. */
 function toTimeDisplayValue(v) {
-  const full = toTimeInputValue(v);
-  return full ? full.slice(0, 5) : '';
+  return DateTimeUtil.toDisplayTime(toTimeInputValue(v) || v);
 }
-/** Accepts "1430", "14:30", "14:30:00", "143000" typed free-hand and normalizes to HH:MM:SS.
- *  Returns the original trimmed string unchanged if it doesn't look like a time at all,
- *  so an in-progress or unrecognized entry isn't silently discarded. */
+/** Accepts "1430", "14:30", "14:30:00", "143000", "10時30分", "2:30 PM" typed
+ *  free-hand and normalizes to "HH:MM:00" (seconds always dropped). */
 function normalizeTimeString(raw) {
-  const s = String(raw ?? '').trim();
-  if (s === '') return '';
-  let m = s.match(/^(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?$/);
-  if (m) return `${m[1].padStart(2, '0')}:${m[2].padStart(2, '0')}:${(m[3] || '00').padStart(2, '0')}`;
-  m = s.match(/^(\d{2})(\d{2})(\d{2})$/); // 143000
-  if (m) return `${m[1]}:${m[2]}:${m[3]}`;
-  m = s.match(/^(\d{1,2})(\d{2})$/); // 1430 or 930
-  if (m) return `${m[1].padStart(2, '0')}:${m[2]}:00`;
-  return s;
+  return DateTimeUtil.toHMS(raw);
 }
 function lookupUnit(code) {
   if (!code) return '';
@@ -611,6 +595,7 @@ function renderCategoryTab(project, catKey) {
   const displayRows = displayEntries.map(e => e.row);
 
   body.innerHTML = `
+    ${catKey === 'eco' ? `<div class="warning warning-strong" style="margin-bottom:10px">🌿 ${ECO_IMPORT_ONLY_NOTE}</div>` : ''}
     <div class="toolbar">
       <div class="toolbar-left">
         <button class="btn btn-primary btn-sm" id="btnImport">📥 匯入資料（Excel/PDF）</button>
@@ -1220,7 +1205,12 @@ function wireGridEvents(project, catKey, cat) {
     if (r._batchId !== source._batchId) return false;
     if (r[locField] !== source[locField]) return false;
     if (requireCategory && r['檢測類別'] !== source['檢測類別']) return false;
+    // Both ends of the sampling window have to match, not just 日期(起) — a site
+    // sampled on the same start date but over a different span (a one-off grab
+    // sample vs a 24-hour composite) is a different sampling event and must not be
+    // swept up by a sync.
     if (requireDate && r['日期(起)'] !== source['日期(起)']) return false;
+    if (requireDate && r['日期(迄)'] !== source['日期(迄)']) return false;
     return true;
   };
 
@@ -1243,7 +1233,7 @@ function wireGridEvents(project, catKey, cat) {
     const anyDiff = matches.some(({ r }) => COORD_FIELDS.some(f => r[f] !== source[f]));
     if (!anyDiff) return false;
     const ok = confirm(
-      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
+      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
       `是否要將這些資料的座標一併同步更新為與這一筆相同？\n\n` +
       `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。不同採樣日期或不同檢測類別的資料不會被同步。）`
     );
@@ -1304,7 +1294,7 @@ function wireGridEvents(project, catKey, cat) {
     const anyDiff = matches.some(({ r }) => r['檢測類別'] !== source['檢測類別']);
     if (!anyDiff) return false;
     const ok = confirm(
-      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
+      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
       `是否要將這些資料的檢測類別一併同步更新為「${source['檢測類別']}」？\n\n` +
       `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
     );
@@ -1340,7 +1330,7 @@ function wireGridEvents(project, catKey, cat) {
     if (!anyDiff) return false;
     const fieldLabel = (cat.fields.find(f => f.key === fieldKey) || {}).label || fieldKey;
     const ok = confirm(
-      `偵測到同一份檔案、同一天（${source['日期(起)']}）、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
+      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
       `是否要將這些資料的「${fieldLabel}」一併同步更新為「${source[fieldKey] || '（空白）'}」？\n\n` +
       `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
     );
@@ -2514,8 +2504,8 @@ function renderRowDetailTable(containerEl, rows, cat) {
                 <td>${checkboxHTML(` class="row-detail-check" data-row-uid="${r._rowUid}"`, !state.excludedRowIndices.has(r._rowUid))}</td>
                 <td>${escapeHtml(r[locField] || '')}</td>
                 <td>${escapeHtml(r[itemField] || '')}</td>
-                <td>${escapeHtml(r['日期(起)'] || '')}</td>
-                <td>${escapeHtml(r['時間(起)'] || '')}</td>
+                <td>${escapeHtml(toDateDisplayValue(r['日期(起)']) || '')}</td>
+                <td>${escapeHtml(toTimeDisplayValue(r['時間(起)']) || '')}</td>
                 <td>${escapeHtml(r[valueField] || '')}</td>
               </tr>
             `).join('')}
@@ -2662,7 +2652,12 @@ function openRowDetailColumnFilterPopup(fieldType, btnEl, rows, locField, itemFi
 }
 
 // ---------- batch import (multi-file, auto-detect category) ----------
-const AUTO_DETECT_CATEGORIES = ['noise', 'water', 'air']; // categories with smart-parsers capable of self-identifying
+// Categories with report parsers precise enough to identify their OWN report format,
+// which is what batch import needs (it has to decide which category a file belongs to
+// before it can import it). The layout-agnostic AutoDetect reader is deliberately NOT
+// used here: it recognizes fields, not categories, so letting it vote would mean
+// guessing the category from a guess.
+const AUTO_DETECT_CATEGORIES = ['noise', 'water', 'air', 'geo'];
 
 function openBatchImportModal() {
   document.getElementById('batchFileInput').value = '';
@@ -2700,7 +2695,7 @@ async function handleBatchFiles(fileList) {
     for (const [sheetName, grid] of Object.entries(grids)) {
       let matchedCat = null;
       for (const catKey of AUTO_DETECT_CATEGORIES) {
-        const rows = SmartParse.parseSheet(catKey, sheetName, grid);
+        const rows = SmartParse.parseSheet(catKey, sheetName, grid, { allowAutoDetect: false });
         if (rows && rows.length) {
           rows.forEach(r => { r._sourceFile = file.name; });
           perCategory[catKey].rows.push(...rows);
@@ -2789,6 +2784,24 @@ function openImportModal(catKey) {
   state.rowDetailColumnFilters = {};
   state.importPeriod = '';
   document.getElementById('importModalTitle').textContent = `匯入${CATEGORIES[catKey].label}監測資料`;
+  // Per-category note about what this category's import can and can't do — set here
+  // rather than hard-coded in the HTML, since the answer differs by category.
+  const noticeEl = document.getElementById('importCategoryNotice');
+  if (noticeEl) {
+    if (catKey === 'eco') {
+      noticeEl.className = 'warning warning-strong';
+      noticeEl.innerHTML = `🌿 ${ECO_IMPORT_ONLY_NOTE}<br>`
+        + `匯入完成版後，資料會照常進入下方表格、可編輯、可匯出成申報用的 Excel。`;
+    } else if (SMART_PARSE_CATEGORIES.includes(catKey)) {
+      noticeEl.className = 'notice-info';
+      noticeEl.innerHTML = `本類別可直接讀原始檢測報告。若是系統沒看過的報告格式，會改用自動偵測，`
+        + `盡量找出<strong>日期(起)／日期(迄)／時間(起)／時間(迄)／檢測項目／監測數值／檢測單位</strong>這幾個必要欄位，`
+        + `並在下一步明確標示哪些是「猜」出來的、哪些沒找到。也可以直接匯入上一季的完成版 Excel。`;
+    } else {
+      noticeEl.className = '';
+      noticeEl.innerHTML = '';
+    }
+  }
   document.getElementById('importFileInput').value = '';
   if (state._importStaging) state._importStaging.reset();
   document.getElementById('importStep1').classList.remove('hidden');
@@ -2807,7 +2820,16 @@ function closeImportModal() {
   }
 }
 
-const SMART_PARSE_CATEGORIES = ['noise', 'water', 'air'];
+// Categories whose raw monitoring reports the app will try to read directly.
+// 生態 is deliberately absent: ecological surveys are filed by a separate contractor
+// and this project never receives their raw survey report, only the finished
+// 生態調查資料填寫.xlsx — so that category imports the completed file through the
+// ordinary column-mapping path and says so plainly (see ECO_IMPORT_ONLY_NOTE).
+const SMART_PARSE_CATEGORIES = ['noise', 'water', 'air', 'geo'];
+
+const ECO_IMPORT_ONLY_NOTE = '生態分類目前<strong>只能匯入「已填寫完成」的生態調查資料填寫.xlsx（完成版）</strong>做資料彙整，'
+  + '無法判讀生態監測／調查報告原始檔。生態調查通常由其他公司負責填報，請向對方索取填好的完成版 Excel 後再匯入本系統。';
+const ECO_IMPORT_ONLY_TEXT = '生態分類目前只能匯入「已填寫完成」的生態調查資料填寫.xlsx（完成版）做資料彙整，無法判讀生態監測／調查報告原始檔。';
 
 /**
  * Accepts one File, an array of Files, or a FileList (multi-select is now supported
@@ -2825,9 +2847,13 @@ async function handleImportFile(fileOrFiles) {
   const catKey = state.importCatKey;
   state.currentImportSourceLabel = files.map(f => f.name).join('、');
 
+  const cat = CATEGORIES[catKey];
+
   try {
     if (SMART_PARSE_CATEGORIES.includes(catKey)) {
       const aggregate = { rows: [], matchedSheets: [], skippedSheets: [], sourceFiles: new Set() };
+      let anyTemplateLike = false;
+      const templateLikeFiles = [];
       for (const file of files) {
         const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
         const isPdf = /\.pdf$/i.test(file.name);
@@ -2840,6 +2866,17 @@ async function handleImportFile(fileOrFiles) {
           aggregate.skippedSheets.push(`${file.name}（讀取失敗：${err.message}）`);
           continue;
         }
+        // A file that is ALREADY in the official template's shape — a previous
+        // season's completed filing, or this app's own export that the person
+        // edited — must go through the ordinary column-mapping importer, which
+        // reads it field-for-field. Running a report-form parser (or the layout
+        // guesser) over it would re-derive values that are already correct.
+        const templateLike = Object.values(grids).some(g => ImportEngine.gridSchemaMatchRatio(g, cat.fields) >= 0.5);
+        if (templateLike) {
+          anyTemplateLike = true;
+          templateLikeFiles.push(file.name);
+          continue;
+        }
         for (const [sheetName, grid] of Object.entries(grids)) {
           const rows = SmartParse.parseSheet(catKey, sheetName, grid);
           if (rows && rows.length) {
@@ -2848,10 +2885,20 @@ async function handleImportFile(fileOrFiles) {
             aggregate.matchedSheets.push(`${file.name} / ${sheetName}`);
             aggregate.sourceFiles.add(file.name);
             if (isPdf) aggregate.hasPdfSource = true;
+            if (rows.some(r => r._autoDetected)) aggregate.hasAutoDetected = true;
           } else {
             aggregate.skippedSheets.push(`${file.name} / ${sheetName}`);
           }
         }
+      }
+      if (anyTemplateLike && aggregate.rows.length === 0) {
+        // Nothing here but files already in the official template's shape: hand over
+        // to the column-mapping importer below, which reads them field-for-field.
+      } else {
+        // A template-format file mixed in with raw reports can't be shown on the
+        // report-preview screen, so name the file that was left out rather than
+        // dropping it silently.
+        templateLikeFiles.forEach(n => aggregate.skippedSheets.push(`${n}（已是範本／完成版格式，請單獨匯入以進行欄位比對）`));
       }
       if (aggregate.rows.length > 0) {
         const sites = {};
@@ -2870,16 +2917,37 @@ async function handleImportFile(fileOrFiles) {
     }
 
     if (files.length > 1) {
-      alert('這個類別目前無法自動判讀多個檔案的原始報告格式，因此只能一次匯入一個檔案（一般欄位比對）。請改為逐一匯入，或確認檔案是否為噪音／水質／空氣品質可自動判讀的報告格式。');
+      alert('這個類別目前無法自動判讀多個檔案的原始報告格式，因此只能一次匯入一個檔案（一般欄位比對）。請改為逐一匯入，或確認檔案是否為可自動判讀的報告格式。');
       return;
     }
 
     const file = files[0];
-    const parsed = await ImportEngine.readFile(file);
+    // Pass the target category's own field names in, so a workbook that already
+    // matches the official template locks onto the right sheet and the right header
+    // row instead of whichever sheet merely happens to be longest.
+    const parsed = await ImportEngine.readFile(file, cat.fields.map(f => f.key));
     if (!parsed.rows || parsed.rows.length === 0) {
-      alert('無法從此檔案讀取到任何資料列，請確認檔案內容或改用 Excel 格式。');
+      alert(catKey === 'eco'
+        ? `無法從此檔案讀取到任何資料列。\n\n${ECO_IMPORT_ONLY_TEXT}\n\n請確認您選的是填寫完成的「生態調查資料填寫.xlsx」，其中應有「生態檢測項目」工作表與「日期(起)／調查地點／學名／中文名…」等欄位標題。`
+        : '無法從此檔案讀取到任何資料列，請確認檔案內容或改用 Excel 格式。');
       return;
     }
+
+    // 生態: warn (but don't block) when the chosen file clearly isn't the completed
+    // template — the person may still want to map columns by hand, but they should
+    // know the app can't read a raw ecological survey report.
+    if (catKey === 'eco') {
+      const ratio = ImportEngine.schemaMatchRatio(parsed.headers, cat.fields);
+      if (ratio < 0.4) {
+        const ok = confirm(
+          `${ECO_IMPORT_ONLY_TEXT}\n\n`
+          + `這個檔案看起來不像填寫完成的「生態調查資料填寫.xlsx」（只比對到 ${Math.round(ratio * 100)}% 的欄位名稱）。\n\n`
+          + `按「確定」仍可進入欄位對應畫面自行對應，按「取消」則停止匯入。`
+        );
+        if (!ok) return;
+      }
+    }
+
     state.importMode = 'generic';
     state.importParsed = parsed;
     document.getElementById('importPdfWarning').classList.toggle('hidden', !parsed.isPdfBestEffort);
@@ -3109,6 +3177,41 @@ function renderSmartImportPreview() {
     notice.innerHTML = `ℹ️ 以下項目本次報告使用的檢測方法跟先前記錄不同，系統已依「本次報告」為準（例如溶氧的電極法 NIEA W455 與碘定量法 NIEA W422 都是合法方法，不同季節實驗室可能採用不同方法）。若並非實驗室刻意更換方法，請確認是否為判讀誤差：<br>` +
       result._methodDiffs.map(d => `・${escapeHtml(d.item)}：本次「${escapeHtml(d.reportMethod)}」，先前記錄為「${escapeHtml(d.memoryMethod)}」`).join('<br>');
     document.getElementById('smartImportItemsWrap').after(notice);
+  }
+
+  // ---- unrecognized layout: say so loudly ----------------------------------
+  // Rows carrying `_autoDetected` didn't come from a parser written for this report
+  // template; they came from the layout-agnostic reader that hunts for the seven
+  // required fields by their column headings. That is far better than importing
+  // nothing at all, but it IS a guess — so the preview names exactly which of the
+  // seven it found and which it couldn't, and asks for the values to be checked.
+  const existingAutoWarning = document.getElementById('smartImportAutoDetectWarning');
+  if (existingAutoWarning) existingAutoWarning.remove();
+  const autoRows = result.rows.filter(r => r._autoDetected);
+  if (autoRows.length > 0) {
+    const info = autoRows.find(r => r._autoDetectInfo)?._autoDetectInfo || { found: [], missing: [], extra: [] };
+    const warn = document.createElement('div');
+    warn.id = 'smartImportAutoDetectWarning';
+    warn.className = 'warning warning-strong';
+    warn.innerHTML = `🔎 <strong>這份檔案不是系統內建認得的報告格式</strong>，共 ${autoRows.length} 筆資料是系統<strong>自行從欄位標題「猜」出來的</strong>，`
+      + `請務必逐筆核對後再匯入。<br>`
+      + `・已自動找到：${info.found.length ? escapeHtml(info.found.join('、')) : '（無）'}`
+      + `${info.extra && info.extra.length ? `（另外還找到：${escapeHtml(info.extra.join('、'))}）` : ''}<br>`
+      + `・<strong>找不到、需要您自行補上：${info.missing.length ? escapeHtml(info.missing.join('、')) : '（無，七個必要欄位都找到了）'}</strong><br>`
+      + `<span class="hint">小技巧：先匯入上一季同一個測站的資料，系統就會把座標、檢測方法、單位代碼等不會逐季改變的欄位自動沿用過來，這次只需確認日期／時間／數值。</span>`;
+    document.getElementById('smartImportItemsWrap').after(warn);
+  }
+
+  // ---- 檢測類別 left blank (地質 always starts blank by design) --------------
+  const existingCategoryWarning = document.getElementById('smartImportCategoryWarning');
+  if (existingCategoryWarning) existingCategoryWarning.remove();
+  if (cat.fields.some(f => f.key === '檢測類別') && result.rows.some(r => !r['檢測類別'])) {
+    const warn = document.createElement('div');
+    warn.id = 'smartImportCategoryWarning';
+    warn.className = 'warning';
+    warn.innerHTML = `⚠️ 有資料的「檢測類別」還是空白（這個欄位是申報必填）。請在下方測站設定表的「檢測類別」欄位選擇，`
+      + `選好後會套用到該測站的所有資料；日後在表格中修改單筆時，系統也會詢問是否同步到<strong>同一份檔案、同一測站、同樣日期(起)(迄)</strong>的其他資料。`;
+    document.getElementById('smartImportItemsWrap').after(warn);
   }
 
   const existingPdfWarning = document.getElementById('smartImportPdfWarning');
@@ -3512,7 +3615,7 @@ function analyzeImportAgainstExisting(existingRows, candidateRows, cat) {
       if (identityKeys.has(f.key)) return;
       const oldVal = existingRow[f.key] || '';
       const newVal = candidate[f.key] || '';
-      if (oldVal !== newVal) diffFields.push({ key: f.key, label: f.label, oldVal, newVal });
+      if (oldVal !== newVal) diffFields.push({ key: f.key, label: f.label, type: f.type, oldVal, newVal });
     });
     if (diffFields.length === 0) return; // truly identical — silently skip, nothing to decide
     conflicts.push({
@@ -3534,17 +3637,23 @@ function openConflictResolutionModal(conflicts, onResolve) {
       <div class="conflict-item-header">
         <label>
           <input type="checkbox" class="conflict-use-new" data-idx="${i}" checked>
-          <span><strong>${escapeHtml(c.location)}</strong>／${escapeHtml(c.item)}／${escapeHtml(c.date)}：套用本次匯入的新版本（取消勾選＝保留原有資料，不更動）</span>
+          <span><strong>${escapeHtml(c.location)}</strong>／${escapeHtml(c.item)}／${escapeHtml(toDateDisplayValue(c.date))}：套用本次匯入的新版本（取消勾選＝保留原有資料，不更動）</span>
         </label>
       </div>
       <table class="conflict-diff-table">
         <thead><tr><th>欄位</th><th>原有資料</th><th>本次匯入</th></tr></thead>
         <tbody>
-          ${c.diffFields.map(d => `<tr>
+          ${c.diffFields.map(d => {
+            // show date/time differences the way the person reads them
+            // (2026/06/25, 08:30) rather than in the internal storage format
+            const fmt = (v) => d.type === 'date' ? (toDateDisplayValue(v) || v)
+              : d.type === 'time' ? (toTimeDisplayValue(v) || v) : v;
+            return `<tr>
             <td>${escapeHtml(d.label)}</td>
-            <td class="diff-old">${escapeHtml(d.oldVal || '（空白）')}</td>
-            <td class="diff-new">${escapeHtml(d.newVal || '（空白）')}</td>
-          </tr>`).join('')}
+            <td class="diff-old">${escapeHtml(fmt(d.oldVal) || '（空白）')}</td>
+            <td class="diff-new">${escapeHtml(fmt(d.newVal) || '（空白）')}</td>
+          </tr>`;
+          }).join('')}
         </tbody>
       </table>
     </div>

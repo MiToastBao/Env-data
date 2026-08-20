@@ -269,6 +269,11 @@ table.data-grid td.col-actions { text-align: center; }
 .row-detail-toggle summary { cursor: pointer; font-weight: 600; }
 .row-detail-toggle table.mapping-table th, .row-detail-toggle table.mapping-table td { font-size: 12.5px; white-space: nowrap; }
 .warning.hidden { display: none; }
+/* For warnings the person really must not scroll past — an unrecognized report
+   layout whose values were guessed, or a category that can only take a completed
+   template. Same box, louder. */
+.warning-strong { background: #fdecea; border-color: #e08b7f; border-width: 2px; line-height: 1.65; }
+.notice-info { background: #e8f0fe; border: 1px solid #a8c7fa; padding: 9px 12px; border-radius: 6px; font-size: 12.5px; margin: 0 0 10px 0; line-height: 1.65; }
 .period-picker {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   background: #eef3f1; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin: 10px 0;

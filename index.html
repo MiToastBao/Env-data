@@ -66,6 +66,7 @@
   <div class="modal modal-wide">
     <h3 id="importModalTitle">匯入監測資料</h3>
     <div id="importStep1">
+      <div id="importCategoryNotice"></div>
       <p class="hint">支援 Excel（.xlsx / .xls / .csv）；可一次選取多個檔案（例如本類別多個月份或多個測站的報告）。PDF 為輔助解析，建議上傳 Excel 以獲得最佳結果。</p>
       <details style="margin-bottom:10px">
         <summary style="cursor:pointer;font-size:12.5px;color:var(--text-muted)">ℹ️ 系統如何跨季記住座標、方法、管制標準等欄位？（點此展開說明）</summary>
@@ -218,7 +219,7 @@
 <div id="batchImportModal" class="modal-overlay hidden">
   <div class="modal modal-wide">
     <h3>批次匯入監測報告</h3>
-    <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告，也支援單一 PDF 內含多類別內容，會逐頁嘗試判斷），系統會自動判斷每個檔案（或工作表／頁面）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前僅噪音／水質／空氣品質三類支援自動判斷；地質／生態尚無法自動判斷，請於各分類頁面用一般匯入方式處理。<strong>PDF 判讀準確度低於 Excel，來自 PDF 的資料請務必逐項核對。</strong></p>
+    <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告，也支援單一 PDF 內含多類別內容，會逐頁嘗試判斷），系統會自動判斷每個檔案（或工作表／頁面）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前噪音／水質／空氣品質／地質四類支援自動判斷（地質目前支援底泥／土壤等實驗室檢測報告格式）；生態無法自動判斷，請於生態分類頁面匯入「填寫完成的生態調查資料填寫.xlsx（完成版）」。<strong>PDF 判讀準確度低於 Excel，來自 PDF 的資料請務必逐項核對。</strong></p>
     <div class="dropzone" id="batchDropzone">
       <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
       <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡（可分次拖曳，累積多個檔案後再一次確認）</p>
@@ -351,10 +352,12 @@
 </div>
 
 <script src="js/version.js"></script>
+<script src="js/datetime.js"></script>
 <script src="js/schema.js"></script>
 <script src="js/codes.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/import.js"></script>
+<script src="js/autodetect.js"></script>
 <script src="js/smartparse.js"></script>
 <script src="js/export.js"></script>
 <script src="js/app.js"></script>

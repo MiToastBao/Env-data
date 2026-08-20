@@ -42,43 +42,53 @@ const ImportEngine = {
   },
 
   /** Read a File object and return { headers: [...], rows: [{header: value}, ...] } */
-  async readFile(file) {
+  async readFile(file, preferredKeys = []) {
     const name = file.name.toLowerCase();
     if (name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.csv')) {
-      return this._readSheet(file);
+      return this._readSheet(file, preferredKeys);
     } else if (name.endsWith('.pdf')) {
       return this._readPdf(file);
     }
     throw new Error('不支援的檔案格式，請上傳 .xlsx / .xls / .csv 或 .pdf');
   },
 
-  /** Converts a SheetJS-produced Date object (from cellDates:true + raw:true) into
-   *  a plain "YYYY-MM-DD" or "HH:MM:SS" string, whichever the cell actually holds.
-   *  A pure-time Excel cell still comes back as a Date object under cellDates — its
-   *  date portion is just Excel's epoch (1899/1904) and is meaningless, so a year at
-   *  or before 1900 signals "this is really a time value, read h/m/s instead". This
-   *  matters because relying on the cell's own display-formatted text (raw:false)
-   *  breaks on real-world date formats like the US-style "3/8/26" this app's own
-   *  normalizeDateString doesn't recognize — going through the actual Date object
-   *  sidesteps having to enumerate every possible format string.
+  cellStr(v) { return v === undefined || v === null ? '' : String(v).trim(); },
+
+  /** Converts a SheetJS-produced Date object (from cellDates:true + raw:true) into a
+   *  plain string. Delegates to DateTimeUtil so there is exactly ONE place in the app
+   *  that decides how a spreadsheet date/time becomes text.
+   *
+   *  This used to read the Date through its **UTC** getters, which was the root cause
+   *  of the "匯入後日期多／少一天、時間被減掉一大段（10點變成2點）" bug: SheetJS builds
+   *  these Date objects in LOCAL time, so in Taiwan (UTC+8) every value was pulled
+   *  8 hours backwards. Reading through local getters (inside DateTimeUtil.parseAny)
+   *  returns exactly what the cell shows in Excel, in any timezone.
    */
   _excelDateObjToString(d) {
-    const y = d.getUTCFullYear();
-    if (y <= 1900) {
-      const h = String(d.getUTCHours()).padStart(2, '0');
-      const mi = String(d.getUTCMinutes()).padStart(2, '0');
-      const s = String(d.getUTCSeconds()).padStart(2, '0');
-      return `${h}:${mi}:${s}`;
-    }
-    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(d.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+    const p = DateTimeUtil.parseAny(d);
+    if (!p) return '';
+    if (p.date && p.time) return `${p.date} ${p.time}`;
+    return p.date || p.time || '';
   },
 
-  async _readSheet(file) {
+  /**
+   * Reads a workbook into { headers, rows } for the column-mapping importer.
+   *
+   * Unlike the old version, the header row does NOT have to be the first row of the
+   * sheet: real report exports routinely carry a title, a logo row, or a couple of
+   * blank spacer rows above the actual column names, and assuming row 1 meant those
+   * files read as "0 usable columns". `_detectHeaderRow` scores each of the first
+   * rows for how much it looks like a header (short label-ish cells, recognizable
+   * field names, real data underneath) and uses the best one.
+   *
+   * `preferredKeys` (the target category's field keys) are passed in so a workbook
+   * that already matches the official template — e.g. a previous season's completed
+   * filing — locks onto the right sheet and the right row instead of whichever sheet
+   * merely happens to have the most rows.
+   */
+  async _readSheet(file, preferredKeys = []) {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-    // Prefer a sheet that looks like a data table (has >1 row); default to first sheet
     let best = null;
     for (const sheetName of wb.SheetNames) {
       const ws = wb.Sheets[sheetName];
@@ -86,24 +96,132 @@ const ImportEngine = {
       // (numbers with their formatting, plain text); raw:true is needed to get the
       // actual Date object back for real date/time cells rather than a formatted
       // string this app might not be able to parse (see _excelDateObjToString).
-      const jsonDisplay = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
-      const jsonRaw = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
-      if (jsonDisplay.length > 0 && (!best || jsonDisplay.length > best.rows.length)) {
-        const merged = jsonDisplay.map((displayRow, i) => {
-          const rawRow = jsonRaw[i] || {};
-          const out = {};
-          Object.keys(displayRow).forEach(key => {
-            const rawVal = rawRow[key];
-            out[key] = (rawVal instanceof Date) ? this._excelDateObjToString(rawVal) : displayRow[key];
-          });
-          return out;
-        });
-        best = { sheetName, rows: merged };
+      const gridDisplay = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+      const gridRaw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+      if (gridDisplay.length === 0) continue;
+      const detected = this._detectHeaderRow(gridDisplay, preferredKeys);
+      if (!detected) continue;
+      const built = this._buildRowsFromGrid(gridDisplay, gridRaw, detected.rowIndex);
+      if (built.rows.length === 0) continue;
+      const score = detected.score * 1000 + Math.min(built.rows.length, 999);
+      if (!best || score > best.score) {
+        best = { sheetName, score, headers: built.headers, rows: built.rows, headerRowIndex: detected.rowIndex };
       }
     }
     if (!best) return { headers: [], rows: [], sheetNames: wb.SheetNames };
-    const headers = Object.keys(best.rows[0]);
-    return { headers, rows: best.rows, sheetNames: wb.SheetNames, usedSheet: best.sheetName };
+    return {
+      headers: best.headers, rows: best.rows, sheetNames: wb.SheetNames,
+      usedSheet: best.sheetName, headerRowIndex: best.headerRowIndex,
+    };
+  },
+
+  /** True for a cell that plausibly IS a column heading: short, has text, isn't a
+   *  "label：value" form field, isn't a bare number. */
+  _looksLikeHeaderCell(v) {
+    const s = this.cellStr(v).replace(/\s+/g, ' ');
+    if (s === '' || s.length > 30) return false;
+    if (/[:：]\s*\S/.test(s)) return false;   // "採樣地點：荷包嶼大排" is a form field, not a header
+    if (/^-?[\d.,%]+$/.test(s)) return false; // a bare number is data, not a heading
+    return true;
+  },
+
+  /** Scores each of the first rows of a grid and returns the most header-like one. */
+  _detectHeaderRow(grid, preferredKeys = []) {
+    const preferred = new Set(preferredKeys.map(k => this.normalize(k)));
+    const limit = Math.min(grid.length, 40);
+    let best = null;
+    for (let r = 0; r < limit; r++) {
+      const row = grid[r] || [];
+      let headerish = 0, known = 0;
+      const seen = new Set();
+      row.forEach(cell => {
+        if (!this._looksLikeHeaderCell(cell)) return;
+        const n = this.normalize(cell);
+        if (n === '' || seen.has(n)) return;
+        seen.add(n);
+        headerish++;
+        if (preferred.has(n)) known += 3;
+        else if (typeof AutoDetect !== 'undefined' && AutoDetect.matchHeader(cell)) known += 1;
+      });
+      if (headerish < 2) continue;
+      // there has to be at least one row of actual content underneath
+      let dataRows = 0;
+      for (let rr = r + 1; rr < grid.length && dataRows < 2; rr++) {
+        if ((grid[rr] || []).some(c => this.cellStr(c) !== '')) dataRows++;
+      }
+      if (dataRows === 0) continue;
+      const score = known * 4 + headerish - r * 0.1; // earlier rows win ties
+      if (!best || score > best.score) best = { rowIndex: r, score };
+    }
+    return best;
+  },
+
+  /** Turns a grid + a header row index into {headers, rows} of {header: value}. */
+  _buildRowsFromGrid(gridDisplay, gridRaw, headerIdx) {
+    const headerRow = gridDisplay[headerIdx] || [];
+    const cols = [];
+    headerRow.forEach((h, i) => {
+      let name = this.cellStr(h).replace(/\s+/g, ' ');
+      if (name === '') return;
+      let unique = name, n = 2;
+      while (cols.some(c => c.name === unique)) unique = `${name} (${n++})`;
+      cols.push({ index: i, name: unique });
+    });
+    if (cols.length === 0) return { headers: [], rows: [] };
+    const rows = [];
+    for (let r = headerIdx + 1; r < gridDisplay.length; r++) {
+      const dRow = gridDisplay[r] || [];
+      const rRow = gridRaw[r] || [];
+      const out = {};
+      let any = false;
+      cols.forEach(c => {
+        const rawVal = rRow[c.index];
+        const display = this.cellStr(dRow[c.index]);
+        let v;
+        if (rawVal instanceof Date) {
+          v = this._excelDateObjToString(rawVal);
+        } else if (typeof rawVal === 'number' && !/%\s*$/.test(display)) {
+          // A cell's DISPLAYED text is whatever its number format rounds it to —
+          // a coordinate stored as 120.26323411 can show as "120.26323". For a
+          // filing, the stored value is the truthful one, so when the two disagree
+          // numerically the underlying number wins. When they agree, the display
+          // text is kept (it may carry thousands separators or trailing zeros the
+          // person expects to see). Percent-formatted cells keep their display,
+          // since their underlying value is a different quantity entirely.
+          const dispNum = parseFloat(display.replace(/,/g, ''));
+          v = (isFinite(dispNum) && Math.abs(dispNum - rawVal) < 1e-9) ? display : String(rawVal);
+        } else {
+          v = display;
+        }
+        out[c.name] = v;
+        if (v !== '') any = true;
+      });
+      if (any) rows.push(out);
+    }
+    return { headers: cols.map(c => c.name), rows };
+  },
+
+  /** How much of a category's own field list appears verbatim in a set of headers —
+   *  used to recognize "this file is already in the official template format"
+   *  (a completed filing, or a blank template someone filled in by hand), which must
+   *  go straight to the column-mapping importer instead of a report-form parser. */
+  gridSchemaMatchRatio(grid, categoryFields) {
+    const norm = new Set(categoryFields.map(f => this.normalize(f.key)));
+    let best = 0;
+    for (let r = 0; r < Math.min(grid.length, 15); r++) {
+      const row = grid[r] || [];
+      const hits = new Set();
+      row.forEach(c => { const n = this.normalize(c); if (n && norm.has(n)) hits.add(n); });
+      best = Math.max(best, hits.size / categoryFields.length);
+    }
+    return best;
+  },
+
+  schemaMatchRatio(headers, categoryFields) {
+    if (!headers || headers.length === 0) return 0;
+    const norm = new Set(headers.map(h => this.normalize(h)));
+    const hits = categoryFields.filter(f => norm.has(this.normalize(f.key))).length;
+    return hits / categoryFields.length;
   },
 
   /**
@@ -282,20 +400,14 @@ const ImportEngine = {
     });
   },
 
+  /** Everything that lands in a schema field goes through here, so a date field can
+   *  only ever end up holding a date and a time field can only ever end up holding a
+   *  time — regardless of whether the source cell was a real Excel date, an Excel
+   *  serial number, a 民國 string like "115年06月25日12時00分", or free text. */
   _coerceValue(val, type) {
-    if (val instanceof Date) {
-      if (type === 'time') return this._fmtTime(val);
-      return this._fmtDate(val);
-    }
-    return String(val).trim();
-  },
-
-  _fmtDate(d) {
-    const pad = n => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  },
-  _fmtTime(d) {
-    const pad = n => String(n).padStart(2, '0');
-    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    if (type === 'date') return DateTimeUtil.toISODate(val);
+    if (type === 'time') return DateTimeUtil.toHMS(val);
+    if (val instanceof Date) return this._excelDateObjToString(val);
+    return String(val ?? '').trim();
   },
 };
