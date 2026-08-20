@@ -126,14 +126,22 @@ const DataStore = {
     // Group first so repeated (location, identityKey) pairs within `entries`
     // (the 平日/假日 case) accumulate into a count rather than the last one
     // silently overwriting the rest.
-    const grouped = {}; // location -> identityKey -> { itemName, timeSegment, category, snapshot, count }
-    entries.forEach(({ location, identityKey, itemName, timeSegment, itemCategory, snapshot }) => {
+    const grouped = {}; // location -> identityKey -> { itemName, timeSegment, category, snapshot, count, dates }
+    entries.forEach(({ location, identityKey, itemName, timeSegment, itemCategory, snapshot, date }) => {
       if (!location || !identityKey) return;
       if (!grouped[location]) grouped[location] = {};
       if (!grouped[location][identityKey]) {
-        grouped[location][identityKey] = { itemName, timeSegment: timeSegment || '', category: itemCategory || '', snapshot, count: 0 };
+        grouped[location][identityKey] = { itemName, timeSegment: timeSegment || '', category: itemCategory || '', snapshot, count: 0, dates: [] };
       }
       grouped[location][identityKey].count += 1;
+      // The DISTINCT sampling dates behind that count, not just the count itself.
+      // Three rows can mean "three monthly visits" or "one visit measured three
+      // ways", and only the dates tell them apart — which is what stops a later
+      // single-month import from being told it is "missing 2 readings" purely
+      // because the quarter it is compared against covered three months.
+      if (date && !grouped[location][identityKey].dates.includes(date)) {
+        grouped[location][identityKey].dates.push(date);
+      }
       grouped[location][identityKey].snapshot = snapshot; // keep the most recently seen snapshot
     });
     Object.entries(grouped).forEach(([location, identities]) => {

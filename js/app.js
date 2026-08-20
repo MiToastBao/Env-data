@@ -3456,16 +3456,18 @@ function renderSmartImportPreview() {
   }
   const fuzzyLocationOverrides = result._fuzzyLocationOverrides || {};
 
+  const datesByLoc = {};  // confirmedLoc -> Set of 日期(起) present in THIS import
   const itemsByLoc = {}; // confirmedLoc -> Map(identityKey -> count)
   const siteKeysByLoc = {}; // confirmedLoc -> [siteKey, ...] (may span multiple raw sites)
   siteEntries.forEach(([key, site]) => {
     const saved = savedAliases[siteAliasKey(site, result, cat)] || {};
     const confirmedLoc = saved[locField] || fuzzyLocationOverrides[key] || site.rawLocation;
-    if (!itemsByLoc[confirmedLoc]) { itemsByLoc[confirmedLoc] = new Map(); siteKeysByLoc[confirmedLoc] = []; }
+    if (!itemsByLoc[confirmedLoc]) { itemsByLoc[confirmedLoc] = new Map(); siteKeysByLoc[confirmedLoc] = []; datesByLoc[confirmedLoc] = new Set(); }
     site.rowIndices.forEach(i => {
       const idKey = itemIdentityKey(result.rows[i], cat);
       const m = itemsByLoc[confirmedLoc];
       m.set(idKey, (m.get(idKey) || 0) + 1);
+      if (result.rows[i]['日期(起)']) datesByLoc[confirmedLoc].add(result.rows[i]['日期(起)']);
     });
     siteKeysByLoc[confirmedLoc].push(key);
   });
@@ -3484,11 +3486,43 @@ function renderSmartImportPreview() {
     // same quarter legitimately has 2 rows sharing the same item+監測時段 identity;
     // if history remembers 2 but this import only has 1 (or 0), that's 1 (or 2)
     // still missing, not "already covered because at least one exists".
+    // TWO VERY DIFFERENT SITUATIONS, WHICH USED TO BE TREATED AS ONE
+    //
+    // (a) The item is ENTIRELY ABSENT this time — history has it at this site, this
+    //     report has none at all. That is the case worth flagging and ticking by
+    //     default: an item genuinely dropped out of the report.
+    //
+    // (b) The item IS here, just fewer times than history remembers. Almost always
+    //     this only means the two imports cover a different number of sampling
+    //     occasions — comparing a whole quarter's completed filing (Jan + Feb + Mar,
+    //     3 rows per item) against a single month's report (1 row) reported every
+    //     item as "缺 2 筆" and, because suggestions were ticked by default,
+    //     silently appended two blank rows per item on confirm. So (b) is now
+    //     surfaced UNTICKED, with the actual dates on both sides shown as evidence,
+    //     and it says outright that a single-month import is the usual explanation.
+    const currentDates = [...(datesByLoc[confirmedLoc] || [])].sort();
     const missing = historyEntriesFor(siteHistory[confirmedLoc])
       .map(([identityKey, entry]) => {
         const historicalCount = entry.count || 1; // tolerate pre-count history entries
-        const missingCount = historicalCount - (currentCounts.get(identityKey) || 0);
-        return missingCount > 0 ? { identityKey, ...entry, missingCount } : null;
+        const currentCount = currentCounts.get(identityKey) || 0;
+        if (historicalCount - currentCount <= 0) return null;
+        // How many blank rows to offer. For an item that's entirely absent, that is
+        // one per sampling occasion THIS import actually covers — not however many
+        // the history happened to hold. A single-month report missing an item needs
+        // one blank row; a quarter's history having three of them doesn't change
+        // that. (A same-quarter 平日/假日 pair still gets 2, because this import
+        // genuinely has 2 sampling dates.)
+        const occasionsNow = Math.max(1, currentDates.length);
+        const missingCount = currentCount === 0
+          ? Math.max(1, Math.min(historicalCount, occasionsNow))
+          : historicalCount - currentCount;
+        return {
+          identityKey, ...entry, missingCount, currentCount, historicalCount,
+          historicalDates: Array.isArray(entry.dates) ? entry.dates.slice().sort() : [],
+          currentDates,
+          // absent = nothing of this item at all this time; shortfall = fewer than before
+          absent: currentCount === 0,
+        };
       })
       .filter(Boolean);
     if (missing.length > 0) {
@@ -3519,7 +3553,11 @@ function renderSmartImportPreview() {
   } else {
     existingMissingWrap.innerHTML = `
       <div class="warning" style="background:#e8f0fe;border-color:#a8c7fa;">
-        📋 系統比對過去記錄，以下測站過去曾出現、但本次報告未出現的測項。若要一併新增（檢測方法／單位／項目名稱及對應的檢測類別會依過去記錄先幫您填好，檢測數值請自行輸入），請勾選：
+        📋 系統比對過去記錄，列出以下差異。若要一併新增空白列（檢測方法／單位／項目名稱及對應的檢測類別會依過去記錄先幫您填好，檢測數值請自行輸入），請勾選：
+        <div class="hint" style="margin:6px 0 0 0">
+          ・<strong>本次完全沒有這個測項</strong>：預設<strong>已勾選</strong>（過去有測、這次報告裡整個不見了，通常需要補）。<br>
+          ・<strong>本次有、但比過去少幾筆</strong>：預設<strong>不勾選</strong>。最常見的原因是兩邊涵蓋的採樣次數不同——例如過去比對的是一整季完成版（1、2、3 月各一次共 3 筆），而這次只匯入單月報告（1 筆），並不是真的少了資料。每個項目下方都會列出兩邊實際的採樣日期供您判斷。
+        </div>
         <details style="margin-top:6px">
           <summary style="cursor:pointer;font-size:12.5px;color:var(--text-muted)">ℹ️ 這是跟哪一份資料比對的？（點此展開說明）</summary>
           <p class="hint" style="margin:6px 0 0 0">
@@ -3541,23 +3579,43 @@ function renderSmartImportPreview() {
             // old site genuinely doesn't belong there anymore. Bulk-importing every
             // vanished site by default risked silently mixing unrelated data across
             // batches; requiring an explicit opt-in here is the safer default.
-            const defaultChecked = !s.entirelyAbsent;
+            // A group is ticked only if something inside it is — with shortfalls now
+            // unticked, a group of nothing but shortfalls must not look "selected".
+            const defaultChecked = !s.entirelyAbsent && s.missingItems.some(m => m.absent);
             return `
             <div class="missing-item-loc-group" data-search-text="${escapeAttr(s.location.toLowerCase())}" style="margin-top:6px${s.entirelyAbsent ? ';padding:6px 8px;background:#fff6e0;border-radius:6px' : ''}">
               <label style="font-weight:700">
                 <input type="checkbox" class="missing-item-group" data-group-idx="${i}" ${defaultChecked ? 'checked' : ''}> ${escapeHtml(s.location)}${s.entirelyAbsent ? ' <span class="hint">（本次報告完全沒有這個測站——若這是不同專案/不相關的批次資料，請保持不勾選；確定要帶回本測站的舊資料才勾選。建議新增的資料日期需要您自行填寫）</span>' : ''}
               </label>
               <div style="margin-left:22px">
-                ${s.missingItems.map(({ identityKey, itemName, timeSegment, category, snapshot, missingCount }) => {
+                ${s.missingItems.map((m) => {
+                  const { identityKey, itemName, timeSegment, category, snapshot, missingCount } = m;
                   const displayName = timeSegment ? `${itemName}（${timeSegment}）` : itemName;
-                  const countNote = missingCount > 1 ? `<strong>（缺 ${missingCount} 筆，例如平日／假日各一次，將新增 ${missingCount} 筆空白列）</strong>` : '';
+                  // A shortfall (the item IS in this report, just fewer times) is
+                  // untick-by-default and explains itself with the actual dates on
+                  // both sides — that is what tells apart "a reading really went
+                  // missing" from "this file is one month, that history was a
+                  // whole quarter".
+                  const itemChecked = s.entirelyAbsent ? false : !!m.absent;
+                  const fmtDates = (ds) => (ds || []).map(d => toDateDisplayValue(d) || d).join('、');
+                  let countNote = '';
+                  if (!m.absent && m.historicalCount !== undefined) {
+                    const histDates = fmtDates(m.historicalDates);
+                    const curDates = fmtDates(m.currentDates);
+                    countNote = `<span class="shortfall-note">（本次有 ${m.currentCount} 筆${curDates ? `：${escapeHtml(curDates)}` : ''}；`
+                      + `過去記錄有 ${m.historicalCount} 筆${histDates ? `：${escapeHtml(histDates)}` : ''}。`
+                      + `<strong>若本次只是匯入單月／單次報告，其他月份稍後才會匯入，請不要勾選</strong>——`
+                      + `勾選會新增 ${missingCount} 筆空白列。）</span>`;
+                  } else if (missingCount > 1) {
+                    countNote = `<strong>（缺 ${missingCount} 筆，將新增 ${missingCount} 筆空白列）</strong>`;
+                  }
                   const mem = itemMemoryForSuggestion[itemName];
                   const methodNote = snapshot?.[cat.methodField] || mem?.method;
                   const unitNote = snapshot?.[cat.unitField] || mem?.unitCode;
                   const memParts = [category ? `檢測類別：${category}` : '', methodNote, unitNote ? `單位代碼${unitNote}` : ''].filter(Boolean);
                   const memNote = memParts.length ? `（已記憶：${memParts.join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
                   return `<label style="display:block">
-                    <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-identity-key="${escapeAttr(identityKey)}" ${defaultChecked ? 'checked' : ''}>
+                    <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-identity-key="${escapeAttr(identityKey)}" ${itemChecked ? 'checked' : ''}>
                     ${escapeHtml(displayName)} ${countNote} <span class="hint">${memNote}</span>
                   </label>`;
                 }).join('')}
@@ -3743,6 +3801,7 @@ function learnSiteItemHistory(projectId, catKey, cat, rows) {
     itemName: r[itemField],
     timeSegment: hasTimeSegmentField(cat) ? (r['監測時段'] || '') : '',
     itemCategory: r['檢測類別'] || '',
+    date: r['日期(起)'] || '',
     snapshot: buildFieldSnapshot(r, cat),
   }));
   DataStore.learnSiteItemSnapshots(projectId, catKey, entries);
