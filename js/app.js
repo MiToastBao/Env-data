@@ -2407,26 +2407,57 @@ function deleteProjectFlow(project) {
 // choose which ones to bring in.
 function renderItemChecklist(containerEl, rows, itemField, onChange) {
   const counts = {};
+  // An item is PRIMARY unless every single row for it is marked secondary. Parsers
+  // set `_secondaryItem` on readings a report states but a filing doesn't normally
+  // submit: the hour-by-hour block behind a 24-hour noise report's L日/L晚/L夜, or the
+  // Lveq stated next to the Lvd(10) that actually gets filed. Those are read, listed
+  // and available — just folded away and unticked, so a 3-row import doesn't silently
+  // become a 264-row one.
+  const primary = new Set();
   rows.forEach(r => {
     const v = (r[itemField] || '').trim() || '（未標示）';
     counts[v] = (counts[v] || 0) + 1;
+    if (!r._secondaryItem) primary.add(v);
   });
   const items = Object.keys(counts);
   if (items.length === 0) { containerEl.innerHTML = ''; return; }
-  if (!state.itemSelection) state.itemSelection = new Set(items);
+  const primaryItems = items.filter(i => primary.has(i));
+  const secondaryItems = items.filter(i => !primary.has(i));
+  // Nothing is marked primary (every block was a fallback guess) — fall back to
+  // showing everything normally rather than presenting an empty checklist.
+  const showAllAsPrimary = primaryItems.length === 0;
+  const mainItems = showAllAsPrimary ? items : primaryItems;
+  const extraItems = showAllAsPrimary ? [] : secondaryItems;
+  if (!state.itemSelection) state.itemSelection = new Set(mainItems);
+
+  const checkboxFor = (item) => `
+    <label class="item-check">
+      <input type="checkbox" data-item-check value="${escapeAttr(item)}" ${state.itemSelection.has(item) ? 'checked' : ''}>
+      ${escapeHtml(item)} <span class="hint">(${counts[item]})</span>
+    </label>`;
+  const extraCount = extraItems.reduce((n, i) => n + counts[i], 0);
+  const wasOpen = containerEl.querySelector('.extra-items-toggle')?.open;
 
   containerEl.innerHTML = `
-    <p class="hint">此份報告偵測到以下監測項目，請勾選要匯入的項目（預設全選，可依實際需求取消勾選）：</p>
+    <p class="hint">此份報告偵測到以下監測項目，請勾選要匯入的項目（可依實際需求增減）：</p>
     <div class="item-checklist">
-      ${items.map(item => `
-        <label class="item-check">
-          <input type="checkbox" data-item-check value="${escapeAttr(item)}" ${state.itemSelection.has(item) ? 'checked' : ''}>
-          ${escapeHtml(item)} <span class="hint">(${counts[item]})</span>
-        </label>
-      `).join('')}
+      ${mainItems.map(checkboxFor).join('')}
       <button type="button" class="btn btn-ghost btn-sm" id="btnItemSelectAll">全選</button>
       <button type="button" class="btn btn-ghost btn-sm" id="btnItemSelectNone">全不選</button>
     </div>
+    ${extraItems.length === 0 ? '' : `
+    <details class="row-detail-toggle extra-items-toggle" ${wasOpen ? 'open' : ''}>
+      <summary>➕ 其他偵測到的測項（${extraItems.length} 種、共 ${extraCount} 筆，預設不匯入）</summary>
+      <p class="hint" style="margin:6px 0">
+        報告裡還有這些數值，但一般申報不會送出（例如 24 小時報告的逐時測值，只有 L日／L晚／L夜 需要申報）。
+        確實需要的話在這裡勾選即可，勾了就會一起匯入。
+      </p>
+      <div class="item-checklist">
+        ${extraItems.map(checkboxFor).join('')}
+        <button type="button" class="btn btn-ghost btn-sm" id="btnExtraSelectAll">全選其他測項</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnExtraSelectNone">全不選其他測項</button>
+      </div>
+    </details>`}
   `;
   containerEl.querySelectorAll('[data-item-check]').forEach(cb => {
     cb.addEventListener('change', () => {
@@ -2434,16 +2465,22 @@ function renderItemChecklist(containerEl, rows, itemField, onChange) {
       if (onChange) onChange();
     });
   });
-  containerEl.querySelector('#btnItemSelectAll').addEventListener('click', () => {
-    items.forEach(i => state.itemSelection.add(i));
-    renderItemChecklist(containerEl, rows, itemField, onChange);
-    if (onChange) onChange();
-  });
-  containerEl.querySelector('#btnItemSelectNone').addEventListener('click', () => {
-    state.itemSelection.clear();
-    renderItemChecklist(containerEl, rows, itemField, onChange);
-    if (onChange) onChange();
-  });
+  const bulk = (btnId, targets, add) => {
+    const btn = containerEl.querySelector(btnId);
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      targets.forEach(i => { if (add) state.itemSelection.add(i); else state.itemSelection.delete(i); });
+      renderItemChecklist(containerEl, rows, itemField, onChange);
+      if (onChange) onChange();
+    });
+  };
+  // "全選"/"全不選" act on the main list only — the folded-away extras have their
+  // own pair, so clicking 全選 can never pull in hundreds of rows the person
+  // hasn't looked at.
+  bulk('#btnItemSelectAll', mainItems, true);
+  bulk('#btnItemSelectNone', mainItems, false);
+  bulk('#btnExtraSelectAll', extraItems, true);
+  bulk('#btnExtraSelectNone', extraItems, false);
 }
 
 /**
@@ -2755,7 +2792,7 @@ async function handleBatchFiles(fileList) {
       for (const catKey of AUTO_DETECT_CATEGORIES) {
         const rows = SmartParse.parseSheet(catKey, sheetName, grid, { allowAutoDetect: false });
         if (rows && rows.length) {
-          rows.forEach(r => { r._sourceFile = file.name; });
+          rows.forEach(r => { r._sourceFile = file.name; r._sourceSheet = sheetName; });
           perCategory[catKey].rows.push(...rows);
           perCategory[catKey].matchedSheets.push(`${file.name} / ${sheetName}`);
           perCategory[catKey].sourceFiles.add(file.name);
@@ -2939,7 +2976,7 @@ async function handleImportFile(fileOrFiles) {
         for (const [sheetName, grid] of Object.entries(grids)) {
           const rows = SmartParse.parseSheet(catKey, sheetName, grid);
           if (rows && rows.length) {
-            rows.forEach(r => { r._sourceFile = file.name; });
+            rows.forEach(r => { r._sourceFile = file.name; r._sourceSheet = sheetName; });
             aggregate.rows.push(...rows);
             aggregate.matchedSheets.push(`${file.name} / ${sheetName}`);
             aggregate.sourceFiles.add(file.name);
@@ -3174,6 +3211,15 @@ function renderSmartImportPreview() {
   state.excludedRowIndices = new Set(); // reset row-level exclusions for a fresh parse
   state.statSelection = null; // reset so the statistic picker re-seeds with its default
 
+  // Rows whose 日期(起) is blank start UNTICKED. A real quarterly workbook routinely
+  // carries leftover sheets from an earlier round that the lab never deleted — same
+  // site names, same layout, different (older) numbers, and no 監測日期 filled in.
+  // Those parse perfectly happily and would land in the filing next to this
+  // quarter's real data with an empty date. Requiring an explicit tick to include
+  // them keeps the data visible and recoverable without letting it in by accident.
+  const datelessUids = result.rows.filter(r => !r['日期(起)']).map(r => r._rowUid);
+  datelessUids.forEach(uid => state.excludedRowIndices.add(uid));
+
   renderPeriodPicker('smartPeriodWrap', result.rows);
 
   const updateCounts = () => {
@@ -3246,6 +3292,22 @@ function renderSmartImportPreview() {
     notice.innerHTML = `ℹ️ 以下項目本次報告使用的檢測方法跟先前記錄不同，系統已依「本次報告」為準（例如溶氧的電極法 NIEA W455 與碘定量法 NIEA W422 都是合法方法，不同季節實驗室可能採用不同方法）。若並非實驗室刻意更換方法，請確認是否為判讀誤差：<br>` +
       result._methodDiffs.map(d => `・${escapeHtml(d.item)}：本次「${escapeHtml(d.reportMethod)}」，先前記錄為「${escapeHtml(d.memoryMethod)}」`).join('<br>');
     document.getElementById('smartImportItemsWrap').after(notice);
+  }
+
+  // ---- rows with no sampling date --------------------------------------------
+  const existingDatelessWarning = document.getElementById('smartImportDatelessWarning');
+  if (existingDatelessWarning) existingDatelessWarning.remove();
+  if (datelessUids.length > 0) {
+    const sheets = [...new Set(result.rows.filter(r => !r['日期(起)']).map(r => r._sourceSheet).filter(Boolean))];
+    const warn = document.createElement('div');
+    warn.id = 'smartImportDatelessWarning';
+    warn.className = 'warning warning-strong';
+    warn.innerHTML = `📅 有 <strong>${datelessUids.length} 筆資料讀不到採樣日期</strong>（報告上的「監測日期／採樣日期」是空白的），`
+      + `已<strong>預設不匯入</strong>。<br>`
+      + `這通常代表該工作表是上一次監測留在檔案裡、忘了刪除的舊版本——內容看起來很像，但數值是舊的。`
+      + `${sheets.length ? `<br>來源工作表：${escapeHtml(sheets.join('、'))}` : ''}`
+      + `<br><span class="hint">若確定這些資料是本次的，請展開下方「📋 詳細資料列表」勾選回來，匯入後再自行補上日期。</span>`;
+    document.getElementById('smartImportItemsWrap').after(warn);
   }
 
   // ---- unrecognized layout: say so loudly ----------------------------------

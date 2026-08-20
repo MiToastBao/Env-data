@@ -90,10 +90,28 @@ const SmartParse = {
     return out;
   },
 
-  /** Find a label anywhere in the grid and return the next non-empty value(s) to its right. */
+  /**
+   * Find a label anywhere in the grid and return its value.
+   *
+   * Two layouts have to be handled, and BOTH occur inside the same workbook:
+   *   "採樣時間：" in one cell, "115年06月25日12時00分" in the next cell to the right, and
+   *   "3.量測方法依據：NIEA P204.90C" all inside ONE cell.
+   * The same-cell form is checked FIRST. Looking rightwards first was a real bug: on a
+   * 振動 report the note cell "3.量測方法依據：NIEA P204.90C" matched, the value after
+   * the colon was ignored, and the next non-empty cell far to the right — a leftover
+   * project title — was returned as the 檢測方法 instead.
+   */
   labelValue(grid, regex, n = 1) {
     const hit = this.findCell(grid, regex);
     if (!hit) return n === 1 ? null : [];
+    if (n === 1) {
+      const cell = this.cellStr(grid[hit.r][hit.c]);
+      const colonIdx = cell.search(/[:：]/);
+      if (colonIdx >= 0) {
+        const inline = cell.slice(colonIdx + 1).trim();
+        if (inline !== '') return inline;
+      }
+    }
     const vals = this.valuesRightOf(grid, hit.r, hit.c, n);
     return n === 1 ? (vals[0] ?? null) : vals;
   },
@@ -131,11 +149,22 @@ const SmartParse = {
     if (h >= 18 && h < 22) return '晚間';
     return '夜間';
   },
-  /** Extract a bare NIEA-style method code, dropping the version suffix: "NIEA W217.51A" -> "NIEA W217" */
+  /** Extract a bare NIEA-style method code, dropping the version suffix:
+   *  "NIEA W217.51A" -> "NIEA W217". Also recognizes CNS/EPA/ASTM/APHA/ISO codes.
+   *
+   *  When the text is clearly NOT a method — a sentence, a company name, a project
+   *  title — this returns '' rather than the text itself. A blank 檢測方法 is visible,
+   *  gets flagged by the import preview and can be filled from memory; a plausible-
+   *  looking wrong one goes straight into an official filing unnoticed. Short
+   *  non-coded method names ("電極法", "碘定量法") are still kept. */
   extractMethodCode(text) {
     if (!text) return '';
-    const m = String(text).match(/NIEA\s*([A-Z]?\d+)/i);
-    return m ? `NIEA ${m[1]}` : String(text).trim();
+    const s = String(text).trim();
+    const m = s.match(/NIEA\s*([A-Z]?\d+)/i);
+    if (m) return `NIEA ${m[1]}`;
+    const other = s.match(/\b(?:CNS|EPA|ASTM|APHA|ISO)\s*[A-Z]?\d[\w.-]*/i);
+    if (other) return other[0].replace(/\s+/g, ' ').trim();
+    return s.length > 10 ? '' : s;
   },
   /** "噪音管制區第二類" / "第2類" -> "第2類" */
   extractZone(text) {
@@ -170,6 +199,11 @@ const SmartParse = {
   // override, not a guess — applied regardless of what unit text the report shows.
   ITEM_UNIT_OVERRIDES: {
     '總磷': '47',
+    // The report prints "mg SO42-/L" for sulphate. Confirmed by the person filing
+    // these as a clerical slip in the lab's own template — the correct unit for this
+    // filing is plain mg/L — so it is fixed outright here rather than being flagged
+    // for review every quarter.
+    '硫酸鹽': '47',
   },
   /** Reverse-lookup a unit code from a free-text unit symbol (as printed on a lab report).
    * Returns { code, confident }. confident=false means either no exact match was found
@@ -189,6 +223,18 @@ const SmartParse = {
     if (exactMatches.length > 1) return { code: exactMatches[0][0], confident: false }; // ambiguous: multiple official codes print identically
 
     if (this.UNIT_ALIASES[clean]) return { code: this.UNIT_ALIASES[clean], confident: false };
+
+    // Chemically-qualified units — "mg SO42-/L" for sulphate-as-SO4, "mg P/L",
+    // "mg N/L", "mg CaCO3/L" — are the same physical unit as the plain form, but the
+    // official code table only lists the plain one, so an exact match never happens
+    // and the unit came out BLANK. Fall back to the plain unit and mark it
+    // unconfident, so it is filled in but still listed for checking.
+    const species = clean.match(/^(mg|μg|ug|g|ng|kg)\s+\S+\s*\/\s*(L|mL|m3|m\^3|kg|g)$/i);
+    if (species) {
+      const base = `${species[1]}/${species[2]}`.toLowerCase();
+      const baseMatch = Object.entries(UNIT_CODES).filter(([, name]) => String(name).toLowerCase() === base);
+      if (baseMatch.length >= 1) return { code: baseMatch[0][0], confident: false };
+    }
 
     // loose fallback: case-insensitive
     const lower = clean.toLowerCase();
@@ -279,19 +325,30 @@ const SmartParse = {
 
   // ---------- report-type detectors & parsers ----------
 
-  /** BN (固定音源噪音-營建工程) / LFN (低頻噪音) single-event report. One sheet -> 1-2 rows. */
-  parseNoiseEventSheet(grid) {
-    const title = this.cellStr(grid[0]?.[0]) + ' ' + this.cellStr(grid[1]?.[0]);
+  /** BN (固定音源噪音-營建工程) / BV (營建工程振動) / LFN (低頻噪音) single-event report.
+   *  One sheet -> 1-2 rows. */
+  parseNoiseEventSheet(grid, sheetName = '') {
+    const title = this.cellStr(grid[0]?.[0]) + ' ' + this.cellStr(grid[1]?.[0]) + ' ' + this.cellStr(grid[1]?.[1]);
     const sampleChar = this.labelValue(grid, /樣品特性[:：]/) || '';
     const isLFN = /低頻噪音/.test(title) || /低頻噪音/.test(sampleChar);
-    const isBN = !isLFN && (/固定音源噪音|營建工程/.test(title) || /固定音源噪音|營建工程/.test(sampleChar));
-    if (!isLFN && !isBN) return null;
+    // A construction VIBRATION sheet sits in the same workbook as the construction
+    // NOISE sheets and shares its wording ("固定音源噪音振動測定報告(營建工程)"), so it
+    // has to be told apart by what it actually measures: a 振動測值 table of
+    // Lveq/Lvmax/Lv5… rather than a 整體營建噪音值 figure. Without this it matched the
+    // noise branch, found no noise value, and the whole sheet was silently dropped.
+    const vibHit = this.findCell(grid, /^振動測值$/);
+    const isBV = !isLFN && (!!vibHit || /^BV/i.test(sheetName));
+    const isBN = !isLFN && !isBV && (/固定音源噪音|營建工程/.test(title) || /固定音源噪音|營建工程/.test(sampleChar));
+    if (!isLFN && !isBN && !isBV) return null;
 
-    const dateRaw = this.labelValue(grid, /監測日期[:：]/);
+    // 監測日期 on the noise sheets, 測定日期 on the vibration ones — same field.
+    const dateRaw = this.labelValue(grid, /監測日期[:：]/) || this.labelValue(grid, /測定日期[:：]/)
+      || this.labelValue(grid, /檢測日期[:：]/);
     const dateISO = this.rocDateToISO(dateRaw);
-    const timeRaw = this.labelValue(grid, /測定時間[:：]/);
+    const timeRaw = this.labelValue(grid, /測定時間[:：]/) || this.labelValue(grid, /監測時間[:：]/);
     const [tStart, tEnd] = this.splitTimeRange(timeRaw);
-    const location = this.labelValue(grid, /監測地點[:：]/) || '';
+    // 監測地點 on the noise sheets, 名稱或地點 on the vibration ones.
+    const location = this.labelValue(grid, /監測地點[:：]/) || this.labelValue(grid, /名稱或地點[:：]/) || '';
     const coordHit = this.findCell(grid, /大地座標/);
     let coordX = '', coordY = '';
     if (coordHit) {
@@ -325,6 +382,33 @@ const SmartParse = {
       const common = { ...baseRow, '管制標準': '營建工程', '管制區': zone, '環境音量標準': '0', '頻率範圍': '20 Hz 至 20kHz', '檢測類別': '營建工程噪音', '監測單位': '16' };
       if (leq) rows.push({ ...common, '音源發聲特性': '均能音量(Leq)', '監測數值': this.formatNumber(leq) });
       if (lmax) rows.push({ ...common, '音源發聲特性': '最大音量(Lmax)', '監測數值': this.formatNumber(lmax) });
+    } else if (isBV) {
+      // 振動測值 header row: Lveq | Lvmax | Lv5 | Lv10 | ... with the numbers directly
+      // underneath. Only the two metrics that have an official 音源發聲特性 code are
+      // emitted — Lv5/Lv50/Lv90 have no valid code, so importing them would produce a
+      // row the filing system can't accept.
+      const methodRawV = this.labelValue(grid, /量測方法依據[:：]?/) || this.labelValue(grid, /採樣方法[:：]/);
+      const methodV = this.extractMethodCode(methodRawV) || 'NIEA P204';
+      const headerR = vibHit ? vibHit.r : -1;
+      if (headerR >= 0) {
+        const labelRow = grid[headerR] || [];
+        const valueRow = grid[headerR + 1] || [];
+        const colOf = (re) => { for (let c = 0; c < labelRow.length; c++) if (re.test(this.cellStr(labelRow[c]))) return c; return -1; };
+        const metrics = [
+          { col: colOf(/^Lveq$/i), item: '事件振動位準(Lveq)' },
+          { col: colOf(/^Lvmax$/i), item: '最大振動位準(Lvmax)' },
+        ];
+        metrics.forEach(m => {
+          if (m.col < 0) return;
+          const v = this.cellStr(valueRow[m.col]);
+          if (v === '' || isNaN(parseFloat(v))) return;
+          rows.push({
+            ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
+            '檢測類別': '振動', '監測時段': tod, '音源發聲特性': m.item,
+            '監測單位': '159', '監測數值': this.formatNumber(v), '監測方法': methodV,
+          });
+        });
+      }
     } else if (isLFN) {
       const hit = this.findCell(grid, /整體低頻噪音測值\(L1\)/);
       let leqLF = '';
@@ -420,9 +504,15 @@ const SmartParse = {
       // Extract BOTH the Lvd(10) and Leq-style vibration summaries when the report
       // provides them — which ones actually end up in the filing is the person's
       // call via the item-selection checklist, not something to decide here.
+      // `secondary: true` means "read it, but don't tick it by default" — a 24-hour
+      // environmental vibration filing reports Lvd(10); Lveq is stated in the report
+      // as well but isn't what normally gets submitted, so it waits, unticked, in the
+      // import preview's collapsed "其他測項" list instead of quietly doubling the
+      // number of rows imported. (Construction vibration, BV, is different: Lveq and
+      // Lvmax are both primary there, the same way BN reports Leq and Lmax.)
       const vibMetrics = [
         { labelKey: 'Lv10', dayRegex: /Lv日\(Lv10\)=/, nightRegex: /Lv夜\(Lv10\)=/, itemLabel: 'Lvd(10)' },
-        { labelKey: 'Lveq', dayRegex: /Lv日\(Lveq\)=/, nightRegex: /Lv夜\(Lveq\)=/, itemLabel: '事件振動位準(Lveq)' },
+        { labelKey: 'Lveq', dayRegex: /Lv日\(Lveq\)=/, nightRegex: /Lv夜\(Lveq\)=/, itemLabel: '事件振動位準(Lveq)', secondary: true },
       ];
       vibMetrics.forEach(metric => {
         const dayVal = this.labelValue(grid, metric.dayRegex);
@@ -433,6 +523,7 @@ const SmartParse = {
               ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
               '檢測類別': '振動', '監測時段': p.tod, '音源發聲特性': metric.itemLabel,
               '監測單位': '159', '監測數值': String(Math.round(parseFloat(p.v) * 10) / 10), '監測方法': method,
+              _secondaryItem: !!metric.secondary,
             });
           }
         });
@@ -970,7 +1061,7 @@ const SmartParse = {
     if (!grid || grid.length === 0) return null;
     let rows = null;
     if (category === 'noise') {
-      rows = this.parseNoiseEventSheet(grid) || this.parseNoise24hrSheet(sheetName, grid);
+      rows = this.parseNoiseEventSheet(grid, sheetName) || this.parseNoise24hrSheet(sheetName, grid);
     } else if (category === 'water') {
       rows = this.parseWaterTableSheet(grid);
     } else if (category === 'geo') {

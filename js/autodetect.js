@@ -80,10 +80,12 @@ const AutoDetect = {
 
   // ---------- form-layer labels ("採樣日期：...") ----------
   META_RULES: [
-    { key: 'dateRange', re: /^(採樣|監測|檢測|調查|檢驗|取樣)?(日期|期間)$/ },
-    { key: 'timeRange', re: /^(採樣|監測|檢測|調查|測定|檢驗)?時間$/ },
-    { key: 'location', re: /^(採樣|監測|調查|檢測)?地點$|^測點(編號|名稱)?$|^測站(編號|名稱)?$/ },
-    { key: 'siteCode', re: /^測點編號$|^採樣點編號$/ },
+    { key: 'dateRange', re: /^(採樣|監測|檢測|調查|檢驗|取樣|測定|量測)?(日期|期間)$/ },
+    { key: 'timeRange', re: /^(採樣|監測|檢測|調查|測定|檢驗|量測)?時間$/ },
+    // 測點編號 must be tested BEFORE the location rule, or a site CODE ends up in the
+    // 採樣地點 field and the real place name is never looked for.
+    { key: 'siteCode', re: /^測點編號$|^採樣點編號$|^測站編號$/ },
+    { key: 'location', re: /^(採樣|監測|調查|檢測)?地點$|^名稱或地點$|^測點名稱$|^測站名稱$/ },
     { key: 'agency', re: /^(採樣|檢測|檢驗|受檢)單位$|^檢驗室名稱$|^公司名稱$|^檢測機構$/ },
     { key: 'method', re: /^(採樣|檢測|分析|檢驗)方法$/ },
     { key: 'category', re: /^樣品(特性|性質|種類)$|^檢測類別$|^監測類別$/ },
@@ -237,7 +239,14 @@ const AutoDetect = {
     if (!grid || grid.length === 0) return null;
     const cat = CATEGORIES[category];
     if (!cat) return null;
+    const byItemColumn = this._parseItemColumnSheet(category, cat, grid);
+    if (byItemColumn) return byItemColumn;
+    // No "one row per test item" table here — try the layouts where the measurement
+    // names run across the sheet as column headings instead (noise/vibration/air).
+    return this.parseByColumnHeadings(category, grid);
+  },
 
+  _parseItemColumnSheet(category, cat, grid) {
     const meta = this.extractFormMeta(grid);
     const band = this.findHeaderBand(grid);
     if (!band) return null;
@@ -257,7 +266,8 @@ const AutoDetect = {
 
     // sheet-level defaults from the form layer. A "採樣時間：115年06月25日12時00分"
     // label carries BOTH the date and the clock time, so it feeds both readers.
-    const metaDates = this.splitDateRange(meta.dateRange || meta.timeRange || '', fallbackYear);
+    let metaDates = this.splitDateRange(meta.dateRange || meta.timeRange || '', fallbackYear);
+    if (!metaDates.start) metaDates = this.recoverStitchedDate(grid);
     const metaTimes = this.splitTimeRange(meta.timeRange || meta.dateRange || '');
     const metaAgency = meta.agency ? SmartParse.reverseAgencyLookup(meta.agency) : '';
     const metaMethod = meta.method ? SmartParse.extractMethodCode(meta.method) : '';
@@ -355,6 +365,288 @@ const AutoDetect = {
     const detectedFields = this.describeDetection(rows, cat);
     rows.forEach(r => { r._autoDetectInfo = detectedFields; });
     return rows;
+  },
+
+  // ---------- layouts where the MEASUREMENT NAME is a column heading ----------
+
+  /**
+   * Third and fourth reading modes, used when no "one row per test item" table was
+   * found. Between them they cover the way noise, vibration and air reports are
+   * actually laid out — the measurement names run ACROSS the sheet as column
+   * headings, with the numbers underneath:
+   *
+   *   MODE C (wide block)          Leq | Lmax | L5 | L10 | L50        <- names
+   *                        14~15 | 67.2 | 80.9 | 73.2 | 71.1 | 63.2   <- values
+   *                                   L日(7~20) | L晚(20~23) | L夜(23~翌日7)
+   *                                       66.7 |       60.2 |    55.1
+   *
+   *   MODE D (label=value)   Lv日(Lv10)= | 39.19      Lv夜(Lv10)= | 30.0
+   *
+   * Each wide block found becomes its own selectable group in the import preview
+   * (the same picker the air report's 日平均值／最大小時平均值 choice uses), because a
+   * single sheet routinely holds several — an hour-by-hour block AND a summary block.
+   * A block whose rows begin with a time range ("14~15") produces one row per hour,
+   * with 時間(起)/(迄) filled from that range; otherwise the value row is taken as-is.
+   */
+  parseByColumnHeadings(category, grid) {
+    const cat = CATEGORIES[category];
+    if (!cat) return null;
+    const meta = this.extractFormMeta(grid);
+    let metaDates = this.splitDateRange(meta.dateRange || meta.timeRange || '', null);
+    if (!metaDates.start) metaDates = this.recoverStitchedDate(grid);
+    const metaTimes = this.splitTimeRange(meta.timeRange || meta.dateRange || '');
+    const metaLocation = meta.location || '';
+    const metaAgency = meta.agency ? SmartParse.reverseAgencyLookup(meta.agency) : '';
+    const metaMethod = meta.method ? SmartParse.extractMethodCode(meta.method) : '';
+
+    const blocks = this.findWideBlocks(grid).concat(this.findLabelValuePairs(grid));
+    if (blocks.length === 0) return null;
+    // Some sheets state the same figures twice — once across a row and once down a
+    // column. Identical blocks are the same measurements, not two sets of them.
+    const seenBlocks = new Set();
+    const uniqueBlocks = blocks.filter(b => {
+      const sig = b.entries.map(e => `${e.item}=${e.value}@${e.timeStart || ''}`).join('|');
+      if (seenBlocks.has(sig)) return false;
+      seenBlocks.add(sig);
+      return true;
+    });
+
+    const valueFieldKey = cat.fields.some(f => f.key === '檢測數值') ? '檢測數值'
+      : cat.fields.some(f => f.key === '監測數值') ? '監測數值' : null;
+    const hasField = (k) => cat.fields.some(f => f.key === k);
+
+    // WHICH BLOCK IS THE DEFAULT
+    // A report states its summary figures (L日 / L晚 / L夜, Lv日(Lv10), a daily
+    // average) alongside the hour-by-hour readings they were computed from. The
+    // summary is what gets filed; the hourly block is 260-odd rows nobody normally
+    // submits. So summary blocks are ticked by default and hourly blocks are not —
+    // they are still read, and still there to tick, just folded away. When a sheet
+    // has nothing but hourly blocks, the first one is the default so the import
+    // never arrives completely empty.
+    const hasSummary = uniqueBlocks.some(b => !b.hourly);
+    const isPreferred = (block, idx) => (hasSummary ? !block.hourly : idx === 0);
+
+    const out = [];
+    uniqueBlocks.forEach((block, blockIdx) => {
+      const preferred = isPreferred(block, blockIdx);
+      block.entries.forEach(entry => {
+        const { cmp, val, note } = SmartParse.parseValueCell(entry.value);
+        if (val === '' && cmp === '' && note === '') return;
+        const row = {};
+        cat.fields.forEach(f => { row[f.key] = ''; });
+        row['日期(起)'] = entry.dateStart || metaDates.start || '';
+        row['日期(迄)'] = entry.dateEnd || metaDates.end || row['日期(起)'];
+        row['時間(起)'] = entry.timeStart || metaTimes.start || '';
+        row['時間(迄)'] = entry.timeEnd || metaTimes.end || row['時間(起)'];
+        row[cat.locationField] = metaLocation;
+        row[cat.itemField] = entry.item;
+        if (valueFieldKey) row[valueFieldKey] = /^[\d.]+$/.test(val) ? SmartParse.formatNumber(val, 3) : val;
+        if (hasField('比較關係')) row['比較關係'] = cmp;
+        if (cat.methodField) row[cat.methodField] = metaMethod;
+        if (cat.unitField && entry.unitText) {
+          const u = SmartParse.reverseUnitLookup(entry.unitText, entry.item);
+          row[cat.unitField] = u.code;
+          row._uncertainUnit = !!u.code && !u.confident;
+        }
+        row['檢測機構許可證號'] = metaAgency;
+        row['備註'] = note || '';
+        row._siteCode = meta.siteCode || '';
+        row._rawLocation = metaLocation;
+        row._autoDetected = true;
+        row._secondaryItem = !preferred;
+        row._blockLabel = block.label;
+        out.push(row);
+      });
+    });
+    if (out.length === 0) return null;
+    // A grid of numbers with NO sampling date and NO clock time anywhere is not a
+    // monitoring result — it is a lookup table, a scratch sheet, or an instrument
+    // list. Real workbooks are full of those (參照值, 工作表2, 氣象…), and this mode is
+    // permissive enough to read numbers out of all of them. Requiring a date or a
+    // time is what separates "measurements" from "numbers that happen to be here".
+    const anchored = out.some(r => r['日期(起)'] || r['時間(起)']);
+    if (!anchored) return null;
+    const info = this.describeDetection(out, cat);
+    out.forEach(r => { r._autoDetectInfo = info; });
+    return out;
+  },
+
+  /** A cell that could be a measurement name: short, has content, isn't a number,
+   *  isn't a "label：value" form field, and isn't one of the standard field headings
+   *  (those are the item-table mode's job, not this one). */
+  _looksLikeMeasurementName(v) {
+    const s = this.cellStr(v).replace(/\s+/g, ' ');
+    if (s === '' || s.length > 24) return false;
+    if (/[:：]/.test(s)) return false;
+    if (/^-?[\d.,%]+$/.test(s)) return false;
+    if (/^\d{1,2}\s*[~～-]\s*\d{1,2}$/.test(s)) return false; // "14~15" is a time, not an item
+    if (!/[A-Za-z0-9\u4e00-\u9fff]/.test(s)) return false;      // "*", "—", "※" are placeholders
+    if (this._isNumericCell(s)) return false;                    // "< 0.002" is a reading, not a name
+    // A standard field heading (單位, 監測項目, 備註…) is a column ABOUT the
+    // measurements, never a measurement in its own right.
+    if (this.matchHeader(s)) return false;
+    return true;
+  },
+
+  /** A row that could be a band of column headings. Any colon anywhere in the row
+   *  means it is part of the report's "label：value" form area, not a table header —
+   *  that single test removes essentially every false positive from the top of a
+   *  report (客戶名稱, 業別, 測點編號 and friends all sit on such rows). */
+  _isLabelRow(row) {
+    if (!row) return false;
+    let names = 0;
+    for (const cell of row) {
+      const s = this.cellStr(cell);
+      if (/[:：]/.test(s)) return false;
+      if (this._looksLikeMeasurementName(cell)) names++;
+    }
+    return names >= 2;
+  },
+
+  _isNumericCell(v) {
+    const s = this.cellStr(v);
+    if (s === '') return false;
+    return /^[<>]?\s*-?[\d.,]+$/.test(s) || /^ND$/i.test(s);
+  },
+
+  /**
+   * Finds every "row of names, numbers underneath" block on a sheet.
+   *
+   * Candidates are collected for EVERY row first and only then chosen, largest
+   * first, discarding any that overlaps one already taken. That ordering matters: a
+   * report's table头 is usually two or three stacked rows (a merged banner such as
+   * 「時間 / 噪 / 音 dB(A)」 sitting above the real 「Leq | Lmax | L5 | L10」 row), and
+   * taking the topmost candidate would lock onto the banner and read three garbled
+   * columns instead of seven real ones. Whichever row explains more of the numbers
+   * below it is the real heading.
+   */
+  findWideBlocks(grid) {
+    const candidates = [];
+    const limit = Math.min(grid.length, 200);
+    for (let r = 0; r < limit; r++) {
+      const labelRow = grid[r] || [];
+      if (!this._isLabelRow(labelRow)) continue;
+      const labels = [];
+      labelRow.forEach((cell, c) => {
+        if (this._looksLikeMeasurementName(cell)) labels.push({ col: c, name: this.cellStr(cell).replace(/\s+/g, ' ') });
+      });
+      if (labels.length < 2) continue;
+      // A row of nine identical "ppm" cells is the UNIT row sitting under the real
+      // pollutant headings, not a set of measurement names. Distinct names are what
+      // make a heading row a heading row.
+      const distinct = new Set(labels.map(l => l.name)).size;
+      if (distinct < 2) continue;
+
+      // the value row: within the next 3 rows, one where most of those columns are
+      // numbers (3 rather than 1, because a unit row and a sub-heading row commonly
+      // sit between the headings and the first line of data)
+      let valueRowIdx = -1;
+      for (let rr = r + 1; rr <= Math.min(r + 3, grid.length - 1); rr++) {
+        const hits = labels.filter(l => this._isNumericCell((grid[rr] || [])[l.col])).length;
+        if (hits >= 2 && hits >= Math.ceil(labels.length * 0.5)) { valueRowIdx = rr; break; }
+      }
+      if (valueRowIdx < 0) continue;
+
+      // Does the block continue downward as one row per time slot? ("14~15", "15~16")
+      const timeOf = (rowIdx) => {
+        const row = grid[rowIdx] || [];
+        for (let c = 0; c <= Math.max(0, labels[0].col); c++) {
+          const m = this.cellStr(row[c]).match(/^(\d{1,2})\s*[~～-]\s*(\d{1,2})$/);
+          if (m) return { h1: parseInt(m[1], 10), h2: parseInt(m[2], 10) };
+        }
+        return null;
+      };
+
+      const entries = [];
+      const pad = n => String(n).padStart(2, '0');
+      let lastRow = valueRowIdx;
+      let anyTime = false;
+      for (let rr = valueRowIdx; rr < grid.length; rr++) {
+        const hits = labels.filter(l => this._isNumericCell((grid[rr] || [])[l.col])).length;
+        if (hits === 0) break;
+        const t = timeOf(rr);
+        if (t) anyTime = true;
+        labels.forEach(l => {
+          const v = this.cellStr((grid[rr] || [])[l.col]);
+          // Only actual readings become rows. A caption sitting above the numbers
+          // ("振動測值" over "(dB)", "測定項目" over "合成噪音測值(L1)") looks like a
+          // heading with a value underneath but carries no measurement at all.
+          if (!this._isNumericCell(v)) return;
+          entries.push({
+            item: l.name, value: v,
+            timeStart: t ? `${pad(t.h1)}:00:00` : '',
+            timeEnd: t ? `${pad(t.h2 % 24)}:00:00` : '',
+          });
+        });
+        lastRow = rr;
+        if (!t) break; // a single summary row, not an hour-by-hour block
+      }
+      if (entries.length === 0) continue;
+      const preview = labels.slice(0, 4).map(l => l.name).join('、') + (labels.length > 4 ? '…' : '');
+      candidates.push({
+        label: `${anyTime ? '逐時' : '彙整'}數值：${preview}`,
+        hourly: anyTime, entries, startRow: r, endRow: lastRow, distinct,
+      });
+    }
+
+    // Largest wins; anything overlapping an accepted block is a stacked-header
+    // duplicate of it and is dropped.
+    // Ranked by how many DISTINCT measurement names the row explains, before sheer
+    // row count: a unit row ("ppm ppm ppm …") lines up with just as many numbers as
+    // the pollutant-name row above it, but names nothing.
+    candidates.sort((a, b) => b.distinct - a.distinct
+      || b.entries.length - a.entries.length || a.startRow - b.startRow);
+    const taken = [];
+    for (const cand of candidates) {
+      if (taken.some(t => cand.startRow <= t.endRow && cand.endRow >= t.startRow)) continue;
+      taken.push(cand);
+      if (taken.length >= 8) break; // a sheet with more blocks than this isn't a report
+    }
+    return taken.sort((a, b) => a.startRow - b.startRow);
+  },
+
+  /** Finds scattered "NAME= value" measurement pairs, e.g. "Lv日(Lv10)=" then 39.19. */
+  findLabelValuePairs(grid) {
+    const entries = [];
+    for (let r = 0; r < Math.min(grid.length, 120); r++) {
+      const row = grid[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const s = this.cellStr(row[c]).replace(/\s+/g, '');
+        const m = s.match(/^(.{1,20}?)[=＝]$/);
+        if (!m) continue;
+        const name = m[1];
+        if (!/[A-Za-z一-鿿]/.test(name)) continue;
+        for (let cc = c + 1; cc < row.length; cc++) {
+          const v = this.cellStr(row[cc]);
+          if (v === '') continue;
+          if (this._isNumericCell(v)) entries.push({ item: name, value: v });
+          break;
+        }
+      }
+    }
+    if (entries.length < 2) return [];
+    const preview = entries.slice(0, 4).map(e => e.item).join('、') + (entries.length > 4 ? '…' : '');
+    return [{ label: `標示式數值：${preview}`, hourly: false, entries }];
+  },
+
+  /**
+   * Last resort for a sampling date: some reports never write it as a label at all,
+   * they run it DOWN a column one merged cell per character —
+   * "115 / 年 / 6 / 月 / 25 / 日 / 至 / 115 / 年 / 6 / 月 / 26 / 日". Stitching the
+   * left-hand columns back together recovers it. Only called when nothing else found
+   * a date, so a stray number elsewhere can't hijack a date that was read properly.
+   */
+  recoverStitchedDate(grid) {
+    for (const col of [0, 1]) {
+      const joined = grid.map(r => this.cellStr((r || [])[col])).join('');
+      if (!/\d/.test(joined)) continue;
+      const parts = joined.split(/至|~|～|－|—/);
+      const a = DateTimeUtil.toISODate(parts[0] || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(a)) continue;
+      const b = parts.length > 1 ? DateTimeUtil.toISODate(parts[1]) : '';
+      return { start: a, end: /^\d{4}-\d{2}-\d{2}$/.test(b) ? b : a };
+    }
+    return { start: '', end: '' };
   },
 
   /** Maps free text ("底泥", "河川水") onto one of the category's 檢測類別 options. */
