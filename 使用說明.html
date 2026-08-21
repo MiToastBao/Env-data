@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>新手使用說明｜環評監測資料填報小工具</title>
+<style>
+  :root{--primary:#1e6b52;--primary-dark:#144a39;--bg:#f5f7f6;--panel:#fff;--border:#dde3e0;
+        --text:#22322c;--muted:#6b7a74;--warn-bg:#fff6e0;--warn-bd:#f0c14b;
+        --info-bg:#e8f0fe;--info-bd:#a8c7fa;--bad-bg:#fdecea;--bad-bd:#e08b7f;}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);line-height:1.85;
+       font-family:"Noto Sans TC","Microsoft JhengHei",-apple-system,BlinkMacSystemFont,sans-serif;font-size:16px}
+  .wrap{max-width:920px;margin:0 auto;padding:0 20px 80px}
+  header.top{background:var(--primary-dark);color:#fff;padding:34px 20px;margin-bottom:26px}
+  header.top .inner{max-width:920px;margin:0 auto}
+  header.top h1{margin:0 0 6px;font-size:27px;letter-spacing:.5px}
+  header.top p{margin:0;opacity:.9;font-size:15px}
+  .toolbar{max-width:920px;margin:0 auto 22px;display:flex;gap:10px;flex-wrap:wrap;padding:0 20px}
+  .btn{display:inline-block;background:var(--primary);color:#fff;border:none;border-radius:7px;
+       padding:9px 16px;font-size:14px;font-family:inherit;cursor:pointer;text-decoration:none}
+  .btn:hover{background:var(--primary-dark)}
+  .btn-ghost{background:#fff;color:var(--primary-dark);border:1px solid var(--border)}
+  nav.toc{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 24px;margin-bottom:30px}
+  nav.toc h2{margin:0 0 10px;font-size:17px}
+  nav.toc ol{margin:0;padding-left:22px;columns:2;column-gap:34px}
+  nav.toc li{margin:3px 0;break-inside:avoid}
+  nav.toc a{color:var(--primary-dark);text-decoration:none}
+  nav.toc a:hover{text-decoration:underline}
+  section{background:var(--panel);border:1px solid var(--border);border-radius:10px;
+          padding:26px 30px;margin-bottom:22px}
+  h2{font-size:22px;margin:0 0 4px;color:var(--primary-dark);
+     border-bottom:3px solid var(--primary);padding-bottom:9px}
+  h2 .num{display:inline-block;background:var(--primary);color:#fff;border-radius:6px;
+          padding:1px 10px;margin-right:9px;font-size:17px;vertical-align:2px}
+  h3{font-size:17.5px;margin:26px 0 6px;color:var(--primary-dark)}
+  h4{font-size:15.5px;margin:18px 0 4px}
+  p{margin:9px 0}
+  ul,ol{margin:9px 0;padding-left:26px}
+  li{margin:5px 0}
+  code,kbd{background:#eef3f1;border:1px solid var(--border);border-radius:4px;
+           padding:1px 6px;font-size:14px;font-family:"Consolas",monospace}
+  .ui{background:#e2f0ea;border:1px solid #b9d8cb;border-radius:5px;padding:1px 8px;
+      font-weight:600;white-space:nowrap;font-size:15px}
+  .note,.warn,.bad{border-radius:8px;padding:13px 17px;margin:15px 0;font-size:15px;line-height:1.8}
+  .note{background:var(--info-bg);border:1px solid var(--info-bd)}
+  .warn{background:var(--warn-bg);border:1px solid var(--warn-bd)}
+  .bad{background:var(--bad-bg);border:2px solid var(--bad-bd)}
+  .note b,.warn b,.bad b{color:var(--primary-dark)}
+  table{border-collapse:collapse;width:100%;margin:15px 0;font-size:14.5px}
+  th,td{border:1px solid var(--border);padding:9px 12px;text-align:left;vertical-align:top}
+  th{background:#eef3f1;font-weight:700;white-space:nowrap}
+  td.k{white-space:nowrap;font-weight:600;background:#fafbfa}
+  .steps{counter-reset:s;list-style:none;padding-left:0}
+  .steps>li{counter-increment:s;position:relative;padding-left:42px;margin:16px 0}
+  .steps>li::before{content:counter(s);position:absolute;left:0;top:1px;width:28px;height:28px;
+                    background:var(--primary);color:#fff;border-radius:50%;text-align:center;
+                    line-height:28px;font-size:14px;font-weight:700}
+  .faq{border-left:4px solid var(--primary);padding-left:16px;margin:20px 0}
+  .faq .q{font-weight:700;color:var(--primary-dark);margin-bottom:2px}
+  footer{text-align:center;color:var(--muted);font-size:13.5px;padding:30px 20px}
+  @media print{
+    body{background:#fff;font-size:12pt} .toolbar{display:none}
+    section{border:none;padding:0 0 10px;margin-bottom:16px;break-inside:auto}
+    header.top{background:#fff;color:#000;border-bottom:3px solid #000;padding:0 0 14px}
+    h2{break-after:avoid} h3,h4{break-after:avoid}
+    nav.toc{break-after:page} .note,.warn,.bad{break-inside:avoid}
+    table{break-inside:auto} tr{break-inside:avoid}
+  }
+</style>
+</head>
+<body>
+<header class="top"><div class="inner">
+  <h1>環評監測資料填報小工具　新手使用說明</h1>
+  <p>從零開始，一步一步帶您把檢測報告變成可以上傳環境部的 Excel</p>
+</div></header>
+
+<div class="toolbar">
+  <a class="btn" href="index.html">← 回到系統</a>
+  <button class="btn btn-ghost" onclick="window.print()">🖨️ 列印／存成 PDF</button>
+</div>
+
+<div class="wrap">
+<nav class="toc">
+  <h2>目錄</h2>
+  <ol>
+    <li><a href="#s1">這個工具在做什麼</a></li>
+    <li><a href="#s2">最重要的一件事：資料存在哪裡</a></li>
+    <li><a href="#s3">五分鐘快速上手</a></li>
+    <li><a href="#s4">畫面各區塊介紹</a></li>
+    <li><a href="#s5">步驟一：建立計畫</a></li>
+    <li><a href="#s6">步驟二：填寫監測點基本資料</a></li>
+    <li><a href="#s7">步驟三：匯入檢測報告</a></li>
+    <li><a href="#s8">看懂匯入確認畫面</a></li>
+    <li><a href="#s9">步驟四：檢查與修正資料</a></li>
+    <li><a href="#s10">「要不要一起修改？」同步詢問</a></li>
+    <li><a href="#s11">好用的輔助工具</a></li>
+    <li><a href="#s12">步驟五：匯出並上傳</a></li>
+    <li><a href="#s13">下一季怎麼做</a></li>
+    <li><a href="#s14">備份與換電腦</a></li>
+    <li><a href="#s15">常見問題排除</a></li>
+    <li><a href="#s16">名詞速查表</a></li>
+  </ol>
+</nav>
+<section id="s1">
+<h2><span class="num">1</span>這個工具在做什麼</h2>
+
+<p>環境部的環評監測資料申報系統，要求您把每一季的監測結果整理成<strong>固定格式的 Excel</strong>再上傳。
+但檢測公司給您的原始報告長得完全不一樣——它是一張像紙本表格的「報告單」，日期寫在右上角、
+測值散落在中間的表格裡，跟申報格式的欄位順序毫無關係。</p>
+
+<p>過去這件事要靠人工一格一格複製貼上，一季幾百筆，又慢又容易出錯。<strong>這個工具就是幫您做這件事的</strong>：</p>
+
+<table>
+<tr><th style="width:34%">您做的事</th><th>系統幫您做的事</th></tr>
+<tr><td class="k">上傳檢測公司給的報告</td><td>自動讀出日期、時間、地點、檢測項目、測值、單位、檢測方法、檢測機構代碼</td></tr>
+<tr><td class="k">補上報告裡沒有的資訊</td><td>記住您填過的座標、管制區等內容，下一季自動帶入，不用重填</td></tr>
+<tr><td class="k">在表格裡核對、修正</td><td>提供搜尋、篩選、排序、批次修改、復原；欄位格式不對會標紅提醒</td></tr>
+<tr><td class="k">按「匯出」</td><td>產生符合環境部範本格式的 Excel，可直接上傳</td></tr>
+</table>
+
+<h3>支援哪些監測類別</h3>
+<table>
+<tr><th style="width:16%">分類</th><th style="width:42%">可自動判讀的原始報告</th><th>說明</th></tr>
+<tr><td class="k">空氣品質</td><td>24 小時連續監測報告、落塵量報告</td><td>可選擇要申報日平均值、最大小時值等哪一種統計值</td></tr>
+<tr><td class="k">水質</td><td>河川(W)、地下水(WG)、放流水(WU) 檢驗報告</td><td>一個測項一個測值，最單純</td></tr>
+<tr><td class="k">地質</td><td>底泥、土壤等實驗室檢測報告</td><td>「檢測類別」需要您自己選（底泥品質／土壤品質…）</td></tr>
+<tr><td class="k">噪音</td><td>環境噪音(N)、振動(V)、營建噪音(BN)、營建振動(BV)、低頻噪音(LFN)</td><td>環境噪音會自動取 L日／L晚／L夜；振動取 Lvd(10)</td></tr>
+<tr><td class="k">生態</td><td><strong>不支援</strong></td><td>只能匯入別家公司<strong>已經填好的</strong>「生態調查資料填寫.xlsx」做彙整</td></tr>
+</table>
+
+<div class="note">
+<b>沒看過的報告格式也不會白費。</b>如果您的檢測公司換了、報告長得跟以上都不一樣，系統會改用
+「看欄位標題找欄位」的方式，盡量找出<strong>日期(起)、日期(迄)、時間(起)、時間(迄)、檢測項目、監測數值、檢測單位</strong>
+這 7 個必要欄位，並在畫面上用紅框明確告訴您「這些是猜出來的，請逐筆核對」。
+</div>
+</section>
+
+<section id="s2">
+<h2><span class="num">2</span>最重要的一件事：資料存在哪裡</h2>
+
+<div class="bad">
+<b>⚠️ 請務必先看完這一段再開始使用。</b><br>
+這是一個<strong>純網頁工具，沒有伺服器、沒有帳號、沒有雲端</strong>。您輸入的所有資料，
+都只存在<strong>您這一台電腦、這一個瀏覽器</strong>裡面。
+</div>
+
+<p>這代表：</p>
+<ul>
+  <li>❌ 換一台電腦打開網站，<strong>看不到</strong>您原本的資料。</li>
+  <li>❌ 換一個瀏覽器（Chrome 換成 Edge），<strong>看不到</strong>。</li>
+  <li>❌ 用「無痕視窗」操作，關掉視窗資料就<strong>沒了</strong>。</li>
+  <li>❌ 清除瀏覽器資料／Cookie／快取，資料會<strong>一起被刪掉</strong>。</li>
+  <li>✅ 但只要是同一台電腦同一個瀏覽器，關掉網頁、關機、隔天再打開，資料<strong>都還在</strong>。</li>
+</ul>
+
+<h3>所以請養成一個習慣：定期按「匯出備份」</h3>
+<p>右上角有一顆 <span class="ui">匯出備份</span>，按下去會下載一個 <code>.json</code> 檔，
+裡面是您<strong>所有計畫的所有資料</strong>。把它存到公司的網路磁碟或雲端硬碟，就等於做好了備份。</p>
+<p>要復原（或搬到另一台電腦）時，在新電腦打開網站，按 <span class="ui">匯入備份</span> 選這個檔案即可。</p>
+
+<div class="warn">
+系統會自己提醒您：<strong>超過 14 天沒備份</strong>，左側計畫清單下方會出現黃色提醒條。看到它就順手按一下匯出備份。
+</div>
+
+<h3>可以多人共用嗎？</h3>
+<p>不行，也不需要。每個人在自己的電腦上獨立作業；如果要交接，就用「匯出備份 → 傳檔案 → 匯入備份」。</p>
+</section>
+
+<section id="s3">
+<h2><span class="num">3</span>五分鐘快速上手</h2>
+<p>先看整體流程，細節後面再說。以「這一季的水質報告」為例：</p>
+
+<ol class="steps">
+  <li><b>建立計畫</b>：左側按 <span class="ui">＋ 新增計畫</span>，輸入計畫代碼（例如 <code>E-0356</code>）和計畫名稱，儲存。</li>
+  <li><b>填基本資料</b>：點進計畫，在 <span class="ui">監測點基本資料</span> 分頁把書件案號、執行現況等填一填。這頁一個計畫只要填一次。</li>
+  <li><b>匯入報告</b>：切到 <span class="ui">水質</span> 分頁 → 按 <span class="ui">📥 匯入資料（Excel/PDF）</span> → 選檔案 → 按 <span class="ui">✅ 開始判讀</span>。</li>
+  <li><b>確認內容</b>：畫面會列出讀到的測項和測站，確認沒問題後按 <span class="ui">確認匯入 ○○ 筆資料</span>。</li>
+  <li><b>核對表格</b>：資料進到下方表格，逐欄檢查。有 <span style="color:#c0392b">＊</span> 的是申報必填欄位。</li>
+  <li><b>匯出</b>：按 <span class="ui">匯出此類別</span>，下載的 Excel 就可以拿去環境部系統上傳。</li>
+</ol>
+
+<div class="note">
+其他四個分類的流程完全一樣，只是換一個分頁。全部整理完後，也可以用計畫頁面右上角的
+<span class="ui">匯出全部類別</span> 一次匯出多個檔案。
+</div>
+</section>
+
+<section id="s4">
+<h2><span class="num">4</span>畫面各區塊介紹</h2>
+
+<h3>最上面那一排（不管在哪一頁都看得到）</h3>
+<table>
+<tr><td class="k">📥 範本下載</td><td>下載空白的官方填寫範本，適合沒有原始報告、要純手工整理的情況</td></tr>
+<tr><td class="k">📖 單位代碼表</td><td>查「檢測濃度/質量單位」該填哪個代碼（共 161 筆），可用關鍵字搜尋</td></tr>
+<tr><td class="k">🏢 檢測機構代碼表</td><td>查「檢測機構許可證號」該填哪個代碼</td></tr>
+<tr><td class="k">🔗 環評申報網站</td><td>另開新分頁前往環境部申報網站</td></tr>
+<tr><td class="k">匯出備份／匯入備份</td><td>見前一節，非常重要</td></tr>
+<tr><td class="k">版本號（例如 v4.28）</td><td>點一下可看歷次更新內容。若更新後畫面沒變，按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd> 強制重新整理</td></tr>
+</table>
+
+<h3>左邊：我的計畫</h3>
+<p>您負責的每一個環評計畫案在這裡各自獨立。點名稱切換，點右邊的 🗑 刪除（會再問一次）。</p>
+
+<h3>右邊：計畫內容</h3>
+<p>選了計畫之後，會出現六個分頁：<strong>監測點基本資料</strong>、<strong>空氣品質</strong>、
+<strong>水質</strong>、<strong>地質</strong>、<strong>噪音</strong>、<strong>生態</strong>。
+分頁上的數字是該分類目前有幾筆資料。</p>
+<p>計畫名稱右邊還有四顆按鈕：<span class="ui">編輯計畫資訊</span>、<span class="ui">刪除計畫</span>、
+<span class="ui">📦 批次匯入監測報告</span>、<span class="ui">匯出全部類別</span>。</p>
+</section>
+<section id="s5">
+<h2><span class="num">5</span>步驟一：建立計畫</h2>
+<ol class="steps">
+  <li>左上角按 <span class="ui">＋ 新增計畫</span>。</li>
+  <li><b>計畫代碼</b>：環境部給的代碼，格式是「英文代碼-四碼流水號」，例如 <code>E-0356</code>。
+      如果有延伸編碼請填 <code>E-0356.1</code>（不要用舊版三碼寫法）。</li>
+  <li><b>計畫名稱</b>：填完整名稱，例如「嘉義縣馬稠後產業園區開發計畫環境影響評估報告書」。</li>
+  <li>按 <span class="ui">儲存</span>。</li>
+</ol>
+<p>建立後計畫會出現在左側，點一下就進去了。要改名稱或代碼，進去後按 <span class="ui">編輯計畫資訊</span>。</p>
+</section>
+
+<section id="s6">
+<h2><span class="num">6</span>步驟二：填寫監測點基本資料</h2>
+<p>這一頁的內容，會被寫進<strong>每一個</strong>匯出檔案的第一個工作表，所以一個計畫只要填一次。</p>
+
+<table>
+<tr><th style="width:22%">欄位</th><th>怎麼填</th></tr>
+<tr><td class="k">計畫代碼 <span style="color:#c0392b">＊</span></td><td>同上，例如 <code>E-0356</code></td></tr>
+<tr><td class="k">書件案號</td><td>共 8 碼，前 7 碼數字、第 8 碼英文大寫，例如 <code>0880792A</code>。沒有可不填</td></tr>
+<tr><td class="k">書件名稱</td><td>完整名稱，不要用簡寫</td></tr>
+<tr><td class="k">執行現況</td><td>從下拉選單挑：施工前／施工中／施工兼營運／營運中</td></tr>
+<tr><td class="k">施工日期</td><td>執行現況是「施工中」或「施工兼營運」時<strong>務必填</strong></td></tr>
+<tr><td class="k">竣工日期</td><td>執行現況是「施工兼營運」或「營運中」時請填</td></tr>
+<tr><td class="k">營運日期</td><td>執行現況是「施工兼營運」或「營運中」時<strong>務必填</strong></td></tr>
+<tr><td class="k">備註</td><td>100 字以內</td></tr>
+</table>
+
+<div class="note">
+日期欄位直接打字就好，<strong>民國或西元都認得</strong>：<code>115/6/25</code>、<code>115年6月25日</code>、
+<code>2026/6/25</code>、<code>20260625</code> 都會自動轉成 <code>2026/06/25</code>。
+欄位旁邊有 ℹ️ 的，把滑鼠移上去會顯示填寫說明。
+</div>
+<p>這一頁<strong>不用按儲存</strong>，打完字點到別的地方就自動存好了。</p>
+</section>
+
+<section id="s7">
+<h2><span class="num">7</span>步驟三：匯入檢測報告</h2>
+
+<h3>方法 A：在各分類頁面匯入（最常用）</h3>
+<ol class="steps">
+  <li>切到要匯入的分頁，例如 <span class="ui">水質</span>。</li>
+  <li>按 <span class="ui">📥 匯入資料（Excel/PDF）</span>。</li>
+  <li>把檔案<strong>拖進虛線框</strong>，或按框裡的選擇檔案。<strong>可以一次選好幾個</strong>
+      （例如同一季三個月份的放流水報告），也可以分好幾次拖進來慢慢累積。</li>
+  <li>檔案會列在下方清單，確認無誤後按 <span class="ui">✅ 開始判讀</span>。清單裡每個檔案都能個別移除。</li>
+</ol>
+
+<h3>方法 B：批次匯入（一次丟一整包）</h3>
+<p>如果檢測公司一次給您好幾種報告，在計畫頁面上方按 <span class="ui">📦 批次匯入監測報告</span>，
+把所有檔案一起丟進去。系統會<strong>自動判斷每個檔案屬於哪個分類</strong>，然後一個分類一個分類帶您確認。</p>
+<p>目前可自動判斷分類的是<strong>噪音／水質／空氣品質／地質</strong>四類。生態不行，請用方法 A 到生態分頁匯入。</p>
+
+<h3>生態分類的特別說明</h3>
+<div class="warn">
+🌿 生態調查通常是<strong>別家公司</strong>負責填報，本系統<strong>無法判讀生態調查報告原始檔</strong>。
+請向對方索取<strong>已經填寫完成</strong>的「生態調查資料填寫.xlsx」（完成版），再匯入本系統做彙整。
+匯入後一樣可以編輯、可以匯出。
+</div>
+
+<h3>可以匯入什麼檔案</h3>
+<ul>
+  <li><strong>Excel（.xlsx／.xls）</strong>：最準確，強烈建議優先使用。</li>
+  <li><strong>CSV</strong>：可以。</li>
+  <li><strong>PDF</strong>：可以，但系統是把 PDF 的文字依位置重新排成表格，<strong>準確度明顯較低</strong>。
+      系統偵測到資料來自 PDF 會跳出提醒，請務必逐筆核對數值和座標。手上有 Excel 就別用 PDF。</li>
+  <li><strong>上一季的完成版</strong>：也可以直接匯入！系統會認出它已經是官方格式，直接照欄位讀進來。</li>
+</ul>
+</section>
+
+<section id="s8">
+<h2><span class="num">8</span>看懂匯入確認畫面</h2>
+<p>按下「開始判讀」之後，<strong>資料還沒有真的進去</strong>。系統會先給您一個確認畫面，
+由上往下大概是這些區塊（不一定每次都全部出現）：</p>
+
+<h3>① 本批資料屬於哪一期</h3>
+<p>系統會依採樣日期猜一個季別（例如「115年第2季」）。這個標籤的用途是：
+之後在表格上方可以<strong>只看某一季</strong>，匯出時也只匯出那一季。猜錯了直接改即可。</p>
+
+<h3>② 監測項目勾選（分成兩層）</h3>
+<p>上層是<strong>預設要匯入的測項</strong>，已經幫您勾好。下層是一個可以展開的
+<span class="ui">➕ 其他偵測到的測項</span>，預設<strong>不勾</strong>。</p>
+<div class="note">
+為什麼要分兩層？以 24 小時環境噪音報告為例，系統讀得到 24 筆逐時的 Leq／Lmax／L5／L10…，
+但申報只需要 <strong>L日／L晚／L夜</strong> 三筆。所以預設只勾那三筆，其餘的收起來——
+真的需要時再展開勾選就好。振動同理，預設只勾 <strong>Lvd(10)</strong>。<br>
+上層的「全選／全不選」<strong>不會</strong>動到收合區，收合區有自己的一組按鈕。
+</div>
+
+<h3>③ 📋 詳細資料列表</h3>
+<p>展開後是逐筆資料（地點／測項／日期／時間／數值），可以<strong>個別</strong>取消勾選。
+例如同樣是 CO，只想排除某一天某一站的那一筆，就在這裡取消它，不用整個 CO 都不匯入。
+上方有搜尋框和欄位篩選（▾）可以快速找到目標。</p>
+
+<h3>④ 各種提醒框</h3>
+<table>
+<tr><th style="width:26%">看到什麼</th><th>代表什麼、要做什麼</th></tr>
+<tr><td class="k">🔎 紅框「不是系統內建認得的報告格式」</td>
+    <td>這份報告是靠<strong>猜</strong>欄位標題讀出來的。框裡會列出哪些欄位找到了、哪些沒找到。<strong>請務必逐筆核對</strong></td></tr>
+<tr><td class="k">📅「有 N 筆資料讀不到採樣日期」</td>
+    <td>通常代表那個工作表是上次監測留在檔案裡忘了刪的<strong>舊版本</strong>。系統已預設不匯入。
+        若確定是本次的，到「詳細資料列表」勾回來，匯入後自己補日期</td></tr>
+<tr><td class="k">⚠️「檢測類別還是空白」</td>
+    <td>這是申報必填欄位。請在下方測站設定表選好（地質常見）</td></tr>
+<tr><td class="k">⚠️「以下項目報告中未提供檢測方法」</td>
+    <td>匯入後到 <span class="ui">🧪 檢測方法管理</span> 補上，補一次系統就會記住</td></tr>
+<tr><td class="k">⚠️「單位代碼是自動比對、非完全確定」</td>
+    <td>請開 <span class="ui">📖 單位代碼表</span> 核對後手動修正</td></tr>
+<tr><td class="k">⚠️「檢測極限欄位只能填數值」</td>
+    <td>報告在偵測極限欄寫了非數字的東西（例如 <code>&lt;0.002</code>、<code>0.0004 mg/L</code>、<code>N/A</code>）。
+        會列出實際內容讓您選擇怎麼處理，詳見第 10 節</td></tr>
+<tr><td class="k">ℹ️「本次檢測方法跟先前記錄不同」</td>
+    <td>系統以本次報告為準。不同季實驗室換方法是正常的，確認一下不是誤判即可</td></tr>
+<tr><td class="k">ℹ️「以下欄位被設定為隱藏」</td>
+    <td>報告 Excel 把某些污染物欄位隱藏了，代表該測站沒測那些項目，已自動略過</td></tr>
+</table>
+
+<h3>⑤ 過去有、本次沒有的測項</h3>
+<p>系統會跟您<strong>上一次確認匯入</strong>的內容比對，列出差異，分兩種：</p>
+<ul>
+  <li><strong>本次完全沒有這個測項</strong>（過去有測、這次整個不見了）→ <strong>預設已勾選</strong>，
+      勾選會新增空白列讓您手動補測值，其他欄位會依過去記錄自動填好。</li>
+  <li><strong>本次有、但比過去少幾筆</strong> → <strong>預設不勾選</strong>。
+      最常見的原因是兩邊涵蓋的採樣次數不同——例如過去比對的是一整季完成版（1、2、3 月共 3 筆），
+      而這次只匯入單月報告（1 筆），<strong>並不是真的少了資料</strong>。
+      每一項下面都會列出兩邊實際的採樣日期給您判斷。</li>
+</ul>
+
+<h3>⑥ 測站設定表（很重要）</h3>
+<p>報告裡本來就沒有的資訊，在這裡補一次：</p>
+<ul>
+  <li><strong>正式測站名稱</strong>：報告上常寫得很概略（例如「Y1車站~Y4車站」），
+      但申報要用特定站名（例如「YC01標工區周界外」）。</li>
+  <li><strong>座標系統與 X／Y</strong>：<code>2</code>＝WGS84（經緯度，例如 120.681 / 24.147）；
+      <code>3</code>＝TWD97-TM2（投影座標，例如 X=193150, Y=2670900）。</li>
+  <li><strong>檢測類別</strong>、管制區、環境音量標準等。</li>
+</ul>
+<div class="note">
+右邊的 <span class="ui">記住此設定</span> 預設是打勾的——<strong>保持打勾</strong>，
+下次匯入同一個測站就會自動帶入，不用再填一次。
+</div>
+
+<h3>⑦ 最後：確認匯入</h3>
+<p>按鈕上會顯示<strong>實際會匯入幾筆</strong>（例如「確認匯入 67 筆資料」）。這個數字會跟著您的勾選即時變動，按下去之前看一眼。</p>
+
+<h3>如果跳出「⚠️ 偵測到資料內容有差異」</h3>
+<p>代表這批資料的日期／時間／地點／測項跟現有資料相同，但內容不一樣——
+通常是您<strong>手動修正過、又重新匯入</strong>的情況。系統會列出每一筆的差異，讓您選要保留哪個版本。
+上方有「全部套用新版本」「全部保留原有資料」可以一次決定。</p>
+</section>
+<section id="s9">
+<h2><span class="num">9</span>步驟四：檢查與修正資料</h2>
+<p>匯入後資料進到下方表格。<strong>請務必逐欄核對</strong>——系統再準也是機器判讀，送件責任還是在人。</p>
+
+<h3>表格怎麼操作</h3>
+<ul>
+  <li><strong>直接改</strong>：點任何一格就能編輯，改完點別的地方就存好了，不用按儲存。</li>
+  <li><strong>固定欄位</strong>：最左邊的勾選框、<strong>地點</strong>、<strong>測項</strong>會固定住，
+      往右捲動看其他欄位時仍看得到自己在改哪一站、哪一項。</li>
+  <li><strong>必填欄位</strong>：欄位名稱後面有紅色 <span style="color:#c0392b">＊</span> 的是申報必填。</li>
+  <li><strong>欄位說明</strong>：欄名後面有 ℹ️ 的，滑鼠移上去會顯示說明。</li>
+  <li><strong>代碼欄位</strong>：在「單位」「檢測機構」欄輸入代碼後，滑鼠移上去會顯示代碼代表的名稱，可即時確認沒填錯。</li>
+</ul>
+
+<h3>日期與時間怎麼填</h3>
+<p>日期欄只顯示<strong>年/月/日</strong>（例如 <code>2026/06/25</code>），時間欄只顯示<strong>時:分</strong>
+（例如 <code>08:30</code>），不會出現秒。輸入時很寬鬆：</p>
+<ul>
+  <li>日期：<code>115/6/25</code>、<code>115年6月25日</code>、<code>2026-6-25</code>、<code>20260625</code> 都可以</li>
+  <li>時間：<code>0830</code>、<code>8:30</code>、<code>08:30</code>、<code>10時5分</code> 都可以</li>
+</ul>
+
+<h3>找資料：搜尋、篩選、排序</h3>
+<table>
+<tr><td class="k">🔍 搜尋框</td><td>輸入任何關鍵字（測站、測項、日期…）即時篩選畫面顯示的列</td></tr>
+<tr><td class="k">▾ 欄位篩選</td><td>每個欄名旁邊都有，像 Excel 的自動篩選，可勾選只顯示特定值</td></tr>
+<tr><td class="k">點欄名排序</td><td>第一次由小到大，第二次由大到小，第三次取消。空白值一律排在最後</td></tr>
+<tr><td class="k">期別下拉選單</td><td>只看某一季的資料。<strong>注意：匯出範圍會跟著這個選單走</strong></td></tr>
+<tr><td class="k">✕ 清除篩選</td><td>一次清掉搜尋和所有欄位篩選</td></tr>
+</table>
+<div class="note">
+搜尋和欄位篩選<strong>只影響畫面</strong>，不影響匯出範圍。<strong>匯出範圍是由「期別」下拉選單決定的。</strong>
+</div>
+
+<h3>批次處理多筆</h3>
+<ol class="steps">
+  <li>用搜尋或篩選把目標列找出來。</li>
+  <li>勾選要處理的列（表頭的勾選框可以<strong>全選目前顯示的</strong>）。</li>
+  <li>上方會出現工具列：<span class="ui">✏️ 批次修改欄位</span>（把同一個欄位一次改成同樣的值）、
+      <span class="ui">🗑 刪除已選取</span>。</li>
+</ol>
+
+<h3>手動新增資料</h3>
+<ul>
+  <li><span class="ui">＋ 新增一筆</span>：加一列全空白的。</li>
+  <li><span class="ui">☑️ 常用測項新增</span>：勾選要新增的測項，系統自動帶入對應的檢測方法和單位代碼。
+      下方可以設定「要建立幾份」——例如勾 10 個測項、份數填 3，就一次新增 30 筆空白資料。
+      也可以新增自訂測項，系統會記住供這個計畫下次使用。</li>
+</ul>
+
+<h3>做錯了怎麼辦</h3>
+<p>刪除、清空這類動作之後，上方會出現 <span class="ui">↩️ 復原上一步</span>，
+按下去就救回來了。復原之後還會有 <span class="ui">↪️ 返回下一步</span> 可以再做一次。</p>
+<div class="warn">
+復原紀錄<strong>只存在記憶體</strong>，重新整理網頁就沒了。所以刪除大量資料前，先按一下「匯出備份」最保險。
+</div>
+
+<h3>刪錯整批匯入</h3>
+<p><span class="ui">📜 匯入紀錄</span> 會列出這個分類過去每一次匯入（時間、來源檔名、筆數、期別），
+可以<strong>整批刪除</strong>某一次匯入的所有資料。手動新增或編輯的資料不在此列。</p>
+</section>
+
+<section id="s10">
+<h2><span class="num">10</span>「要不要一起修改？」同步詢問</h2>
+
+<p>一份報告裡，同一個測站同一次採樣通常有很多筆資料（不同測項）。
+如果座標填錯了，一筆一筆改會很煩。所以當您改了某一格，系統會問您<strong>要不要一起改</strong>。</p>
+<p>系統<strong>一定會先問過您</strong>，不會自作主張。按「取消」就只改目前這一筆。</p>
+
+<h3>什麼會跟著改、什麼不會</h3>
+<table>
+<tr><th style="width:20%">您改的欄位</th><th>會一起改的範圍</th></tr>
+<tr><td class="k">座標<br>（座標系統／X／Y）</td>
+    <td><strong>同一測站 ＋ 同一次採樣日期</strong>的所有資料，<strong>包含噪音和振動</strong>。<br>
+    因為一次採樣就架一次腳架、就一個位置，噪音跟振動的座標本來就一樣。<br>
+    <b>不會</b>跨到別的採樣日期（平日不會影響假日）。</td></tr>
+<tr><td class="k">日期／時間</td>
+    <td><strong>原本就跟這一筆同一次採樣</strong>的資料，而且<strong>同一個檢測類別</strong>。<br>
+    所以改假日的日期，只會動到假日的噪音；平日不受影響，振動也不受影響。</td></tr>
+<tr><td class="k">檢測類別</td>
+    <td>同一測站、同一天、<strong>原本就是同一個檢測類別</strong>的資料。<br>
+    例如把「環境噪音」改成「道路交通噪音」，只會動到原本是環境噪音的那幾筆，振動不會被改。</td></tr>
+<tr><td class="k">其他欄位<br>（管制區、管制標準、檢測方法、單位、備註…）</td>
+    <td>同一測站、同一天、<strong>同一個檢測類別</strong>。<br>
+    噪音改的內容<strong>不會</strong>跑到振動去。</td></tr>
+<tr><td class="k">測值、比較關係</td>
+    <td><strong>永遠不會同步</strong>——每一筆的測值本來就該不一樣。</td></tr>
+</table>
+
+<div class="note">
+<b>用平日／假日來記最快：</b>座標是「同一天的噪音＋振動一起改」；其他所有欄位是「同一天、同一類別才改」；
+而<strong>不同採樣日期（平日 vs 假日）永遠互不影響</strong>。
+</div>
+
+<h3>比較關係與檢測數值的規則</h3>
+<p>在測值欄位輸入時，系統會自動處理：</p>
+<table>
+<tr><th style="width:22%">您輸入</th><th>系統怎麼存</th></tr>
+<tr><td class="k">一般數字 <code>18.2</code></td><td>檢測數值＝18.2，比較關係留空</td></tr>
+<tr><td class="k"><code>ND</code></td><td>比較關係＝ND，<strong>檢測數值留空白</strong>（ND 不是測值）</td></tr>
+<tr><td class="k"><code>&lt;0.17</code></td><td>比較關係＝&lt;，檢測數值＝0.17</td></tr>
+<tr><td class="k"><code>NA</code> 或 <code>未檢測</code></td><td>比較關係和檢測數值都留空，<strong>備註</strong>寫「未檢測」</td></tr>
+</table>
+<p>「檢測極限」只有在比較關係是 <code>ND</code> 或 <code>&lt;</code> 時才會帶入，其餘情況一律留空。</p>
+
+<h3>檢測極限只能填數值</h3>
+<p>申報系統的「檢測極限」欄位<strong>只接受純數字</strong>，出現 <code>&lt;</code>、<code>&gt;</code>
+或任何其他字元都可能導致上傳被退件。但檢測報告的偵測極限欄常常會寫成
+<code>&lt;0.002</code>、<code>0.0004 mg/L</code>、<code>N/A</code> 這類內容。</p>
+<p>系統<strong>不會自作主張</strong>。匯入時如果讀到非純數值，會在確認畫面列出<strong>實際讀到的每一種內容、各幾筆、是哪些測項</strong>，
+並讓您三選一：</p>
+<table>
+<tr><th style="width:26%">選項</th><th>結果</th></tr>
+<tr><td class="k">清成空白，不匯入這個值<br><span class="hint">（預設）</span></td>
+    <td>其他欄位照常匯入，只有「檢測極限」留白。申報時空白是允許的，填錯字元則會被退件</td></tr>
+<tr><td class="k">只保留數字部分</td>
+    <td><code>&lt;0.002</code> → <code>0.002</code>、<code>0.0004 mg/L</code> → <code>0.0004</code>。
+        適合報告只是多寫了符號或單位的情況</td></tr>
+<tr><td class="k">照原樣匯入</td>
+    <td>原封不動帶進表格，之後自己改</td></tr>
+</table>
+<div class="note">
+選了「照原樣匯入」（或自己手動打了非數字）的格子，在表格裡會用<strong>紅框</strong>標示，滑鼠移上去有說明。
+另外<strong>按下匯出時系統會再問一次</strong>，列出還有哪些值不是純數值，讓您決定要回去修正還是照樣匯出——
+不會讓有問題的值無聲無息地送出去。
+</div>
+</section>
+
+<section id="s11">
+<h2><span class="num">11</span>好用的輔助工具</h2>
+
+<h3>📍 測站座標管理</h3>
+<p>如果報告上的座標是<strong>手寫後掃描</strong>的（沒辦法自動判讀），先把其他資料匯入，
+然後點這個按鈕。畫面會依「測站 ＋ 採樣日期」分組列出，每一組輸入一次座標，按
+<span class="ui">儲存並套用</span> 就好。</p>
+<p>同一個測站在不同日期採樣會<strong>分開列出</strong>（因為座標可能略有不同），套用時只會影響該組。五個分類都能用。</p>
+
+<h3>🧪 檢測方法管理</h3>
+<p>依「測項」列出目前資料中出現過的所有項目。報告沒提供檢測方法、或系統無法確定單位代碼的，
+會在這裡標示提醒。<strong>填一次系統就會記住</strong>，之後（含下一季）匯入同一測項會自動帶入。</p>
+
+<h3>📖 單位代碼表 / 🏢 檢測機構代碼表</h3>
+<p>輸入代碼或關鍵字就能搜尋。例如在單位代碼表輸入 <code>ug/m</code> 或 <code>127</code>。</p>
+
+<h3>📥 範本下載</h3>
+<p>下載官方空白範本，適合沒有原始報告、要純手工整理的情況，也可以用來對照系統匯出的格式是否一致。</p>
+</section>
+<section id="s12">
+<h2><span class="num">12</span>步驟五：匯出並上傳</h2>
+
+<h3>匯出單一分類</h3>
+<p>在該分類頁面按 <span class="ui">匯出此類別</span>，會下載一個 Excel，檔名像
+<code>E-0356_水質檢測資料填寫.xlsx</code>。</p>
+<div class="warn">
+<b>匯出範圍＝上方「期別」下拉選單目前選的範圍。</b>如果選的是「115年第2季」，就只會匯出那一季；
+選「全部期別」才會全部匯出。按鈕文字也會跟著提示（例如「匯出此類別（僅目前篩選期別）」）。
+</div>
+
+<h3>匯出全部分類</h3>
+<p>計畫頁面上方按 <span class="ui">匯出全部類別</span>，勾選要匯出的分類（只列出目前有資料的），
+每個分類會各自下載一個 Excel。</p>
+
+<h3>匯出的檔案長什麼樣</h3>
+<ul>
+  <li>第一個工作表：<strong>監測點基本資料</strong>（就是您在步驟二填的那些）</li>
+  <li>第二個工作表：<strong>○○檢測項目</strong>（所有監測資料，欄位順序完全照官方範本）</li>
+  <li>日期和時間是<strong>真正的 Excel 日期／時間儲存格</strong>（不是文字），格式分別是
+      <code>yyyy/mm/dd</code> 和 <code>h:mm</code>，跟官方完成版一致</li>
+</ul>
+
+<h3>匯出後又發現要改怎麼辦</h3>
+<p>兩種做法都可以：</p>
+<ol>
+  <li><strong>回系統改</strong>（建議）：在表格裡修正，再匯出一次。</li>
+  <li><strong>改 Excel 再匯回來</strong>：直接編輯下載的檔案，改完後回到該分類按
+      <span class="ui">📥 匯入資料</span> 選這份改過的檔案。系統會自動比對——
+      內容相同的忽略，內容不同的會列出來讓您確認要不要用新版本取代，<strong>不會憑空覆蓋或造成重複</strong>。</li>
+</ol>
+</section>
+
+<section id="s13">
+<h2><span class="num">13</span>下一季怎麼做</h2>
+
+<p>這是本系統最省力的地方。系統會記住您<strong>每一個測站、每一個測項</strong>的完整內容，
+下一季匯入時自動補齊——座標、檢測方法、單位代碼、管制標準、管制區這些<strong>不會逐季改變</strong>的欄位
+都不用重填，您只需要確認日期、時間、測值。</p>
+
+<h3>建議的流程</h3>
+<ol class="steps">
+  <li>直接在<strong>同一個計畫</strong>裡，切到該分類。</li>
+  <li>匯入這一季的報告。</li>
+  <li>系統會自動帶入記住的欄位，並提示「過去有、本次沒有」的測項讓您決定要不要補。</li>
+  <li>確認匯入。新資料會附加在後面，用「期別」下拉選單就能分季查看和匯出。</li>
+</ol>
+
+<div class="note">
+<b>比對基準是「您最近一次確認匯入的內容」</b>，不是依季別標籤硬性對應到「上一季」——
+只是一般情況下季度是照順序匯入，所以看起來就像跟前一季比對。<br>
+如果想指定跟某一份資料比對（例如想跳過中間幾季、直接參考更早的完整版），
+只要<strong>先把那份資料匯入並確認</strong>，再匯入這次真正要處理的資料就可以了。
+</div>
+
+<h3>第一次使用、但手上有上一季完成版</h3>
+<p>強烈建議<strong>先匯入上一季的完成版</strong>，再匯入這一季的報告。這樣系統就有記憶可以參考，
+這一季的座標、方法、單位全部會自動帶好。這對「陌生格式報告」特別有效——
+系統猜不到的欄位，可以從上一季沿用過來。</p>
+</section>
+
+<section id="s14">
+<h2><span class="num">14</span>備份與換電腦</h2>
+
+<h3>備份</h3>
+<ol class="steps">
+  <li>右上角按 <span class="ui">匯出備份</span>。</li>
+  <li>會下載一個 <code>.json</code> 檔（檔名含日期）。</li>
+  <li>存到公司網路磁碟／雲端硬碟／隨身碟。</li>
+</ol>
+<p>這個檔案包含<strong>所有計畫</strong>的：基本資料、五大分類的全部資料、測站設定記憶、
+測項方法記憶、跨季比對記錄、匯入紀錄。</p>
+
+<h3>還原 / 換電腦 / 交接</h3>
+<ol class="steps">
+  <li>在新電腦打開網站。</li>
+  <li>右上角按 <span class="ui">匯入備份</span>，選那個 <code>.json</code> 檔。</li>
+  <li>系統會問要「合併」還是「取代」現有資料。</li>
+</ol>
+<div class="note">
+還原過程若中途失敗（例如瀏覽器儲存空間不足），系統會<strong>自動復原</strong>，
+原有的計畫完全不受影響，不會發生「舊的沒了新的也沒進來」的情況。
+</div>
+
+<h3>儲存空間滿了</h3>
+<p>如果按確認匯入時跳出「瀏覽器的儲存空間已滿」，請：</p>
+<ol>
+  <li>先按 <span class="ui">匯出備份</span> 把資料存成檔案。</li>
+  <li>刪掉已經送件完成、不需要再放在系統裡的舊計畫。</li>
+  <li>重新匯入。</li>
+</ol>
+</section>
+
+<section id="s15">
+<h2><span class="num">15</span>常見問題排除</h2>
+
+<div class="faq">
+<div class="q">Q：匯入後說「無法從此檔案讀取到任何資料列」</div>
+<p>A：檢查是不是選錯檔案（例如選到報告封面頁的 PDF）。若是生態分類，確認選的是<strong>填寫完成的</strong>
+「生態調查資料填寫.xlsx」，裡面應該有「生態檢測項目」工作表。若是掃描的 PDF（圖片），系統讀不到文字，
+請向檢測公司索取 Excel。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：日期或時間讀進來是錯的</div>
+<p>A：先確認版本號是不是 v4.27 以上（點右上角版本號可查）。舊版有時區換算的問題，會讓日期差一天、
+時間少 8 小時，新版已修正。<strong>但修正只影響「之後匯入」的資料</strong>——
+已經在系統裡、當初被算錯的資料不會自動更正。最快的做法是到
+<span class="ui">📜 匯入紀錄</span> 刪掉那一批，再重新匯入一次。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：匯出的日期欄位在 Excel 裡看起來怪怪的</div>
+<p>A：匯出的是真正的 Excel 日期儲存格。如果顯示成一串數字（例如 46198），那是 Excel 的儲存格格式
+被設成「通用」了，把格式改成日期即可，資料本身是對的。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：明明測站名稱一樣，系統卻說「本次報告未出現的測項」</div>
+<p>A：看那一項下方列出的採樣日期。最常見的原因是<strong>兩邊涵蓋的採樣次數不同</strong>——
+例如上一季完成版有 1、2、3 月各一次（3 筆），這次只匯入 5 月單月報告（1 筆）。
+這種情況<strong>系統預設不勾選</strong>，您<strong>不用勾</strong>，等其他月份匯入就齊了。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：跳出「這個測站跟歷史記錄裡的○○名稱很相似」</div>
+<p>A：仔細看兩個名稱。如果只是標點、空格、全半形不同（同一個測站打字不同），選「確定」讓它沿用記憶；
+如果是<strong>兩個不同的測點</strong>（例如上游 vs 下游），一定要選「取消」，否則兩站資料會被合併。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：改了一格，跳出「是否要一併同步更新」，我該按哪個？</div>
+<p>A：如果您是在<strong>修正一個共用的錯誤</strong>（座標打錯、整站日期讀錯），按「確定」比較省事。
+如果您是在改<strong>只屬於這一筆</strong>的內容，按「取消」。看不懂就先按「取消」，之後再個別改，比較安全。
+訊息裡都會寫清楚會影響哪些資料。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：更新了網站，但畫面沒變</div>
+<p>A：瀏覽器快取。按 <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>（Mac 是 <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>）
+強制重新整理，再點右上角版本號確認版本。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：資料不見了</div>
+<p>A：先確認是不是換了瀏覽器、換了電腦、開了無痕視窗，或清除過瀏覽器資料。
+如果有備份檔就用 <span class="ui">匯入備份</span> 還原。沒有備份的話，資料無法救回——
+這就是為什麼要定期備份。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：噪音報告匯入後只有 L日／L晚／L夜，我想要逐時測值</div>
+<p>A：在匯入確認畫面展開 <span class="ui">➕ 其他偵測到的測項</span>，勾選需要的項目即可。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：空氣品質的日平均值、最大小時值我都要，怎麼辦？</div>
+<p>A：24 小時報告的匯入畫面會出現統計值選擇，兩個都勾就好。系統會把測項名稱寫清楚
+（例如 <code>CO</code> 和 <code>CO最大8小時平均值</code>），不會出現兩筆分不出來的資料。</p>
+</div>
+
+<div class="faq">
+<div class="q">Q：可以在手機或平板上用嗎？</div>
+<p>A：可以打開，但表格欄位很多，操作體驗不佳。建議用電腦，瀏覽器用 Chrome 或 Edge。</p>
+</div>
+</section>
+
+<section id="s16">
+<h2><span class="num">16</span>名詞速查表</h2>
+<table>
+<tr><th style="width:22%">名詞</th><th>意思</th></tr>
+<tr><td class="k">計畫</td><td>一個環評計畫案。系統可同時管理多個，彼此完全獨立</td></tr>
+<tr><td class="k">分類</td><td>五大監測類別：空氣品質／水質／地質／噪音／生態</td></tr>
+<tr><td class="k">期別</td><td>資料屬於哪一季（例如 115年第2季）。決定畫面篩選與匯出範圍</td></tr>
+<tr><td class="k">批次（匯入紀錄）</td><td>一次匯入動作產生的所有資料。可以整批刪除</td></tr>
+<tr><td class="k">測站設定</td><td>報告裡沒有、需要您補一次的資訊（正式站名、座標、管制區等）。勾「記住此設定」後會自動沿用</td></tr>
+<tr><td class="k">智慧解析</td><td>系統認得的報告格式，會直接讀出各欄位</td></tr>
+<tr><td class="k">自動偵測</td><td>系統不認得的格式，改用欄位標題去猜。結果會標紅框提醒核對</td></tr>
+<tr><td class="k">完成版</td><td>已經填好、符合官方範本格式的 Excel（例如上一季送件的檔案）</td></tr>
+<tr><td class="k">ND</td><td>低於方法偵測極限。比較關係填 ND，檢測數值留空</td></tr>
+<tr><td class="k">MDL / 偵測極限</td><td>方法偵測極限。只在 ND 或「&lt;某數值」時才需要填</td></tr>
+<tr><td class="k">L日／L晚／L夜</td><td>24 小時環境噪音的日間／晚間／夜間均能音量，申報只要這三筆</td></tr>
+<tr><td class="k">Lvd(10)</td><td>環境振動的申報值</td></tr>
+<tr><td class="k">Leq / Lmax</td><td>均能音量／最大音量，營建噪音申報這兩筆</td></tr>
+<tr><td class="k">WGS84（代碼 2）</td><td>經緯度座標，例如 經度 120.681、緯度 24.147</td></tr>
+<tr><td class="k">TWD97-TM2（代碼 3）</td><td>投影座標，例如 X=193150、Y=2670900</td></tr>
+</table>
+</section>
+
+<footer>
+環評監測資料填報小工具　新手使用說明<br>
+若操作上有疑問，或遇到本說明沒提到的狀況，請聯絡系統維護人員
+</footer>
+</div>
+</body>
+</html>

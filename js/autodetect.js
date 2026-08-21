@@ -93,6 +93,12 @@ const AutoDetect = {
 
   cellStr(v) { return v === undefined || v === null ? '' : String(v).trim(); },
 
+  /** Last column that actually holds content — shares SmartParse's cached scan so a
+   *  sheet whose declared range is 16,000 columns wide isn't swept end to end by
+   *  every heading probe. See SmartParse.lastCol for why these sheets are that wide. */
+  lastCol(grid) { return SmartParse.lastCol(grid); },
+  rowEnd(grid, row) { return Math.min((row || []).length, this.lastCol(grid) + 1); },
+
   /**
    * Collects every "label：value" pair on the sheet. Handles both shapes seen in real
    * reports: the value in the SAME cell after the colon, and the label in one cell
@@ -106,7 +112,8 @@ const AutoDetect = {
     };
     for (let r = 0; r < grid.length; r++) {
       const row = grid[r] || [];
-      for (let c = 0; c < row.length; c++) {
+      const rowEnd = this.rowEnd(grid, row);
+      for (let c = 0; c < rowEnd; c++) {
         const cell = this.cellStr(row[c]);
         if (cell === '' || cell.length > 60) continue;
         const colonIdx = cell.search(/[:：]/);
@@ -200,9 +207,14 @@ const AutoDetect = {
         // A row already carrying measurements is data, not part of the heading band —
         // reading labels out of it would both mis-map columns and swallow the first
         // row of real results.
-        const numericCells = row.filter(c => /^-?[\d.,]+$/.test(this.cellStr(c)) && this.cellStr(c) !== '').length;
+        const rowEnd = this.rowEnd(grid, row);
+        let numericCells = 0;
+        for (let c = 0; c < rowEnd; c++) {
+          const v = this.cellStr(row[c]);
+          if (v !== '' && /^-?[\d.,]+$/.test(v)) numericCells++;
+        }
         if (rr > r && numericCells >= 2) break;
-        for (let c = 0; c < row.length; c++) {
+        for (let c = 0; c < rowEnd; c++) {
           if (colMap[c] !== undefined) continue;
           const key = this.matchHeader(row[c]);
           if (!key) continue;
@@ -227,6 +239,23 @@ const AutoDetect = {
     }
     return best;
   },
+
+  /**
+   * A row stating a REGULATORY LIMIT rather than a measurement.
+   *
+   * These sit directly under the readings and line up with exactly the same columns —
+   * a 24-hour noise report puts 環境音量標準 76/75/72 right below the measured
+   * 58.3/58.1/54.7 — so a reader that just keeps consuming numeric rows files the
+   * legal limits as if they were this quarter's results.
+   */
+  // Anchored, so it matches a row LABELLED as a limit and not a monitoring point
+  // whose name merely contains one of these words — 標準檢驗局旁民宅 and 基準點測站
+  // are real station names, and an unanchored test cut the block short there,
+  // discarding that row and every row below it.
+  STANDARD_ROW_RE: /^(環境音量|噪音|振動|空氣品質|水質|放流水)?(管制)?(標準|基準|管制值|限|法規值?|建議值)(值)?$/,
+
+  /** A row that summarises the rows above it rather than reporting a measurement. */
+  SUMMARY_ROW_RE: /^(日?平均值?|均值|算術平均|合計|總計|小計|最大值?|最小值?|中位數)$/,
 
   /** Rows at/after which a report stops being data and starts being boilerplate. */
   STOP_ROW_RE: /以下空白|以下\s*空白|^備\s*註|聲明書|本報告|檢驗室主管|報告簽署人|負責人|^公司名稱|第\s*\d+\s*頁|簽章/,
@@ -342,7 +371,12 @@ const AutoDetect = {
       out[cat.itemField] = itemName || (valueFieldKey ? '（未標示）' : '');
       if (valueFieldKey) out[valueFieldKey] = /^[\d.]+$/.test(val) ? SmartParse.formatNumber(val, 3) : val;
       if (hasField('比較關係')) out['比較關係'] = cmp;
-      if (hasField('檢測極限')) out['檢測極限'] = limitApplies && /^[\d.]+$/.test(limitRaw) ? SmartParse.formatNumber(limitRaw, 3) : '';
+      // Not a bare number? Pass it through unchanged and let the import preview ask
+      // what to do with it — see renderLimitWarning in app.js.
+      if (hasField('檢測極限')) {
+        out['檢測極限'] = !limitApplies ? ''
+          : (/^[\d.]+$/.test(limitRaw) ? SmartParse.formatNumber(limitRaw, 3) : limitRaw);
+      }
       if (cat.unitField) out[cat.unitField] = unitLookup.code;
       if (cat.methodField) out[cat.methodField] = methodText;
       // 地質 deliberately leaves 檢測類別 for the person to choose (底泥品質 vs 土壤品質
@@ -434,11 +468,21 @@ const AutoDetect = {
         if (val === '' && cmp === '' && note === '') return;
         const row = {};
         cat.fields.forEach(f => { row[f.key] = ''; });
-        row['日期(起)'] = entry.dateStart || metaDates.start || '';
-        row['日期(迄)'] = entry.dateEnd || metaDates.end || row['日期(起)'];
+        // A row's own date beats the sheet-level one; an hour-by-hour block that ran
+        // past midnight advances the day (dayOffset) so the 01:00 reading is filed
+        // under the day it was actually taken, not the day the run started. And an
+        // hourly slot ends one hour later, NOT at the end of the whole 24-hour window
+        // — every hourly row used to claim a 25-hour span.
+        const baseDate = entry.rowDate || entry.dateStart || metaDates.start || '';
+        const startDate = baseDate && entry.dayOffset
+          ? SmartParse.addDaysISO(baseDate, entry.dayOffset) : baseDate;
+        row['日期(起)'] = startDate;
+        row['日期(迄)'] = entry.dateEnd
+          || (entry.timeStart ? (entry.rollsOver && startDate ? SmartParse.addDaysISO(startDate, 1) : startDate)
+            : (metaDates.end || startDate));
         row['時間(起)'] = entry.timeStart || metaTimes.start || '';
         row['時間(迄)'] = entry.timeEnd || metaTimes.end || row['時間(起)'];
-        row[cat.locationField] = metaLocation;
+        row[cat.locationField] = entry.rowLocation || metaLocation;
         row[cat.itemField] = entry.item;
         if (valueFieldKey) row[valueFieldKey] = /^[\d.]+$/.test(val) ? SmartParse.formatNumber(val, 3) : val;
         if (hasField('比較關係')) row['比較關係'] = cmp;
@@ -451,7 +495,7 @@ const AutoDetect = {
         row['檢測機構許可證號'] = metaAgency;
         row['備註'] = note || '';
         row._siteCode = meta.siteCode || '';
-        row._rawLocation = metaLocation;
+        row._rawLocation = entry.rowLocation || metaLocation;
         row._autoDetected = true;
         row._secondaryItem = !preferred;
         row._blockLabel = block.label;
@@ -561,15 +605,53 @@ const AutoDetect = {
         return null;
       };
 
+      // Anything to the LEFT of the first measurement column that looks like a place
+      // name or a date belongs to that row, not to the sheet as a whole — a
+      // "one row per site" summary table carries both.
+      const rowContext = (rowIdx) => {
+        const row = grid[rowIdx] || [];
+        let loc = '', date = '', isStandard = false;
+        for (let c = 0; c < labels[0].col; c++) {
+          const v = this.cellStr(row[c]);
+          if (v === '' || this._isNumericCell(v)) continue;
+          if (this.STANDARD_ROW_RE.test(v) || this.SUMMARY_ROW_RE.test(v)) { isStandard = true; continue; }
+          const iso = DateTimeUtil.toISODate(v);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) { if (!date) date = iso; continue; }
+          if (!loc && !/^\d{1,2}\s*[~～-]\s*\d{1,2}$/.test(v)) loc = v;
+        }
+        return { loc, date, isStandard };
+      };
+
       const entries = [];
       const pad = n => String(n).padStart(2, '0');
       let lastRow = valueRowIdx;
       let anyTime = false;
+      let dayOffset = 0;
+      let prevH1 = null;
+      let carriedLoc = '', carriedDate = '';
       for (let rr = valueRowIdx; rr < grid.length; rr++) {
         const hits = labels.filter(l => this._isNumericCell((grid[rr] || [])[l.col])).length;
+        // Stop only when the row carries no measurement at all. Breaking on "this row
+        // has no time range" meant a summary table with one row per station gave up
+        // after its FIRST station — 25 of 30 real readings silently discarded.
         if (hits === 0) break;
         const t = timeOf(rr);
-        if (t) anyTime = true;
+        if (t) {
+          anyTime = true;
+          // an hour-by-hour block that wraps past midnight continues on the next day
+          if (prevH1 !== null && t.h1 < prevH1) dayOffset++;
+          prevH1 = t.h1;
+        }
+        const ctx = rowContext(rr);
+        // "環境音量標準 76 | 75 | 72" sits immediately under the measured values and
+        // occupies the same columns — reading on would file the legal limits as this
+        // quarter's readings.
+        if (ctx.isStandard) break;
+        // A merged cell reports its text on the FIRST row of the merge only, so a
+        // station sampled on two dates shows its name once and blank underneath.
+        // Carry the last seen values down, which is what the merge means visually.
+        if (ctx.loc) carriedLoc = ctx.loc; else ctx.loc = carriedLoc;
+        if (ctx.date) carriedDate = ctx.date; else ctx.date = carriedDate;
         labels.forEach(l => {
           const v = this.cellStr((grid[rr] || [])[l.col]);
           // Only actual readings become rows. A caption sitting above the numbers
@@ -580,10 +662,14 @@ const AutoDetect = {
             item: l.name, value: v,
             timeStart: t ? `${pad(t.h1)}:00:00` : '',
             timeEnd: t ? `${pad(t.h2 % 24)}:00:00` : '',
+            dayOffset,
+            // an hourly slot written "23~24" or "23~00" ends on the following day
+            rollsOver: !!t && (t.h2 <= t.h1 || t.h2 >= 24),
+            rowLocation: ctx.loc,
+            rowDate: ctx.date,
           });
         });
         lastRow = rr;
-        if (!t) break; // a single summary row, not an hour-by-hour block
       }
       if (entries.length === 0) continue;
       const preview = labels.slice(0, 4).map(l => l.name).join('、') + (labels.length > 4 ? '…' : '');
@@ -614,7 +700,8 @@ const AutoDetect = {
     const entries = [];
     for (let r = 0; r < Math.min(grid.length, 120); r++) {
       const row = grid[r] || [];
-      for (let c = 0; c < row.length; c++) {
+      const rowEnd = this.rowEnd(grid, row);
+      for (let c = 0; c < rowEnd; c++) {
         const s = this.cellStr(row[c]).replace(/\s+/g, '');
         const m = s.match(/^(.{1,20}?)[=＝]$/);
         if (!m) continue;
@@ -642,12 +729,26 @@ const AutoDetect = {
    */
   recoverStitchedDate(grid) {
     for (const col of [0, 1]) {
-      const joined = grid.map(r => this.cellStr((r || [])[col])).join('');
+      const all = grid.map(r => this.cellStr((r || [])[col])).filter(v => v !== '');
+      if (all.length === 0) continue;
+      // A column that already holds WHOLE dates must never be joined: concatenating a
+      // list of "115/07/03" values invents digit runs that were never there and
+      // produced the year 3115. If any single cell parses to a complete date on its
+      // own, this is a list, not fragments — leave it to the per-row readers.
+      if (all.some(v => /^\d{4}-\d{2}-\d{2}$/.test(DateTimeUtil.toISODate(v)))) continue;
+      // Join only the SHORT cells: a stitched date is one fragment per merged cell
+      // ("115" / "年" / "6" / "月" / "25" / "日" / "至" …). Longer cells in the same
+      // column are row captions and prose, and only add noise.
+      const cells = all.filter(v => v.length <= 6);
+      if (cells.length === 0) continue;
+      const joined = cells.join('');
       if (!/\d/.test(joined)) continue;
       const parts = joined.split(/至|~|～|－|—/);
       const a = DateTimeUtil.toISODate(parts[0] || '');
       if (!/^\d{4}-\d{2}-\d{2}$/.test(a)) continue;
       const b = parts.length > 1 ? DateTimeUtil.toISODate(parts[1]) : '';
+      const y = parseInt(a.slice(0, 4), 10);
+      if (y < 1990 || y > 2100) continue;
       return { start: a, end: /^\d{4}-\d{2}-\d{2}$/.test(b) ? b : a };
     }
     return { start: '', end: '' };

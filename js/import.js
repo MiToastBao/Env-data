@@ -8,8 +8,13 @@ const ImportEngine = {
 
   // Common aliases seen in lab-report exports that don't match our exact field names.
   ALIASES: {
-    '日期(起)': ['起始日期', '開始日期', '採樣日期(起)', '監測日期(起)', '日期起', '起日期'],
-    '時間(起)': ['起始時間', '開始時間', '採樣時間(起)', '監測時間(起)', '時間起', '起時間'],
+    // A report that states one sampling moment writes just "採樣日期"/"採樣時間".
+    // Those belong on the (起) fields — without them the REQUIRED 日期(起) came out
+    // unmapped and rows committed with a blank sampling date.
+    '日期(起)': ['起始日期', '開始日期', '採樣日期(起)', '監測日期(起)', '日期起', '起日期',
+      '採樣日期', '監測日期', '調查日期', '檢測日期', '檢驗日期', '取樣日期', '日期'],
+    '時間(起)': ['起始時間', '開始時間', '採樣時間(起)', '監測時間(起)', '時間起', '起時間',
+      '採樣時間', '監測時間', '調查時間', '檢測時間', '測定時間', '時間'],
     '日期(迄)': ['結束日期', '採樣日期(迄)', '監測日期(迄)', '日期迄', '迄日期'],
     '時間(迄)': ['結束時間', '採樣時間(迄)', '監測時間(迄)', '時間迄', '迄時間'],
     '採樣地點': ['監測地點', '測點', '測站', '採樣點', '地點', '測點名稱'],
@@ -23,8 +28,8 @@ const ImportEngine = {
     '檢測濃度/質量單位': ['單位', '濃度單位', '檢測單位', '單位代碼'],
     '監測單位': ['單位', '檢測單位', '單位代碼'],
     '比較關係': ['比較符號', '符號'],
-    '檢測數值': ['監測數值', '數值', '結果', '檢測結果', '分析結果'],
-    '監測數值': ['檢測數值', '數值', '結果'],
+    '檢測數值': ['監測數值', '數值', '結果', '檢測結果', '分析結果', '測值', '檢測值', '量測值', '監測值'],
+    '監測數值': ['檢測數值', '數值', '結果', '測值', '檢測值', '量測值', '監測值'],
     '檢測極限': ['偵測極限', 'MDL', '定量極限', 'RL'],
     '檢測方法': ['分析方法', '方法', '檢驗方法'],
     '檢測機構許可證號': ['檢測機構', '機構代碼', '檢驗機構', '委託檢測機構', '機構許可證號'],
@@ -54,16 +59,21 @@ const ImportEngine = {
 
   cellStr(v) { return v === undefined || v === null ? '' : String(v).trim(); },
 
-  /** Converts a SheetJS-produced Date object (from cellDates:true + raw:true) into a
-   *  plain string. Delegates to DateTimeUtil so there is exactly ONE place in the app
-   *  that decides how a spreadsheet date/time becomes text.
-   *
-   *  This used to read the Date through its **UTC** getters, which was the root cause
-   *  of the "匯入後日期多／少一天、時間被減掉一大段（10點變成2點）" bug: SheetJS builds
-   *  these Date objects in LOCAL time, so in Taiwan (UTC+8) every value was pulled
-   *  8 hours backwards. Reading through local getters (inside DateTimeUtil.parseAny)
-   *  returns exactly what the cell shows in Excel, in any timezone.
-   */
+  /** An Excel serial number straight from the file -> "YYYY-MM-DD", "HH:MM:SS", or
+   *  "YYYY-MM-DD HH:MM:SS". Pure arithmetic, so the result is identical in every
+   *  timezone — this is the path date cells take now, and the reason the reader asks
+   *  SheetJS for the workbook a second time with cellDates:false. */
+  _excelSerialToString(serial) {
+    const p = DateTimeUtil.parseAny(serial);
+    if (!p) return String(serial);
+    if (p.date && p.time) return `${p.date} ${p.time}`;
+    return p.date || p.time || String(serial);
+  },
+
+  /** Fallback for a Date object when no serial is available (e.g. a CSV, where
+   *  SheetJS parses the text itself). Reads the Date through LOCAL getters inside
+   *  DateTimeUtil — never getUTC*, which was the original cause of the "10點變成2點"
+   *  8-hour shift and the off-by-one day. */
   _excelDateObjToString(d) {
     const p = DateTimeUtil.parseAny(d);
     if (!p) return '';
@@ -89,19 +99,35 @@ const ImportEngine = {
   async _readSheet(file, preferredKeys = []) {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+    // the same workbook parsed with cellDates:false — see gridSerial below
+    let wbNoDates = null;
+    try { wbNoDates = XLSX.read(buf, { type: 'array', cellDates: false }); } catch (e) { wbNoDates = null; }
     let best = null;
     for (const sheetName of wb.SheetNames) {
       const ws = wb.Sheets[sheetName];
+      const wsNoDates = wbNoDates ? wbNoDates.Sheets[sheetName] : null;
       // Two passes: raw:false gives human-readable display text for ordinary cells
       // (numbers with their formatting, plain text); raw:true is needed to get the
       // actual Date object back for real date/time cells rather than a formatted
       // string this app might not be able to parse (see _excelDateObjToString).
-      const gridDisplay = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
-      const gridRaw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+      const range = this._contentRange(ws);
+      const optsD = { header: 1, defval: '', raw: false };
+      const optsR = { header: 1, defval: '', raw: true };
+      if (range) { optsD.range = range; optsR.range = range; }
+      const gridDisplay = XLSX.utils.sheet_to_json(ws, optsD);
+      const gridRaw = XLSX.utils.sheet_to_json(ws, optsR);
+      // A THIRD read, of the same sheet parsed WITHOUT cellDates, so date cells come
+      // back as their raw Excel serial number instead of a JS Date. SheetJS builds
+      // those Date objects by calling the Date constructor with local calendar parts,
+      // and in a zone whose historical offset is not a whole number of minutes
+      // (UTC+5:30 India, +5:45 Nepal, +3:30 Iran) the result lands seconds before
+      // midnight on the PREVIOUS day. Reading the serial and doing the arithmetic
+      // ourselves (DateTimeUtil.serialToParts) has no timezone in the path at all.
+      const gridSerial = wsNoDates ? XLSX.utils.sheet_to_json(wsNoDates, optsR) : null;
       if (gridDisplay.length === 0) continue;
       const detected = this._detectHeaderRow(gridDisplay, preferredKeys);
       if (!detected) continue;
-      const built = this._buildRowsFromGrid(gridDisplay, gridRaw, detected.rowIndex);
+      const built = this._buildRowsFromGrid(gridDisplay, gridRaw, detected.rowIndex, gridSerial);
       if (built.rows.length === 0) continue;
       const score = detected.score * 1000 + Math.min(built.rows.length, 999);
       if (!best || score > best.score) {
@@ -157,21 +183,39 @@ const ImportEngine = {
   },
 
   /** Turns a grid + a header row index into {headers, rows} of {header: value}. */
-  _buildRowsFromGrid(gridDisplay, gridRaw, headerIdx) {
+  _buildRowsFromGrid(gridDisplay, gridRaw, headerIdx, gridSerial) {
     const headerRow = gridDisplay[headerIdx] || [];
+    // How far right the sheet actually has content — a column whose heading cell is
+    // blank still gets a slot, because a merged heading spanning two columns (採樣時間
+    // over 起/迄) and unlabeled 單位/序號 columns are both normal, and dropping them
+    // meant their data could never be mapped to a field at all.
+    let lastCol = -1;
+    for (let r = headerIdx; r < gridDisplay.length; r++) {
+      const row = gridDisplay[r] || [];
+      for (let c = row.length - 1; c > lastCol; c--) { if (this.cellStr(row[c]) !== '') { lastCol = c; break; } }
+    }
     const cols = [];
-    headerRow.forEach((h, i) => {
-      let name = this.cellStr(h).replace(/\s+/g, ' ');
-      if (name === '') return;
+    for (let i = 0; i <= lastCol; i++) {
+      let name = this.cellStr(headerRow[i]).replace(/\s+/g, ' ');
+      if (name === '') {
+        // is there anything below this column worth offering? if not, skip it
+        let hasData = false;
+        for (let r = headerIdx + 1; r < gridDisplay.length && !hasData; r++) {
+          if (this.cellStr((gridDisplay[r] || [])[i]) !== '') hasData = true;
+        }
+        if (!hasData) continue;
+        name = `（未命名欄位 ${i + 1}）`;
+      }
       let unique = name, n = 2;
       while (cols.some(c => c.name === unique)) unique = `${name} (${n++})`;
       cols.push({ index: i, name: unique });
-    });
+    }
     if (cols.length === 0) return { headers: [], rows: [] };
     const rows = [];
     for (let r = headerIdx + 1; r < gridDisplay.length; r++) {
       const dRow = gridDisplay[r] || [];
       const rRow = gridRaw[r] || [];
+      const sRow = gridSerial ? (gridSerial[r] || []) : null;
       const out = {};
       let any = false;
       cols.forEach(c => {
@@ -179,7 +223,11 @@ const ImportEngine = {
         const display = this.cellStr(dRow[c.index]);
         let v;
         if (rawVal instanceof Date) {
-          v = this._excelDateObjToString(rawVal);
+          // prefer the untouched serial number over the (timezone-sensitive) Date
+          const serial = sRow ? sRow[c.index] : undefined;
+          v = (typeof serial === 'number')
+            ? this._excelSerialToString(serial)
+            : this._excelDateObjToString(rawVal);
         } else if (typeof rawVal === 'number' && !/%\s*$/.test(display)) {
           // A cell's DISPLAYED text is whatever its number format rounds it to —
           // a coordinate stored as 120.26323411 can show as "120.26323". For a
@@ -188,8 +236,13 @@ const ImportEngine = {
           // text is kept (it may carry thousands separators or trailing zeros the
           // person expects to see). Percent-formatted cells keep their display,
           // since their underlying value is a different quantity entirely.
+          // Thousands separators must not survive into a numeric filing field —
+          // "12,000" is text to the receiving system. Keep the display only when it
+          // adds nothing but formatting we can safely drop.
           const dispNum = parseFloat(display.replace(/,/g, ''));
-          v = (isFinite(dispNum) && Math.abs(dispNum - rawVal) < 1e-9) ? display : String(rawVal);
+          v = (isFinite(dispNum) && Math.abs(dispNum - rawVal) < 1e-9)
+            ? display.replace(/,/g, '')
+            : String(rawVal);
         } else {
           v = display;
         }
@@ -237,13 +290,45 @@ const ImportEngine = {
    * is marked hidden. `cellStyles: true` is required for SheetJS to populate
    * `!cols[i].hidden` at all; without it the hidden flag is silently dropped.
    */
+  /**
+   * The range a sheet's REAL content occupies, as a SheetJS range string, or null.
+   *
+   * These report workbooks declare absurd used ranges — one 97-row noise sheet
+   * reports A1:WWQ97, i.e. 16,163 columns, because stray formatting reaches out
+   * that far. sheet_to_json then materializes 1.57M array slots per sheet, and a
+   * 16-sheet workbook spent ~5 seconds building padding before a single value was
+   * read. Narrowing to the cells that actually hold a value first makes the whole
+   * import roughly an order of magnitude faster, with identical output: column
+   * indices still start at 0, so hidden-column flags and every parser's column
+   * arithmetic are unaffected.
+   */
+  _contentRange(ws) {
+    if (!ws || !ws['!ref']) return null;
+    let maxR = -1, maxC = -1;
+    for (const key of Object.keys(ws)) {
+      if (key[0] === '!') continue;
+      const cell = ws[key];
+      if (!cell || cell.v === undefined || cell.v === null || cell.v === '') continue;
+      const a = XLSX.utils.decode_cell(key);
+      if (a.r > maxR) maxR = a.r;
+      if (a.c > maxC) maxC = a.c;
+    }
+    if (maxR < 0 || maxC < 0) return null;
+    const declared = XLSX.utils.decode_range(ws['!ref']);
+    if (declared.e.c <= maxC && declared.e.r <= maxR) return null; // already tight
+    return XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+  },
+
   async readWorkbookGrids(file) {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellDates: false, cellStyles: true });
     const grids = {};
     wb.SheetNames.forEach(name => {
       const ws = wb.Sheets[name];
-      const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+      const range = this._contentRange(ws);
+      const opts = { header: 1, defval: '', raw: true };
+      if (range) opts.range = range;
+      const grid = XLSX.utils.sheet_to_json(ws, opts);
       const hiddenCols = new Set();
       if (ws['!cols']) {
         ws['!cols'].forEach((c, i) => { if (c && c.hidden) hiddenCols.add(i); });

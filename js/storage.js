@@ -7,8 +7,13 @@ const DataStore = {
   PROJECTS_KEY: 'envapp_projects_v1',
 
   getProjects() {
+    // Guard the SHAPE, not just the parse. A malformed value here used to throw out
+    // of renderProjectList during init(), which aborted init before any event
+    // listener was attached — leaving a page that looks normal but where every
+    // button, including 匯出備份, is dead and the data can't even be rescued.
     try {
-      return JSON.parse(localStorage.getItem(this.PROJECTS_KEY)) || [];
+      const v = JSON.parse(localStorage.getItem(this.PROJECTS_KEY));
+      return Array.isArray(v) ? v.filter(p => p && typeof p === 'object' && p.id) : [];
     } catch (e) {
       return [];
     }
@@ -39,15 +44,7 @@ const DataStore = {
   deleteProject(id) {
     const projects = this.getProjects().filter(p => p.id !== id);
     this.saveProjects(projects);
-    // clean up associated data
-    localStorage.removeItem(this._basicKey(id));
-    CATEGORY_ORDER.forEach(cat => {
-      localStorage.removeItem(this._dataKey(id, cat));
-      localStorage.removeItem(this._siteAliasKey(id, cat));
-      localStorage.removeItem(this._batchKey(id, cat));
-      localStorage.removeItem(this._methodMemoryKey(id, cat));
-      localStorage.removeItem(this._siteItemHistoryKey(id, cat));
-    });
+    this._removeProjectKeys(id); // one shared key list — see the helper near importAll
   },
 
   _basicKey(projectId) {
@@ -251,36 +248,73 @@ const DataStore = {
     const projects = this.getProjects();
     const out = { projects: [] };
     projects.forEach(p => {
-      const entry = { ...p, basicInfo: this.getBasicInfo(p.id), data: {}, itemMemory: {}, siteItemHistory: {}, siteAliases: {} };
+      const entry = { ...p, basicInfo: this.getBasicInfo(p.id), data: {}, itemMemory: {}, siteItemHistory: {}, siteAliases: {}, importBatches: {} };
       CATEGORY_ORDER.forEach(cat => {
         entry.data[cat] = this.getData(p.id, cat);
         entry.itemMemory[cat] = this.getItemMemory(p.id, cat);
         entry.siteItemHistory[cat] = this.getSiteItemHistory(p.id, cat);
         entry.siteAliases[cat] = this.getSiteAliases(p.id, cat);
+        // Without this the 匯入紀錄 list came back empty after a backup restore, so
+        // "🗑 刪除此批次" could no longer undo an import on the new machine.
+        entry.importBatches[cat] = this.getImportBatches(p.id, cat);
       });
       out.projects.push(entry);
     });
     return out;
   },
 
+  /**
+   * Restore a backup.
+   *
+   * ORDER MATTERS. The old version deleted every existing project FIRST and then
+   * wrote the new ones — so a single failing setItem part-way through (quota is
+   * realistic here, since a restore briefly holds both copies) left the person with
+   * no projects at all and nothing restored, behind an error message that only
+   * talked about the file format. Now: write all the new data first, publish the new
+   * project list last, and only then remove the old projects' keys. If anything
+   * throws before the list is published, the previous state is still intact.
+   */
   importAll(payload, mode = 'merge') {
     if (!payload || !Array.isArray(payload.projects)) throw new Error('備份檔格式不正確');
-    if (mode === 'replace') {
-      const existing = this.getProjects();
-      existing.forEach(p => this.deleteProject(p.id));
-    }
-    const projects = this.getProjects();
-    payload.projects.forEach(entry => {
-      const newId = 'p_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-      projects.push({ id: newId, code: entry.code, name: entry.name, createdAt: entry.createdAt || new Date().toISOString() });
-      this.saveBasicInfo(newId, entry.basicInfo || {});
-      CATEGORY_ORDER.forEach(cat => {
-        this.saveData(newId, cat, (entry.data && entry.data[cat]) || []);
-        if (entry.itemMemory && entry.itemMemory[cat]) this.saveItemMemory(newId, cat, entry.itemMemory[cat]);
-        if (entry.siteItemHistory && entry.siteItemHistory[cat]) this.saveSiteItemHistory(newId, cat, entry.siteItemHistory[cat]);
-        if (entry.siteAliases && entry.siteAliases[cat]) this.saveSiteAliases(newId, cat, entry.siteAliases[cat]);
+    const previousProjects = this.getProjects();
+    const written = [];
+    let newProjects;
+    try {
+      newProjects = mode === 'replace' ? [] : previousProjects.slice();
+      payload.projects.forEach((entry, i) => {
+        const newId = 'p_' + Date.now() + '_' + i + '_' + Math.random().toString(36).slice(2, 8);
+        written.push(newId);
+        this.saveBasicInfo(newId, entry.basicInfo || {});
+        CATEGORY_ORDER.forEach(cat => {
+          this.saveData(newId, cat, (entry.data && entry.data[cat]) || []);
+          if (entry.itemMemory && entry.itemMemory[cat]) this.saveItemMemory(newId, cat, entry.itemMemory[cat]);
+          if (entry.siteItemHistory && entry.siteItemHistory[cat]) this.saveSiteItemHistory(newId, cat, entry.siteItemHistory[cat]);
+          if (entry.siteAliases && entry.siteAliases[cat]) this.saveSiteAliases(newId, cat, entry.siteAliases[cat]);
+          if (entry.importBatches && entry.importBatches[cat]) this.saveImportBatches(newId, cat, entry.importBatches[cat]);
+        });
+        newProjects.push({ id: newId, code: entry.code, name: entry.name, createdAt: entry.createdAt || new Date().toISOString() });
       });
+      this.saveProjects(newProjects);
+    } catch (err) {
+      // roll back everything this call wrote, leave the old projects untouched
+      written.forEach(id => { try { this._removeProjectKeys(id); } catch (e) { /* best effort */ } });
+      try { this.saveProjects(previousProjects); } catch (e) { /* best effort */ }
+      throw err;
+    }
+    // safe to drop the old data only now that the new list is committed
+    if (mode === 'replace') previousProjects.forEach(p => { try { this._removeProjectKeys(p.id); } catch (e) { /* best effort */ } });
+  },
+
+  /** Delete every localStorage key belonging to one project (without touching the
+   *  project list itself — callers decide when the list changes). */
+  _removeProjectKeys(projectId) {
+    localStorage.removeItem(this._basicKey(projectId));
+    CATEGORY_ORDER.forEach(cat => {
+      localStorage.removeItem(this._dataKey(projectId, cat));
+      localStorage.removeItem(this._methodMemoryKey(projectId, cat));
+      localStorage.removeItem(this._siteItemHistoryKey(projectId, cat));
+      localStorage.removeItem(this._siteAliasKey(projectId, cat));
+      localStorage.removeItem(this._batchKey(projectId, cat));
     });
-    this.saveProjects(projects);
   },
 };

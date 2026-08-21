@@ -75,7 +75,7 @@ const DateTimeUtil = {
     }
 
     if (typeof raw === 'number') {
-      if (raw > 0 && raw < 1) { // pure fraction of a day = a time-only value
+      if (raw >= 0 && raw <= 1) { // pure fraction of a day = a time-only value
         const p = this.serialToParts(raw);
         return { date: '', time: `${this.pad(p.h)}:${this.pad(p.mi)}:${this.pad(p.s)}` };
       }
@@ -94,7 +94,7 @@ const DateTimeUtil = {
     // A bare number that arrived as text (some exports quote everything)
     if (/^\d+(\.\d+)?$/.test(s) && !/^\d{6,8}$/.test(s)) {
       const n = parseFloat(s);
-      if ((n > 0 && n < 1) || (n >= this.SERIAL_MIN && n <= this.SERIAL_MAX)) return this.parseAny(n);
+      if ((n >= 0 && n <= 1) || (n >= this.SERIAL_MIN && n <= this.SERIAL_MAX)) return this.parseAny(n);
     }
 
     const date = this._extractDate(s);
@@ -103,47 +103,98 @@ const DateTimeUtil = {
     return { date: date || '', time: time || '' };
   },
 
-  /** Pulls a calendar date out of free text, understanding both 西元 and 民國 years. */
+  /** Days in a given month, leap years included. */
+  daysInMonth(y, mo) {
+    return [31, (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 29 : 28,
+      31, 30, 31, 30, 31, 31, 30, 31, 30, 31][mo - 1];
+  },
+
+  /** A y/m/d triple -> "YYYY-MM-DD", or '' when it isn't a real calendar date.
+   *  Rejecting 2026-02-30 here matters: without it the value reaches the exporter,
+   *  which builds an Excel serial with Date.UTC and quietly rolls it over to
+   *  2026-03-02 — a DIFFERENT real date, filed without anyone seeing it change. */
+  _ymd(y, mo, d) {
+    if (!(y >= 1911 && y <= 2200)) return '';
+    if (!(mo >= 1 && mo <= 12)) return '';
+    if (!(d >= 1 && d <= this.daysInMonth(y, mo))) return '';
+    return `${y}-${this.pad(mo)}-${this.pad(d)}`;
+  },
+
+  /** Pulls a calendar date out of free text, understanding both 西元 and 民國 years.
+   *
+   *  Every branch validates the calendar and returns '' rather than a rolled-over
+   *  date. The 民國 branch is also anchored: it used to match ANY "n.n.n" run
+   *  anywhere inside a sentence, which turned real report text into dates — the pH
+   *  range "6.0-9.0" became 1917-00-09, and a sample id "0606525-W26-01.1" became
+   *  1937-01-01. It now only fires when the number really looks like a date, i.e.
+   *  written with 年/月/日, or standing on its own rather than embedded in a longer
+   *  token. */
   _extractDate(s) {
     let m;
-    // 西元: 2026-06-25 / 2026/6/25 / 2026.06.25 / 2026年6月25日
-    m = s.match(/(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/);
-    if (m) return `${m[1]}-${this.pad(m[2])}-${this.pad(m[3])}`;
-    // 民國: 115年06月25日 / 115.06.25 / 115/6/25 (year 1..200 only, so it can't
-    // swallow a 西元 date — those were already handled above)
-    m = s.match(/(?:^|[^\d])(\d{1,3})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})/);
-    if (m) {
-      const ry = parseInt(m[1], 10);
-      if (ry >= 1 && ry <= 200) return `${ry + 1911}-${this.pad(m[2])}-${this.pad(m[3])}`;
-    }
+    // 西元 with 年月日 markers, anywhere in the text
+    m = s.match(/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
+    if (m) { const r = this._ymd(+m[1], +m[2], +m[3]); if (r) return r; }
+    // 民國 with 年月日 markers, anywhere in the text
+    m = s.match(/(\d{1,3})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
+    if (m) { const ry = +m[1]; if (ry >= 1 && ry <= 200) { const r = this._ymd(ry + 1911, +m[2], +m[3]); if (r) return r; } }
+    // 西元 with separators — must not be glued to more digits/letters on either side
+    m = s.match(/(?:^|[^0-9A-Za-z.\-/])(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})(?![0-9])/);
+    if (m) { const r = this._ymd(+m[1], +m[2], +m[3]); if (r) return r; }
+    // 民國 with separators — same anchoring
+    m = s.match(/(?:^|[^0-9A-Za-z.\-/])(\d{2,3})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})(?![0-9])/);
+    if (m) { const ry = +m[1]; if (ry >= 1 && ry <= 200) { const r = this._ymd(ry + 1911, +m[2], +m[3]); if (r) return r; } }
     // compact 西元 8 digits: 20260625
     m = s.match(/^(\d{4})(\d{2})(\d{2})$/);
-    if (m && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31) return `${m[1]}-${m[2]}-${m[3]}`;
+    if (m) { const r = this._ymd(+m[1], +m[2], +m[3]); if (r) return r; }
     // compact 民國 7 digits: 1150625
     m = s.match(/^(\d{3})(\d{2})(\d{2})$/);
-    if (m && +m[2] >= 1 && +m[2] <= 12 && +m[3] >= 1 && +m[3] <= 31) return `${+m[1] + 1911}-${m[2]}-${m[3]}`;
+    if (m) { const r = this._ymd(+m[1] + 1911, +m[2], +m[3]); if (r) return r; }
     return '';
   },
 
-  /** Pulls a clock time out of free text. */
+  /** Pulls a clock time out of free text.
+   *
+   *  Handles the Chinese half-day markers as well as AM/PM. Excel's own zh-TW
+   *  date-time format renders as "2026/3/15 下午 02:30"; reading that as 02:30
+   *  filed every afternoon measurement twelve hours early. */
   _extractTime(s) {
-    let m;
-    // 12時00分 / 12時
-    m = s.match(/(\d{1,2})\s*時\s*(\d{1,2})?\s*分?/);
-    if (m) return `${this.pad(m[1])}:${this.pad(m[2] || 0)}:00`;
-    // 14:30 / 14:30:15 / 2:30 PM
-    m = s.match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?/);
+    const str = String(s);
+    // Whether a half-day marker sits IMMEDIATELY beside the clock value that matched.
+    // Testing the whole string meant "PM10 08:00" — the commonest token in this
+    // entire domain — was read as 20:00 because "PM" appeared somewhere in the cell.
+    const halfDayAround = (idx, len) => {
+      const before = str.slice(Math.max(0, idx - 8), idx);
+      const after = str.slice(idx + len, idx + len + 6);
+      const pm = /(下午|午後|[Pp]\.?[Mm]\.?)[\s　]*$/.test(before) || /^[\s　]*(下午|午後|[Pp]\.?[Mm]\.?)/.test(after);
+      const am = /(上午|凌晨|清晨|[Aa]\.?[Mm]\.?)[\s　]*$/.test(before) || /^[\s　]*(上午|凌晨|清晨|[Aa]\.?[Mm]\.?)/.test(after);
+      return { pm, am };
+    };
+    const applyHalfDay = (h, idx, len) => {
+      const { pm, am } = halfDayAround(idx, len);
+      if (pm && h < 12) return h + 12;
+      if (am && h === 12) return 0;
+      return h;
+    };
+
+    // 12時00分 / 12時30 / 12時 — but never the 時 of 時間, which is a caption, not
+    // an hour ("檢測項目:PM10 時間:08:00" was being read as 10 o'clock).
+    let m = str.match(/(\d{1,2})\s*時(?!間)\s*(\d{1,2})?\s*分?/);
     if (m) {
-      let h = parseInt(m[1], 10);
-      const ap = (m[4] || '').toUpperCase();
-      if (ap === 'PM' && h < 12) h += 12;
-      if (ap === 'AM' && h === 12) h = 0;
-      if (h <= 23) return `${this.pad(h)}:${m[2]}:${m[3] || '00'}`;
+      const h = applyHalfDay(parseInt(m[1], 10), m.index, m[0].length);
+      const mi = parseInt(m[2] || 0, 10);
+      if (h <= 23 && mi <= 59) return `${this.pad(h)}:${this.pad(mi)}:00`;
+      return '';
+    }
+    // 14:30 / 14:30:15 / 2:30 PM / 下午 02:30
+    m = str.match(/(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?/);
+    if (m) {
+      const h = applyHalfDay(parseInt(m[1], 10), m.index, m[0].length);
+      if (h <= 23 && +m[2] <= 59 && +(m[3] || 0) <= 59) return `${this.pad(h)}:${m[2]}:${m[3] || '00'}`;
     }
     // 143000 / 1430 / 930 typed free-hand (only when the whole string is that number)
-    m = s.match(/^(\d{2})(\d{2})(\d{2})$/);
+    m = str.match(/^(\d{2})(\d{2})(\d{2})$/);
     if (m && +m[1] <= 23 && +m[2] <= 59) return `${m[1]}:${m[2]}:${m[3]}`;
-    m = s.match(/^(\d{1,2})(\d{2})$/);
+    m = str.match(/^(\d{1,2})(\d{2})$/);
     if (m && +m[1] <= 23 && +m[2] <= 59) return `${this.pad(m[1])}:${m[2]}:00`;
     return '';
   },

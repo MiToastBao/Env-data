@@ -68,11 +68,36 @@ const SmartParse = {
 
   cellStr(v) { return v === undefined || v === null ? '' : String(v).trim(); },
 
+  /**
+   * The last column index that actually holds anything, cached on the grid.
+   *
+   * SheetJS reports these report sheets with an enormous used range — 06525NV25's
+   * N-01 comes back 97 rows x 16,163 columns (1.57M cells), almost all empty
+   * padding. Every findCell was sweeping all of it, which made one workbook take
+   * 7.2 seconds of blocking work and froze the browser tab during import. Every
+   * scan below stops at this column instead.
+   */
+  lastCol(grid) {
+    if (grid.__lastCol !== undefined) return grid.__lastCol;
+    let last = -1;
+    for (let r = 0; r < grid.length; r++) {
+      const row = grid[r] || [];
+      for (let c = row.length - 1; c > last; c--) {
+        if (this.cellStr(row[c]) !== '') { last = c; break; }
+      }
+    }
+    try { Object.defineProperty(grid, '__lastCol', { value: last, enumerable: false }); } catch (e) { /* frozen grid */ }
+    return last;
+  },
+
   /** Scan the whole grid for the first cell matching regex; return {r,c} or null. */
   findCell(grid, regex) {
+    const maxCol = this.lastCol(grid);
     for (let r = 0; r < grid.length; r++) {
       const row = grid[r];
-      for (let c = 0; c < row.length; c++) {
+      if (!row) continue;
+      const end = Math.min(row.length, maxCol + 1);
+      for (let c = 0; c < end; c++) {
         if (regex.test(this.cellStr(row[c]))) return { r, c };
       }
     }
@@ -180,11 +205,18 @@ const SmartParse = {
   reverseAgencyLookup(text) {
     if (!text) return '';
     const clean = String(text).split('(')[0].split('（')[0].trim();
-    for (const [code, name] of Object.entries(AGENCY_CODES)) {
-      if (code === 'AA') continue;
-      if (clean.includes(name) || name.includes(clean)) return code;
-    }
-    return '';
+    if (!clean) return '';
+    const entries = Object.entries(AGENCY_CODES).filter(([code]) => code !== 'AA');
+    const exact = entries.find(([, name]) => name === clean);
+    if (exact) return exact[0];
+    // Longest match wins. Iterating in key order returned the PARENT company for a
+    // branch office — "台灣檢驗科技股份有限公司高雄分公司" resolved to code 35
+    // (the parent) instead of 105, because the parent's shorter name is a prefix and
+    // its numeric key comes first. A wrong 檢測機構許可證號 on an official filing.
+    const hits = entries
+      .filter(([, name]) => clean.includes(name) || name.includes(clean))
+      .sort((a, b) => String(b[1]).length - String(a[1]).length);
+    return hits.length ? hits[0][0] : '';
   },
 
   UNIT_ALIASES: {
@@ -284,23 +316,53 @@ const SmartParse = {
     return String(text || '').replace(/[（(].*?[）)]/g, '').trim();
   },
 
-  /** Trim floating-point noise and unnecessary trailing zeros ("4.0" -> "4", "36.4194255433345" -> "36.4"). */
+  /**
+   * Trim floating-point noise and unnecessary trailing zeros ("4.0" -> "4",
+   * "36.4194255433345" -> "36.4") WITHOUT ever coarsening a value the report
+   * actually printed.
+   *
+   * The previous version rounded to a fixed number of decimals, which quietly
+   * destroyed trace results: mercury reported as 0.0006 mg/L was filed as 0.001
+   * (+67%), and a mercury detection limit of 0.0004 was filed as 0. Both appear in
+   * real 水質 reports. The rule now is: round only to strip float noise, and never
+   * to fewer decimals than the source itself showed.
+   */
   formatNumber(v, decimals = 1) {
-    const n = parseFloat(v);
-    if (isNaN(n)) return String(v ?? '');
-    const rounded = Math.round(n * Math.pow(10, decimals)) / Math.pow(10, decimals);
-    return String(rounded);
+    const raw = String(v ?? '').trim();
+    const n = parseFloat(raw);
+    if (isNaN(n)) return raw;
+    if (n === 0) return '0';
+    // A value carrying more than 10 significant digits is not a reported
+    // measurement — it is a spreadsheet-computed average whose full float sits in
+    // the cell (36.4194255433345, 0.30000000000000004). Those get the caller's
+    // requested precision. Anything a lab actually PRINTED keeps every digit it
+    // printed, which is what protects 0.0004 and 0.0006.
+    const significantDigits = String(Math.abs(n)).replace(/[^0-9]/g, '').replace(/^0+/, '').length;
+    if (significantDigits > 10) return String(Number(n.toFixed(decimals)));
+    const printedDecimals = (raw.split('.')[1] || '').replace(/[^0-9].*$/, '').length;
+    return String(Number(n.toFixed(Math.min(Math.max(decimals, printedDecimals), 12))));
   },
 
   /** Parse a raw "檢測值" cell into {比較關係, 檢測數值} pairs, handling ND / </> / scientific-ish notation. */
   parseValueCell(raw) {
-    const s = String(raw ?? '').trim();
+    // Real reports mix full-width and half-width forms freely — the same
+    // consultant's own boilerplate writes "以ＮＤ表示". A full-width ＮＤ used to
+    // fall through as literal text, which left 比較關係 empty, put non-numeric text
+    // in 檢測數值, AND suppressed the detection limit (limitApplies never became
+    // true). Normalize once, up front.
+    const s = String(raw ?? '').trim()
+      .replace(/[＜﹤〈]/g, '<').replace(/[＞﹥〉]/g, '>')
+      .replace(/[Ｎｎ]/g, 'N').replace(/[Ｄｄ]/g, 'D').replace(/[Ａａ]/g, 'A')
+      .replace(/／/g, '/').replace(/（/g, '(').replace(/）/g, ')')
+      .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      .replace(/[．]/g, '.')
+      .trim();
     if (s === '') return { cmp: '', val: '', note: '' };
     // ND: 比較關係 filled, 檢測數值 stays BLANK — "ND" is not itself a measured
     // value, so it has no business sitting in the value field once 比較關係
     // already records it. Detection limit (if the report has one) still applies
     // here — see call sites below.
-    if (/^ND$/i.test(s)) return { cmp: 'ND', val: '', note: '' };
+    if (/^N\.?D\.?$/i.test(s)) return { cmp: 'ND', val: '', note: '' };
     // NA / 未檢測: neither 比較關係 nor 檢測數值 should carry "未檢測" text — that
     // belongs in 備註 instead (returned via `note`), since 比較關係 is meant to
     // hold only the ND/</> symbols, not free-text explanations. Call sites are
@@ -347,6 +409,9 @@ const SmartParse = {
     const dateISO = this.rocDateToISO(dateRaw);
     const timeRaw = this.labelValue(grid, /測定時間[:：]/) || this.labelValue(grid, /監測時間[:：]/);
     const [tStart, tEnd] = this.splitTimeRange(timeRaw);
+    // A night-time construction measurement written "23:50~00:10" ends on the NEXT
+    // day. Filing 日期(迄) = 日期(起) gave a window that ends 23h40m before it starts.
+    const dateEndISO = (tStart && tEnd && tEnd < tStart) ? this.addDaysISO(dateISO, 1) : dateISO;
     // 監測地點 on the noise sheets, 名稱或地點 on the vibration ones.
     const location = this.labelValue(grid, /監測地點[:：]/) || this.labelValue(grid, /名稱或地點[:：]/) || '';
     const coordHit = this.findCell(grid, /大地座標/);
@@ -359,13 +424,32 @@ const SmartParse = {
     const method = this.extractMethodCode(methodRaw);
     const agencyRaw = this.labelValue(grid, /採樣單位[:：]/);
     const agencyCode = this.reverseAgencyLookup(agencyRaw);
-    const zoneText = this.findCell(grid, /噪音管制區/);
-    const zone = zoneText ? this.extractZone(this.cellStr(grid[zoneText.r][zoneText.c])) : '';
+    // 管制區: scan ALL 噪音管制區 mentions, not just the first. On the LFN template
+    // the first hit is a bare caption whose value ("二") sits in the neighbouring
+    // cell, so stopping at the first match filed every 低頻噪音 row with a blank
+    // 管制區 even though the report plainly states 第二類.
+    const zone = (() => {
+      const maxCol = this.lastCol(grid);
+      for (let r = 0; r < grid.length; r++) {
+        const row = grid[r] || [];
+        const end = Math.min(row.length, maxCol + 1);
+        for (let c = 0; c < end; c++) {
+          const cell = this.cellStr(row[c]);
+          if (!/噪音管制區/.test(cell)) continue;
+          const inCell = this.extractZone(cell);
+          if (inCell) return inCell;
+          const nextVal = this.valuesRightOf(grid, r, c, 1)[0] || '';
+          const beside = this.extractZone(nextVal) || this.extractZone(`第${nextVal}類`);
+          if (beside) return beside;
+        }
+      }
+      return '';
+    })();
     const tod = tStart ? this.hourToTod(tStart.split(':')[0]) : '日間';
     const siteCode = this.labelValue(grid, /測點編號[:：]/) || '';
 
     const baseRow = {
-      '日期(起)': dateISO, '時間(起)': tStart, '日期(迄)': dateISO, '時間(迄)': tEnd,
+      '日期(起)': dateISO, '時間(起)': tStart, '日期(迄)': dateEndISO, '時間(迄)': tEnd,
       '監測地點': location, '座標系統': coordX ? '3' : '', '採樣座標-經度 X': coordX, '採樣座標-緯度 Y': coordY,
       '監測時段': tod, '監測方法': method, '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
       _siteCode: siteCode, _rawLocation: location,
@@ -1021,7 +1105,14 @@ const SmartParse = {
       // ">X" reading isn't characterized by a detection limit, so leave it blank
       // even if the report's own 偵測極限 column happened to have something in it.
       const limitApplies = cmp === 'ND' || cmp === '<';
-      const limitFormatted = limitApplies && /^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : '';
+      // A limit that isn't a bare number is passed through UNCHANGED rather than
+      // silently blanked. 檢測極限 may only hold a number in the filing, but the
+      // person is the one who should decide what to do with a report that wrote
+      // "<0.002" or "0.0004 mg/L" there — the import preview lists every such value
+      // and offers 清成空白 / 只保留數字 / 照原樣匯入. Blanking it here would hide
+      // both the report's real content and the choice.
+      const limitFormatted = !limitApplies ? ''
+        : (/^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : limitRaw);
 
       const depthFields = kind === 'geo'
         ? { '採樣深度(公尺)': '' }

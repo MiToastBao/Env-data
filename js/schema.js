@@ -8,8 +8,11 @@ const BASIC_INFO_FIELDS = [
   { key: '書件案號', label: '書件案號', type: 'text',
     help: '共8碼：前7碼為數字，第8碼為英文大寫（若無可不填）' },
   { key: '書件名稱', label: '書件名稱', type: 'text', help: '請填寫完整書件名稱，勿使用簡易寫法' },
+  // A leading blank, like every other select in this schema. Without it the browser
+  // auto-selected 施工前 for a project that had never set the field, so the screen
+  // showed 施工前 while the export wrote an empty cell.
   { key: '執行現況', label: '執行現況', type: 'select',
-    options: ['施工前', '施工中', '施工兼營運', '營運中'] },
+    options: ['', '施工前', '施工中', '施工兼營運', '營運中'] },
   { key: '施工日期', label: '施工日期', type: 'date', help: '執行現況為施工中/施工兼營運時請務必填寫' },
   { key: '竣工日期', label: '竣工日期', type: 'date', help: '執行現況為施工兼營運/營運中時請填寫' },
   { key: '營運日期', label: '營運日期', type: 'date', help: '執行現況為施工兼營運/營運中時請務必填寫' },

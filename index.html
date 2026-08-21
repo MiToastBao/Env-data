@@ -14,6 +14,7 @@
   <header class="topbar">
     <div class="brand">📋 環評監測資料填報小工具 <span class="version-badge" id="versionBadge" title="點擊查看版本紀錄"></span></div>
     <div class="topbar-actions">
+      <a id="btnUserGuide" class="btn btn-ghost" href="使用說明.html" target="_blank" rel="noopener" title="第一次使用請先看這裡（另開新分頁，可列印或存成 PDF）">📘 新手使用說明</a>
       <button id="btnTemplateDownload" class="btn btn-ghost" title="下載空白填寫範本" style="display:none">📥 範本下載</button>
       <button id="btnUnitCodeRef" class="btn btn-ghost" title="查詢單位代碼表">📖 單位代碼表</button>
       <button id="btnAgencyCodeRef" class="btn btn-ghost" title="查詢檢測機構代碼表">🏢 檢測機構代碼表</button>
@@ -38,6 +39,7 @@
     <main class="content" id="content">
       <div class="empty-state">
         <p>👈 請先在左側建立或選擇一個計畫</p>
+        <p style="font-size:14px;margin-top:10px">第一次使用？請先看 <a href="使用說明.html" target="_blank" rel="noopener" style="color:var(--primary-dark);font-weight:600">📘 新手使用說明</a></p>
       </div>
     </main>
   </div>
@@ -95,6 +97,7 @@
       <div id="genericPeriodWrap" class="period-picker"></div>
       <div id="genericImportItemsWrap"></div>
       <div id="genericImportRowDetailWrap"></div>
+      <div id="genericImportLimitWarning"></div>
       <div id="genericImportMethodDiffNotice"></div>
     </div>
     <div id="importStep3" class="hidden">
@@ -103,6 +106,7 @@
       <div id="smartImportStatWrap"></div>
       <div id="smartImportItemsWrap"></div>
       <div id="smartImportRowDetailWrap"></div>
+      <div id="smartImportLimitWarning"></div>
       <div id="smartImportMissingItemsWrap"></div>
       <div id="smartImportSitesWrap" class="mapping-table-wrap"></div>
       <p class="hint" id="smartImportSkipped"></p>

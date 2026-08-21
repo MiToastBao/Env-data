@@ -31,6 +31,14 @@ const ExportEngine = {
     // UTC timestamps, so the subtraction itself is timezone-agnostic.
     const utcMs = Date.UTC(y, mo - 1, d);
     const epochMs = Date.UTC(1899, 11, 31);
+    // An impossible date (2026-02-30, a mis-mapped column) must never be turned
+    // into a number: Date.UTC silently rolls it over to a DIFFERENT real date
+    // (2026-03-02) and the filing then carries a date nobody ever typed. Write the
+    // original text through instead, so it stays visibly wrong and fixable.
+    const check = new Date(utcMs);
+    if (check.getUTCFullYear() !== y || check.getUTCMonth() + 1 !== mo || check.getUTCDate() !== d) {
+      return isoStr || '';
+    }
     let serial = Math.round((utcMs - epochMs) / 86400000);
     // Excel (for backward compatibility with a Lotus 1-2-3 bug) treats 1900 as a
     // leap year even though it isn't one — every real date on or after 1900-03-01
@@ -44,8 +52,16 @@ const ExportEngine = {
     const m = String(hms || '').match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
     if (!m) return hms || '';
     const h = +m[1], mi = +m[2], s = +(m[3] || 0);
+    // Out-of-range values must stay text. "24:00" written as the fraction 1.0 is
+    // read back by Excel as 1900-01-01 00:00 — the screen said 24:00 and the file
+    // says midnight — and "99:99" became 4:39 on 1900-01-03. Neither is a time the
+    // person can spot as wrong once it is a number.
+    if (mi > 59 || s > 59) return hms || '';
+    if (h > 24 || (h === 24 && (mi > 0 || s > 0))) return hms || '';
     const frac = (h * 3600 + mi * 60 + s) / 86400;
-    return { t: 'n', v: frac, z: 'h:mm' };
+    // 24:00:00 is midnight at the END of the day; Excel's h:mm shows 1.0 as 0:00,
+    // which is the same clock reading, so store it as 0 rather than as a date.
+    return { t: 'n', v: frac >= 1 ? 0 : frac, z: 'h:mm' };
   },
 
   buildWorkbook(project, basicInfo, categoryKey, rowsOverride) {

@@ -13,6 +13,10 @@ const state = {
   batchQueueTotal: 0,
   periodFilter: {}, // { [catKey]: '115年第1季' | '' (全部) } — which period is being viewed/edited
   importPeriod: '', // the period label chosen for the batch currently being imported
+  rowSearch: {}, // { [catKey]: free-text search box contents } — kept in state so a
+  // re-render (a sort click, an accepted sync, a column filter) can't silently clear
+  // the search box while the ▾ filters still look active. That mismatch made
+  // "select all visible + delete" act on far more rows than the person could see.
   columnFilters: {}, // { [catKey]: { [fieldKey]: Set of allowed display values } } — Excel-style AutoFilter
   columnSort: {}, // { [catKey]: { fieldKey, direction: 'asc'|'desc' } } — Excel-style column sort
   undoStack: {}, // { [`${projectId}::${catKey}`]: [{ description, rows, batches }] } — in-memory only, cleared on page reload (matches typical app undo behavior; deliberately not persisted to localStorage)
@@ -330,8 +334,18 @@ function findSimilarHistoricalLocation(rawLoc, historicalLocs) {
   let best = null, bestDist = Infinity;
   historicalLocs.forEach(h => {
     const dist = levenshteinDistance(rawLoc, h);
-    const threshold = Math.max(1, Math.floor(Math.max(rawLoc.length, h.length) * 0.2));
-    if (dist <= threshold && dist < bestDist) { best = h; bestDist = dist; }
+    // No Math.max(1, …) floor. With it, ANY two names differing by one character
+    // were offered as "the same site typed differently" — and 大甲溪上游 vs 大甲溪下游,
+    // 民生國小 vs 民權國小, 測站1 vs 測站2 are exactly how distinct monitoring points
+    // are named. Accepting the prompt merged two physically different stations into
+    // one in the filing. The ratio rule now governs, so a 1-edit match needs names of
+    // at least 10 characters.
+    // One allowed edit per 10 characters. A ratio of 0.2 still let 5-character names
+    // match on a single edit, which is exactly 大甲溪上游 vs 大甲溪下游 — the pair this
+    // guard exists to keep apart. Tier 1 above (punctuation/whitespace-insensitive
+    // equality) still catches the genuinely-same-name-typed-differently case.
+    const threshold = Math.floor(Math.max(rawLoc.length, h.length) / 10);
+    if (threshold >= 1 && dist <= threshold && dist < bestDist) { best = h; bestDist = dist; }
   });
   return best ? { match: best, confidence: 'low' } : null;
 }
@@ -459,7 +473,9 @@ function renderContent() {
   const content = document.getElementById('content');
   const project = getCurrentProject();
   if (!project) {
-    content.innerHTML = '<div class="empty-state"><p>👈 請先在左側建立或選擇一個計畫</p></div>';
+    content.innerHTML = '<div class="empty-state"><p>👈 請先在左側建立或選擇一個計畫</p>'
+      + '<p style="font-size:14px;margin-top:10px">第一次使用？請先看 '
+      + '<a href="使用說明.html" target="_blank" rel="noopener" style="color:var(--primary-dark);font-weight:600">📘 新手使用說明</a></p></div>';
     return;
   }
 
@@ -589,7 +605,16 @@ function renderCategoryTab(project, catKey) {
   const sortState = state.columnSort[catKey];
   if (sortState) {
     const dir = sortState.direction === 'desc' ? -1 : 1;
-    displayEntries.sort((a, b) => dir * compareForSort(a.row[sortState.fieldKey], b.row[sortState.fieldKey]));
+    // Blanks are handled OUTSIDE the direction flip. Negating the comparator flipped
+    // the blank sentinels too, so a second click (descending) put every empty cell at
+    // the TOP — the opposite of Excel, which this deliberately imitates, and exactly
+    // wrong for the "sort descending to find the outliers" review pass.
+    displayEntries.sort((a, b) => {
+      const av = String(a.row[sortState.fieldKey] ?? '').trim();
+      const bv = String(b.row[sortState.fieldKey] ?? '').trim();
+      if (av === '' || bv === '') return av === bv ? 0 : (av === '' ? 1 : -1);
+      return dir * compareForSort(av, bv);
+    });
   }
 
   const displayRows = displayEntries.map(e => e.row);
@@ -610,7 +635,7 @@ function renderCategoryTab(project, catKey) {
           ${knownPeriods.map(p => `<option value="${escapeAttr(p)}" ${activePeriod === p ? 'selected' : ''}>${escapeHtml(p)}</option>`).join('')}
           ${hasUnlabeled ? `<option value="__none__" ${activePeriod === '__none__' ? 'selected' : ''}>未標示期別</option>` : ''}
         </select>` : ''}
-        <input type="text" id="rowSearchInput" placeholder="🔍 搜尋任何欄位內容（測站、測項、日期…）" title="輸入關鍵字即時篩選畫面顯示的資料列，方便檢查或修正特定資料；不影響匯出範圍（匯出仍依上方期別篩選）">
+        <input type="text" id="rowSearchInput" value="${escapeAttr(state.rowSearch[catKey] || '')}" placeholder="🔍 搜尋任何欄位內容（測站、測項、日期…）" title="輸入關鍵字即時篩選畫面顯示的資料列，方便檢查或修正特定資料；不影響匯出範圍（匯出仍依上方期別篩選）">
         <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除篩選</button>
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）${activePeriod ? '（僅目前篩選期別）' : ''}</button>
         <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別${activePeriod ? '（僅目前篩選期別）' : ''}</button>
@@ -678,8 +703,18 @@ function renderCategoryTab(project, catKey) {
     });
   }
   document.getElementById('btnExportCat').addEventListener('click', () => {
-    if (displayRows.length === 0) { alert('目前篩選範圍內沒有資料可匯出。'); return; }
-    ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey, displayRows);
+    // Re-read from storage at click time. `displayRows` is a snapshot taken when the
+    // table was last rendered, and ordinary cell edits commit to storage WITHOUT
+    // re-rendering — so exporting straight after fixing a value wrote the old value
+    // to the file while the screen showed the new one.
+    const freshRows = DataStore.getData(project.id, catKey).filter(r => {
+      if (!activePeriod) return true;
+      if (activePeriod === '__none__') return !r._period;
+      return r._period === activePeriod;
+    });
+    if (freshRows.length === 0) { alert('目前篩選範圍內沒有資料可匯出。'); return; }
+    if (!confirmLimitBeforeExport(freshRows, cat)) return;
+    ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey, freshRows);
     showToast('📥 已匯出。<strong>若之後修改這份檔案</strong>（手動補值、新增測項等），完成後可到本頁上方點原本的「📥 匯入資料」按鈕、選擇這份修改過的檔案<strong>重新匯入即可</strong>——系統會自動比對，內容相同的資料會忽略，內容不同的會列出讓您確認要不要用新版本取代，不會憑空覆蓋或造成重複。', 9000);
   });
   document.getElementById('btnClearCat').addEventListener('click', () => {
@@ -752,6 +787,7 @@ function getRowFieldDisplayValue(tr, fieldKey) {
 }
 
 function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
+  if (state.rowSearch[catKey] === undefined) state.rowSearch[catKey] = '';
   const searchInput = document.getElementById('rowSearchInput');
   const clearBtn = document.getElementById('btnClearSearch');
   const tbody = document.getElementById('gridBody');
@@ -785,6 +821,7 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
 
   const applyAllFilters = () => {
     const q = searchInput.value.trim().toLowerCase();
+    state.rowSearch[catKey] = searchInput.value; // survives the next re-render
     const colFilters = colFiltersForCat();
     const anyColFilter = Object.values(colFilters).some(s => s && s.size > 0);
     clearBtn.classList.toggle('hidden', q === '' && !anyColFilter);
@@ -807,6 +844,7 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
   searchInput.addEventListener('input', applyAllFilters);
   clearBtn.addEventListener('click', () => {
     searchInput.value = '';
+    state.rowSearch[catKey] = '';
     state.columnFilters[catKey] = {};
     renderContent();
   });
@@ -1144,8 +1182,15 @@ function fieldControlHTML(field, value, rowAttr) {
       return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input" data-codetype="unit" title="${escapeAttr(lookupUnit(value))}" placeholder="代碼">`;
     case 'agencycode':
       return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input" data-codetype="agency" title="${escapeAttr(lookupAgency(value))}" placeholder="代碼">`;
-    default:
-      return `<input type="text" ${base} value="${escapeAttr(value)}">`;
+    default: {
+      // 檢測極限 may only ever hold a bare number. Flag anything else in the grid so
+      // a value that slipped in (typed by hand, or imported with "照原樣匯入") can't
+      // reach the filing unnoticed.
+      const bad = field.key === LIMIT_FIELD && String(value).trim() !== '' && !isPlainNumber(value);
+      const cls = bad ? ' class="cell-invalid"' : '';
+      const tip = bad ? ' title="「檢測極限」只能填數值。請改成純數字，或清空這一格。"' : '';
+      return `<input type="text" ${base}${cls}${tip} value="${escapeAttr(value)}">`;
+    }
   }
 }
 
@@ -1153,7 +1198,7 @@ function wireGridEvents(project, catKey, cat) {
   const tbody = document.getElementById('gridBody');
   const COORD_FIELDS = ['座標系統', '採樣座標-經度 X', '採樣座標-緯度 Y'];
 
-  const commit = (rowIdx, fieldKey, value) => {
+  const commit = (rowIdx, fieldKey, value, { learn = true } = {}) => {
     const rows = DataStore.getData(project.id, catKey);
     if (!rows[rowIdx]) return;
     rows[rowIdx][fieldKey] = value;
@@ -1190,27 +1235,60 @@ function wireGridEvents(project, catKey, cat) {
     // just at import time — so a value the person fixes by hand (e.g. filling in
     // coordinates a water report never provides) is what gets carried forward next
     // season, not whatever was frozen in at the moment of import.
-    learnSiteItemHistory(project.id, catKey, cat, [rows[rowIdx]]);
+    //
+    // But NOT on every keystroke. History is additive and never forgets, so learning
+    // mid-typing filed every prefix of a name as its own remembered site: typing
+    // 「大甲溪橋」 left permanent phantom sites 大, 大甲, 大甲溪, which then fed the
+    // fuzzy-location prompt and the missing-item suggestions on the next import.
+    // The `input` handler passes learn:false; the matching blur below does the
+    // learning once, with the finished value.
+    if (learn) learnSiteItemHistory(project.id, catKey, cat, [rows[rowIdx]]);
   };
 
-  // Whether row `r` belongs to the same "sampling event" as `source` for sync
-  // purposes: same import batch, same location, and — unless the field actually
-  // being synced IS the category itself — the same 檢測類別. A physical site can
-  // carry BOTH a 環境噪音/道路交通噪音 sub-report and a separate 振動 sub-report
-  // on the very same day; without the category check, correcting one's coordinate
-  // could silently blank out the other's Y value the moment only X had been typed
-  // in so far — this actually happened with real data, not just a theoretical risk.
-  const matchesSyncGroup = (source, r, { requireCategory = true, requireDate = true } = {}) => {
+  /**
+   * WHAT COUNTS AS "THE SAME SAMPLING EVENT" FOR A SYNC
+   * ---------------------------------------------------
+   * One physical site can hold several distinct measurement sets at once, and they
+   * must not bleed into each other:
+   *
+   *   - 平日 and 假日 are separate visits to the SAME site, told apart only by their
+   *     sampling dates. Correcting the 假日 date must never reach the 平日 rows.
+   *   - 噪音 and 振動 are separate sub-reports of the same visit, told apart by
+   *     檢測類別. They share their COORDINATES (one tripod, one position) but nothing
+   *     else — 管制區, 管制標準, 檢測方法 and so on belong to one or the other.
+   *
+   * So the matching rules differ per field, and each caller says what it needs:
+   *
+   *   座標         same location + same 日期(起) AND 日期(迄); category ignored (noise
+   *                and vibration share them); batch ignored (the two sub-reports can
+   *                arrive as two separate files)
+   *   日期／時間    same location + same 檢測類別 + the date the row had BEFORE the edit
+   *   檢測類別      same location + same dates + the category the row had BEFORE the edit
+   *   其他欄位      same location + same 檢測類別 + same dates
+   *
+   * `dateStart`/`dateEnd`/`category` override what to compare against, which is what
+   * makes "the rows that matched me before I changed this" expressible: after the
+   * edit the source no longer carries the old value, so the group has to be defined
+   * by the old one.
+   */
+  const matchesSyncGroup = (source, r, {
+    requireBatch = true, requireCategory = true, requireDate = true,
+    dateStart = null, dateEnd = null, category = null,
+  } = {}) => {
     const locField = cat.locationField;
-    if (r._batchId !== source._batchId) return false;
+    if (requireBatch && r._batchId !== source._batchId) return false;
     if (r[locField] !== source[locField]) return false;
-    if (requireCategory && r['檢測類別'] !== source['檢測類別']) return false;
+    if (requireCategory && r['檢測類別'] !== (category !== null ? category : source['檢測類別'])) return false;
     // Both ends of the sampling window have to match, not just 日期(起) — a site
     // sampled on the same start date but over a different span (a one-off grab
     // sample vs a 24-hour composite) is a different sampling event and must not be
-    // swept up by a sync.
-    if (requireDate && r['日期(起)'] !== source['日期(起)']) return false;
-    if (requireDate && r['日期(迄)'] !== source['日期(迄)']) return false;
+    // swept up by a sync. This is also what separates 平日 from 假日.
+    if (requireDate) {
+      const ds = dateStart !== null ? dateStart : source['日期(起)'];
+      const de = dateEnd !== null ? dateEnd : source['日期(迄)'];
+      if (r['日期(起)'] !== ds) return false;
+      if (r['日期(迄)'] !== de) return false;
+    }
     return true;
   };
 
@@ -1225,17 +1303,28 @@ function wireGridEvents(project, catKey, cat) {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
-    if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
+    if (!source || !source[locField] || !source['日期(起)']) return false;
+    // Coordinates are the ONE thing 噪音 and 振動 share: one visit, one tripod, one
+    // position — so this sync deliberately ignores 檢測類別, and ignores the import
+    // batch too, because the noise and vibration sub-reports often arrive as two
+    // separate files. It still never crosses a sampling date, which is what keeps
+    // 平日 and 假日 apart.
     const matches = rows
       .map((r, idx) => ({ r, idx }))
-      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r));
+      .filter(({ r, idx }) => idx !== rowIdx
+        && matchesSyncGroup(source, r, { requireBatch: false, requireCategory: false }));
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => COORD_FIELDS.some(f => r[f] !== source[f]));
     if (!anyDiff) return false;
+    const otherCats = [...new Set(matches.map(({ r }) => r['檢測類別']).filter(c => c && c !== source['檢測類別']))];
     const ok = confirm(
-      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
-      `是否要將這些資料的座標一併同步更新為與這一筆相同？\n\n` +
-      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。不同採樣日期或不同檢測類別的資料不會被同步。）`
+      `偵測到同一個測站「${source[locField]}」、同一次採樣（${toDateDisplayValue(source['日期(起)'])}`
+      + `${source['日期(迄)'] && source['日期(迄)'] !== source['日期(起)'] ? ` ～ ${toDateDisplayValue(source['日期(迄)'])}` : ''}）`
+      + `還有 ${matches.length} 筆其他資料${otherCats.length ? `（含「${otherCats.join('」「')}」）` : ''}。\n`
+      + `是否要將這些資料的座標一併同步更新為與這一筆相同？\n\n`
+      + `（座標是同一次採樣共用的，所以噪音與振動會一起更新。`
+      + `其他欄位不會被動到，${'不同採樣日期的資料（例如平日／假日）也完全不受影響。'}`
+      + `選擇「取消」則只修改目前這一筆。）`
     );
     if (!ok) return false;
     matches.forEach(({ r }) => { COORD_FIELDS.forEach(f => { r[f] = source[f]; }); });
@@ -1244,30 +1333,42 @@ function wireGridEvents(project, catKey, cat) {
     return true;
   };
 
-  // If the person corrects a date/time on one row, offer to sync all four date/time
-  // fields to every other row that (a) came from the same import batch, (b) shares
-  // the same sampling location, and (c) shares the same 檢測類別 — e.g. correcting
-  // one test item's date in a multi-item water report should usually update the
-  // whole site's rows from that report, since they're really one sampling event.
-  // This always asks first rather than silently overwriting, both to avoid
-  // surprising edits and because some browsers/devices don't reliably fire events
-  // for native time pickers, which made a silent version of this hard to trust.
+  /**
+   * Correcting a date/time on one row offers to fix the rest of the SAME visit.
+   *
+   * The group can't be defined by the source's current dates — the edit has already
+   * changed them, and the siblings still carry the old ones. It used to sidestep that
+   * by ignoring dates entirely, which is precisely how correcting the 假日 date also
+   * rewrote the 平日 rows at that station: same location, same 檢測類別, nothing left
+   * to tell them apart. So the group is defined by the dates the row had BEFORE this
+   * edit (`prevValue`, captured on focus), which is exactly "the rows that were part
+   * of the same visit as this one".
+   */
   const DATE_TIME_FIELDS = ['日期(起)', '時間(起)', '日期(迄)', '時間(迄)'];
-  const offerDateTimeSync = (rowIdx) => {
+  const offerDateTimeSync = (rowIdx, fieldKey, prevValue) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
     if (!source || !source._batchId || !source[locField]) return false;
+    const prevStart = (fieldKey === '日期(起)' && prevValue !== undefined) ? prevValue : source['日期(起)'];
+    const prevEnd = (fieldKey === '日期(迄)' && prevValue !== undefined) ? prevValue : source['日期(迄)'];
+    if (!prevStart) return false;
     const matches = rows
       .map((r, idx) => ({ r, idx }))
-      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r, { requireDate: false }));
+      .filter(({ r, idx }) => idx !== rowIdx
+        && matchesSyncGroup(source, r, { dateStart: prevStart, dateEnd: prevEnd }));
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => DATE_TIME_FIELDS.some(f => r[f] !== source[f]));
     if (!anyDiff) return false;
     const ok = confirm(
-      `偵測到同一份檔案、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
-      `是否要將這些資料的採樣日期／時間一併同步更新為與這一筆相同？\n\n` +
-      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。不同檢測類別的資料不會被同步。）`
+      `偵測到同一份檔案、同一個測站「${source[locField]}」`
+      + `${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}`
+      + `、原本同樣是 ${toDateDisplayValue(prevStart)}`
+      + `${prevEnd && prevEnd !== prevStart ? ` ～ ${toDateDisplayValue(prevEnd)}` : ''} 這一次採樣的，還有 ${matches.length} 筆資料。\n`
+      + `是否要將這些資料的採樣日期／時間一併同步更新為與這一筆相同？\n\n`
+      + `（只會套用到「原本跟這一筆同一次採樣」的資料——`
+      + `同測站不同次採樣（例如平日／假日）以及不同檢測類別的資料都不會被動到。`
+      + `選擇「取消」則只修改目前這一筆。）`
     );
     if (!ok) return false;
     matches.forEach(({ r }) => { DATE_TIME_FIELDS.forEach(f => { r[f] = source[f]; }); });
@@ -1282,21 +1383,27 @@ function wireGridEvents(project, catKey, cat) {
   // one visit shouldn't silently overwrite a different visit's classification. This
   // is the one sync that can't require "same category" as a matching criterion,
   // since 檢測類別 is the very field being synced.
-  const offerCategorySync = (rowIdx) => {
+  const offerCategorySync = (rowIdx, prevCategory) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
     if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
+    // Same trick as the date sync: the group is "the rows that had the SAME category
+    // as this one before the edit". Matching on anything else would sweep in the
+    // 振動 rows sitting at the same site on the same day and reclassify them too.
+    if (prevCategory === undefined || prevCategory === source['檢測類別']) return false;
     const matches = rows
       .map((r, idx) => ({ r, idx }))
-      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r, { requireCategory: false }));
+      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r, { category: prevCategory }));
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => r['檢測類別'] !== source['檢測類別']);
     if (!anyDiff) return false;
     const ok = confirm(
-      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」還有 ${matches.length} 筆其他資料。\n` +
-      `是否要將這些資料的檢測類別一併同步更新為「${source['檢測類別']}」？\n\n` +
-      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
+      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」，`
+      + `原本同樣是「${prevCategory || '（空白）'}」的還有 ${matches.length} 筆資料。\n`
+      + `是否要將這些資料的檢測類別一併同步更新為「${source['檢測類別']}」？\n\n`
+      + `（只會套用到原本就是「${prevCategory || '（空白）'}」的資料，其他檢測類別（例如振動）與不同採樣日期的資料不受影響。`
+      + `選擇「取消」則只修改目前這一筆。）`
     );
     if (!ok) return false;
     matches.forEach(({ r }) => { r['檢測類別'] = source['檢測類別']; });
@@ -1313,8 +1420,11 @@ function wireGridEvents(project, catKey, cat) {
   // separate, date-aware handling for correcting locations), the measurement value
   // fields (always unique per row by definition), and anything already covered by
   // a dedicated sync above (coordinates / date-time / 檢測類別) to avoid asking twice.
+  // 比較關係 is DERIVED per row from that row's own value (deriveComparisonRelation),
+  // so it must never be propagated sideways: syncing a blank one across a site turned
+  // every ND row there into a row carrying neither a value nor an ND marker.
   const SYNC_EXCLUDED_FIELDS = new Set([
-    cat.itemField, cat.locationField, '檢測數值', '監測數值',
+    cat.itemField, cat.locationField, '檢測數值', '監測數值', '比較關係',
     ...COORD_FIELDS, ...DATE_TIME_FIELDS, '檢測類別',
   ]);
   const offerGenericFieldSync = (rowIdx, fieldKey) => {
@@ -1330,9 +1440,12 @@ function wireGridEvents(project, catKey, cat) {
     if (!anyDiff) return false;
     const fieldLabel = (cat.fields.find(f => f.key === fieldKey) || {}).label || fieldKey;
     const ok = confirm(
-      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n` +
-      `是否要將這些資料的「${fieldLabel}」一併同步更新為「${source[fieldKey] || '（空白）'}」？\n\n` +
-      `（選擇「取消」則只修改目前這一筆，其他資料維持原狀。）`
+      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」`
+      + `${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n`
+      + `是否要將這些資料的「${fieldLabel}」一併同步更新為「${source[fieldKey] || '（空白）'}」？\n\n`
+      + `（只會套用到同一天、同一測站、同一個檢測類別的資料——`
+      + `${source['檢測類別'] === '振動' ? '同測站的噪音資料' : '同測站的振動資料'}以及不同採樣日期（例如平日／假日）都不會被動到。`
+      + `選擇「取消」則只修改目前這一筆。）`
     );
     if (!ok) return false;
     matches.forEach(({ r }) => { r[fieldKey] = source[fieldKey]; });
@@ -1341,24 +1454,44 @@ function wireGridEvents(project, catKey, cat) {
     return true;
   };
 
+  // Remember what a control held when it gained focus, so the sync prompts can tell
+  // "the person edited this" from "the person merely clicked in and out". Without it,
+  // clicking a 檢測方法 cell just to read it and then clicking away offered to
+  // overwrite that field on every other row at the site.
+  tbody.addEventListener('focusin', (e) => {
+    const t = e.target;
+    if (t && t.dataset && t.dataset.field !== undefined) t.dataset.syncBaseline = t.value;
+  });
+  const valueUnchanged = (t) => !!t && !!t.dataset && t.dataset.syncBaseline !== undefined
+    && t.dataset.syncBaseline === t.value;
+
   tbody.addEventListener('input', (e) => {
     const t = e.target;
     if (!t.dataset.field) return;
     if (t.classList.contains('code-input')) {
       t.title = t.dataset.codetype === 'unit' ? lookupUnit(t.value) : lookupAgency(t.value);
     }
+    if (t.dataset.field === LIMIT_FIELD) {
+      const bad = t.value.trim() !== '' && !isPlainNumber(t.value);
+      t.classList.toggle('cell-invalid', bad);
+      t.title = bad ? '「檢測極限」只能填數值。請改成純數字，或清空這一格。' : '';
+    }
     if (t.tagName === 'SELECT') return; // handled by change
-    commit(Number(t.dataset.row), t.dataset.field, t.value);
+    commit(Number(t.dataset.row), t.dataset.field, t.value, { learn: false });
   });
   tbody.addEventListener('change', (e) => {
     const t = e.target;
     if (!t.dataset.field) return;
     if (t.tagName === 'SELECT') {
+      // What the dropdown held before this change — the 檢測類別 sync needs it to
+      // work out which rows were in the same group as this one beforehand.
+      const previous = t.dataset.syncBaseline;
       commit(Number(t.dataset.row), t.dataset.field, t.value);
+      t.dataset.syncBaseline = t.value; // a second change compares against this one
       const fieldKey = t.dataset.field;
       const rowIdx = Number(t.dataset.row);
       if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
-      if (fieldKey === '檢測類別' && offerCategorySync(rowIdx)) { renderContentPreservingScroll(); return; }
+      if (fieldKey === '檢測類別' && offerCategorySync(rowIdx, previous)) { renderContentPreservingScroll(); return; }
       if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
     }
   });
@@ -1370,9 +1503,19 @@ function wireGridEvents(project, catKey, cat) {
     const rowIdx = Number(t.dataset.row);
     const fieldKey = t.dataset.field;
 
+    // The two branches below already commit the CANONICAL value (2026-07-01,
+    // 09:15:00) while putting the display form (2026/07/01, 09:15) in the box. The
+    // generic re-commit further down must therefore skip them, or it writes the
+    // display string back into storage — which then exports as a text cell instead
+    // of a real Excel date, and stops matching on re-import so the same rows come
+    // back as duplicates.
+    const isDateTimeInput = t.classList.contains('time-input') || t.classList.contains('date-input');
+
     if (t.classList.contains('time-input')) {
-      const normalized = normalizeTimeString(t.value); // full HH:MM:SS for storage
-      t.value = normalized.slice(0, 5); // HH:MM for display
+      const normalized = normalizeTimeString(t.value); // canonical HH:MM:00 for storage
+      // slice(0,5) blindly chopped anything it couldn't parse — a value the person
+      // typed, or an imported "連續24小時", lost its last characters on every blur.
+      t.value = toTimeDisplayValue(normalized) || normalized;
       commit(rowIdx, fieldKey, normalized);
     }
     if (t.classList.contains('date-input')) {
@@ -1381,8 +1524,23 @@ function wireGridEvents(project, catKey, cat) {
       commit(rowIdx, fieldKey, normalized);
     }
 
+    // The `input` handler deliberately skips history learning (see commit's `learn`
+    // flag). Do it once here, when the field is finished, so the remembered snapshot
+    // reflects the completed value rather than every prefix of it.
+    const edited = !valueUnchanged(t);
+    if (edited && !isDateTimeInput) commit(rowIdx, fieldKey, t.value, { learn: true });
+    // What this field held before the edit, in STORAGE form — the date/time sync
+    // needs it to identify "the rows that were part of the same visit as this one",
+    // which the source itself can no longer say once its own date has changed.
+    const baseline = t.dataset.syncBaseline;
+    const prevStored = baseline === undefined ? undefined
+      : (t.classList.contains('date-input') ? normalizeDateString(baseline)
+        : t.classList.contains('time-input') ? normalizeTimeString(baseline) : baseline);
+    delete t.dataset.syncBaseline;
+    if (!edited) return; // focused and left without editing — nothing to sync
+
     if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
-    if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx)) { renderContentPreservingScroll(); return; }
+    if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx, fieldKey, prevStored)) { renderContentPreservingScroll(); return; }
     if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
   });
   tbody.addEventListener('click', (e) => {
@@ -1611,6 +1769,14 @@ function addEmptyRow(project, catKey) {
  * own item memory (not the shared catalog) for next time.
  */
 function openCommonItemsModal(project, catKey) {
+  // The table body is never cleared on close, and renderCommonItemsTableBody
+  // deliberately re-harvests checked state from the existing DOM so that sorting and
+  // filtering don't lose a selection. Opening the modal for a DIFFERENT category then
+  // re-applied the previous category's ticks BY ROW INDEX — three 水質 ticks became
+  // three unrelated 空氣品質 items, added to the filing without the person choosing
+  // them, and written into the project's item memory.
+  const staleBody = document.getElementById('commonItemsTableBody');
+  if (staleBody) staleBody.innerHTML = '';
   const cat = CATEGORIES[catKey];
   const builtIn = siteConfig.itemCatalog[catKey] || [];
   const itemMemory = DataStore.getItemMemory(project.id, catKey);
@@ -1778,6 +1944,19 @@ function openCommonItemsColumnFilterPopup(filterKey, btnEl) {
     btnEl.classList.toggle('col-filter-active', !!state.commonItemsColumnFilters[filterKey]);
     document.getElementById('commonItemsSearch').dispatchEvent(new Event('input', { bubbles: true }));
   });
+
+  // The other two openers of this shared popup register this; this one didn't, so
+  // clicking anywhere else left the dropdown open — and closing the modal underneath
+  // left it stranded over the data grid, blocking clicks, with no way to dismiss it.
+  setTimeout(() => {
+    const closeOnOutsideClick = (e) => {
+      if (!popup.contains(e.target) && e.target !== btnEl) {
+        popup.classList.add('hidden');
+        document.removeEventListener('click', closeOnOutsideClick);
+      }
+    };
+    document.addEventListener('click', closeOnOutsideClick);
+  }, 0);
 }
 /** Wires the search box, "只顯示已勾選" toggle, "全選目前顯示的" checkbox, and
  *  live selected-count indicator. Uses DOM show/hide (not re-rendering) so
@@ -2339,12 +2518,22 @@ function confirmExportSelect() {
   const periodSel = document.getElementById('exportSelectPeriod');
   const period = periodSel ? periodSel.value : '';
   const basicInfo = DataStore.getBasicInfo(project.id);
-  let exportedCount = 0;
+  // Collect first, check 檢測極限 for every chosen category, and only then start
+  // downloading — so the person isn't answering a warning after half the files
+  // have already been saved.
+  const jobs = [];
   checked.forEach(catKey => {
     let rows = DataStore.getData(project.id, catKey);
     if (period === '__none__') rows = rows.filter(r => !r._period);
     else if (period) rows = rows.filter(r => r._period === period);
     if (rows.length === 0) return; // nothing for this category in the chosen period
+    jobs.push({ catKey, rows });
+  });
+  for (const job of jobs) {
+    if (!confirmLimitBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
+  }
+  let exportedCount = 0;
+  jobs.forEach(({ catKey, rows }) => {
     ExportEngine.downloadCategory(project, basicInfo, catKey, rows);
     exportedCount++;
   });
@@ -2397,6 +2586,113 @@ function deleteProjectFlow(project) {
   if (state.currentProjectId === project.id) state.currentProjectId = null;
   renderProjectList();
   renderContent();
+}
+
+// ---------- 檢測極限 must hold a bare number ----------
+// The filing only accepts a plain number in 檢測極限. Reports write all sorts of
+// things there — "<0.001", "--", "─", "N/A", "0.001 mg/L" — and any of them would be
+// rejected (or silently misread) by the receiving system. Rather than guessing, the
+// import preview shows exactly what was found and asks what to do with it.
+
+/** A value that 檢測極限 can legally hold: empty, or a bare number. */
+function isPlainNumber(v) {
+  const s = String(v ?? '').trim();
+  return s !== '' && /^[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$/.test(s);
+}
+/** The first number embedded in a value ("<0.001" -> "0.001", "0.001 mg/L" -> "0.001"),
+ *  or '' when there is no number in there at all ("--", "N/A", "無"). */
+function extractPlainNumber(v) {
+  const m = String(v ?? '').match(/[+-]?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?/);
+  return m ? String(Number(m[0])) : '';
+}
+const LIMIT_FIELD = '檢測極限';
+
+/** Groups every offending 檢測極限 value in `rows`, most frequent first. */
+function findBadLimitValues(rows, cat) {
+  if (!cat.fields.some(f => f.key === LIMIT_FIELD)) return [];
+  const counts = new Map();
+  rows.forEach(r => {
+    const v = String(r[LIMIT_FIELD] ?? '').trim();
+    if (v === '' || isPlainNumber(v)) return;
+    if (!counts.has(v)) counts.set(v, { value: v, count: 0, numeric: extractPlainNumber(v), items: new Set() });
+    const e = counts.get(v);
+    e.count++;
+    if (e.items.size < 4) e.items.add(r[cat.itemField] || '（未標示）');
+  });
+  return [...counts.values()].sort((a, b) => b.count - a.count);
+}
+
+/**
+ * Renders the "檢測極限 isn't a number" prompt into `containerEl`, or clears it when
+ * everything is clean. The person's choice lives in `state.limitFixMode` and is
+ * applied by applyLimitFixMode at confirm time.
+ */
+function renderLimitWarning(containerEl, rows, cat, onChange) {
+  if (!containerEl) return;
+  const bad = findBadLimitValues(rows, cat);
+  if (bad.length === 0) { containerEl.innerHTML = ''; state.limitFixMode = 'blank'; return; }
+  if (!state.limitFixMode) state.limitFixMode = 'blank';
+  const total = bad.reduce((n, b) => n + b.count, 0);
+  const anyNumeric = bad.some(b => b.numeric !== '');
+  const opt = (val, label, hint) => `
+    <label class="limit-fix-option">
+      <input type="radio" name="limitFixMode" value="${val}" ${state.limitFixMode === val ? 'checked' : ''}>
+      <span><b>${label}</b><br><span class="hint">${hint}</span></span>
+    </label>`;
+  containerEl.innerHTML = `
+    <div class="warning warning-strong">
+      ⚠️ <b>「檢測極限」欄位只能填數值</b>，但這批資料裡有 ${total} 筆不是純數值：
+      <ul style="margin:6px 0 8px 0">
+        ${bad.slice(0, 8).map(b => `<li><code>${escapeHtml(b.value)}</code> — ${b.count} 筆`
+          + `（${escapeHtml([...b.items].join('、'))}${b.items.size >= 4 ? '…' : ''}）`
+          + `${b.numeric !== '' ? `　→ 只取數字會變成 <code>${escapeHtml(b.numeric)}</code>` : '　→ 裡面沒有數字'}</li>`).join('')}
+        ${bad.length > 8 ? `<li class="hint">（另有 ${bad.length - 8} 種其他值未列出）</li>` : ''}
+      </ul>
+      請選擇要怎麼處理，再按下方的確認匯入：
+      <div class="limit-fix-options">
+        ${opt('blank', '清成空白，不匯入這個值（建議）', '其他欄位照常匯入，只有「檢測極限」留白。申報時空白是允許的，填錯字元則會被退件。')}
+        ${anyNumeric ? opt('number', '只保留數字部分', '例如「&lt;0.001」會變成「0.001」。適合報告只是多寫了符號或單位的情況。') : ''}
+        ${opt('keep', '照原樣匯入', '原封不動帶進表格。您可以之後在表格裡自行修改，但送件前請確認已改成純數值。')}
+      </div>
+    </div>`;
+  containerEl.querySelectorAll('input[name="limitFixMode"]').forEach(rb => {
+    rb.addEventListener('change', () => {
+      if (rb.checked) state.limitFixMode = rb.value;
+      if (onChange) onChange();
+    });
+  });
+}
+
+/** Applies the person's choice to the rows about to be committed. */
+function applyLimitFixMode(rows, cat) {
+  if (!cat.fields.some(f => f.key === LIMIT_FIELD)) return;
+  const mode = state.limitFixMode || 'blank';
+  if (mode === 'keep') return;
+  rows.forEach(r => {
+    const v = String(r[LIMIT_FIELD] ?? '').trim();
+    if (v === '' || isPlainNumber(v)) return;
+    r[LIMIT_FIELD] = mode === 'number' ? extractPlainNumber(v) : '';
+  });
+}
+
+/**
+ * Last-chance guard before a file leaves the app. A non-numeric 檢測極限 is rejected
+ * by the receiving system, and by this point it can only have got there by hand or by
+ * an explicit "照原樣匯入" — so ask rather than silently exporting it.
+ * Returns true if the export should go ahead.
+ */
+function confirmLimitBeforeExport(rows, cat) {
+  const bad = findBadLimitValues(rows, cat);
+  if (bad.length === 0) return true;
+  const total = bad.reduce((n, b) => n + b.count, 0);
+  const list = bad.slice(0, 6).map(b => `　・${b.value}（${b.count} 筆）`).join('\n');
+  return confirm(
+    `「${cat.label}」有 ${total} 筆資料的「檢測極限」不是純數值：\n${list}`
+    + `${bad.length > 6 ? `\n　…另有 ${bad.length - 6} 種` : ''}\n\n`
+    + `這個欄位只能填數值，含有「<」「>」等字元可能導致上傳被退件。\n`
+    + `（在表格中這些格子會用紅框標示，可用欄位篩選 ▾ 快速找到）\n\n`
+    + `按「確定」仍要照原樣匯出，按「取消」回去修正。`
+  );
 }
 
 // ---------- item-selection checklist (shared by smart and generic import) ----------
@@ -2528,7 +2824,12 @@ function renderStatChecklist(containerEl, rows, onChange) {
       if (cb.checked) state.statSelection.add(cb.value); else state.statSelection.delete(cb.value);
       if (state.statSelection.size === 0) { cb.checked = true; state.statSelection.add(cb.value); return; }
       state.itemSelection = null;      // the item list changes with the statistic
-      state.excludedRowIndices = new Set();
+      // Deliberately NOT resetting state.excludedRowIndices. _rowUid indexes
+      // result.rows and stays valid across statistic changes, and rows belonging to a
+      // de-selected statistic are already filtered out by filterRowsByStat. Clearing
+      // it silently re-included the rows the app had auto-excluded for having no
+      // sampling date — the guard against a workbook's leftover older sheets — and
+      // threw away any row the person had unticked by hand.
       if (onChange) onChange();
     });
   });
@@ -2559,7 +2860,7 @@ function filterRowsBySelection(rows, itemField) {
  * Shows whatever the item checklist currently leaves in (so it doesn't duplicate
  * rows already excluded that way), collapsed by default since it can be long.
  */
-function renderRowDetailTable(containerEl, rows, cat) {
+function renderRowDetailTable(containerEl, rows, cat, onChange) {
   if (!state.excludedRowIndices) state.excludedRowIndices = new Set();
   if (!state.rowDetailColumnFilters) state.rowDetailColumnFilters = {}; // { loc: Set, item: Set }
   if (rows.length === 0) { containerEl.innerHTML = ''; return; }
@@ -2616,11 +2917,17 @@ function renderRowDetailTable(containerEl, rows, cat) {
     const visible = getVisibleRowChecks();
     checkAll.checked = visible.length > 0 && visible.every(cb => cb.checked);
   };
+  // The caller passes a callback that refreshes the confirm button, the summary line
+  // and the per-site counts. It used to be declared away (the function took only
+  // three parameters), so unticking rows here changed what would be imported while
+  // every number on screen kept claiming the original count — the wrong number in the
+  // unsafe direction, shown at the exact moment the person checks their exclusions.
+  const notifyChanged = () => { syncCheckAllState(); if (onChange) onChange(); };
   getRowChecks().forEach(cb => {
     cb.addEventListener('change', () => {
       const uid = Number(cb.dataset.rowUid);
       if (cb.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
-      syncCheckAllState();
+      notifyChanged();
     });
   });
   // "Select all" only ever affects rows currently visible under the search/column
@@ -2633,14 +2940,15 @@ function renderRowDetailTable(containerEl, rows, cat) {
       const uid = Number(cb.dataset.rowUid);
       if (checkAll.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
     });
+    notifyChanged();
   });
   containerEl.querySelector('#rowDetailSelectAllVisible').addEventListener('click', () => {
     getVisibleRowChecks().forEach(cb => { cb.checked = true; state.excludedRowIndices.delete(Number(cb.dataset.rowUid)); });
-    syncCheckAllState();
+    notifyChanged();
   });
   containerEl.querySelector('#rowDetailClearAllVisible').addEventListener('click', () => {
     getVisibleRowChecks().forEach(cb => { cb.checked = false; state.excludedRowIndices.add(Number(cb.dataset.rowUid)); });
-    syncCheckAllState();
+    notifyChanged();
   });
 
   // Combines the free-text search with any active column filters (地點/測項) — a
@@ -2851,6 +3159,13 @@ function processNextBatchItem() {
   const next = state.batchQueue[0];
   const doneCount = state.batchQueueTotal - state.batchQueue.length;
   state.importCatKey = next.catKey;
+  // Each queued category is its own import. Without clearing these, category 2
+  // inherited category 1's 期別 label — a Q3 地質 report filed as Q2, which then
+  // vanished from a Q3 export — and category 1's 地點/測項 column filter, which left
+  // the detail list rendering empty.
+  state.importPeriod = '';
+  state.limitFixMode = null;
+  state.rowDetailColumnFilters = {};
   state.importMode = 'smart';
   state.smartResult = next.result;
   state.currentImportSourceLabel = next.result.sourceFiles ? [...next.result.sourceFiles].join('、') : '批次匯入';
@@ -2879,6 +3194,7 @@ function openImportModal(catKey) {
   state.excludedRowIndices = null;
   state.rowDetailColumnFilters = {};
   state.importPeriod = '';
+  state.limitFixMode = null; // "what to do with a non-numeric 檢測極限" — asked per import
   document.getElementById('importModalTitle').textContent = `匯入${CATEGORIES[catKey].label}監測資料`;
   // Per-category note about what this category's import can and can't do — set here
   // rather than hard-coded in the HTML, since the answer differs by category.
@@ -3114,6 +3430,14 @@ function renderMappingStep() {
   document.getElementById('btnImportConfirm').classList.remove('hidden');
   document.getElementById('btnImportConfirm').textContent = '確認匯入';
 
+  // Keeps the confirm button's count honest as items/rows are ticked and unticked,
+  // the same way the report-preview screen does.
+  let lastMappedRows = [];
+  const updateGenericCount = () => {
+    const n = filterRowsBySelection(lastMappedRows, cat.itemField).length;
+    document.getElementById('btnImportConfirm').textContent = `確認匯入 ${n} 筆資料`;
+  };
+
   const refreshGenericItemChecklist = () => {
     state.itemSelection = null; // re-seed from scratch when the mapped column changes
     const itemSel = tbody.querySelector(`select[data-target-field="${cat.itemField}"]`);
@@ -3132,7 +3456,11 @@ function renderMappingStep() {
     const itemFilteredRows = state.itemSelection
       ? mappedRows.filter(r => state.itemSelection.has((r[cat.itemField] || '').trim() || '（未標示）'))
       : mappedRows;
-    renderRowDetailTable(document.getElementById('genericImportRowDetailWrap'), itemFilteredRows, cat);
+    lastMappedRows = mappedRows;
+    renderRowDetailTable(document.getElementById('genericImportRowDetailWrap'), itemFilteredRows, cat, updateGenericCount);
+    updateGenericCount();
+    renderLimitWarning(document.getElementById('genericImportLimitWarning'),
+      filterRowsBySelection(mappedRows, cat.itemField), cat);
 
     // Same method-diff notice as the smart-parse path: when the file explicitly
     // supplies a method that differs from what's remembered for that item, trust
@@ -3270,6 +3598,10 @@ function renderSmartImportPreview() {
   };
   const updateCountsAndRowDetail = () => {
     updateCounts();
+    // Only warn about rows that are actually going to be imported — an offending
+    // 檢測極限 sitting on a test item the person has unticked is not their problem.
+    renderLimitWarning(document.getElementById('smartImportLimitWarning'),
+      filterRowsBySelection(result.rows, cat.itemField), cat);
     // The row-detail table itself is what excludedRowIndices comes from — show
     // rows filtered only by statistic and item type (not by row exclusion),
     // otherwise a row the person unchecked would vanish from the list and they
@@ -3616,7 +3948,7 @@ function renderSmartImportPreview() {
                   const memNote = memParts.length ? `（已記憶：${memParts.join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
                   return `<label style="display:block">
                     <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-identity-key="${escapeAttr(identityKey)}" ${itemChecked ? 'checked' : ''}>
-                    ${escapeHtml(displayName)} ${countNote} <span class="hint">${memNote}</span>
+                    ${escapeHtml(displayName)} ${countNote} <span class="hint">${escapeHtml(memNote)}</span>
                   </label>`;
                 }).join('')}
               </div>
@@ -3820,19 +4152,35 @@ function learnSiteItemHistory(projectId, catKey, cat, rows) {
 function analyzeImportAgainstExisting(existingRows, candidateRows, cat) {
   const locField = cat.locationField;
   const itemField = cat.itemField;
-  const keyOf = (r) => [r['日期(起)'], r['時間(起)'], r[locField], r[itemField]].join('\u0001');
-  const identityKeys = new Set(['日期(起)', '時間(起)', locField, itemField]);
+  // The identity of a row must include 監測時段 wherever the category has one.
+  // Without it, noise's 日間/晚間/夜間 readings were indistinguishable: the parser
+  // gives all three the same date, the same 時間(起) ("00:00:00" for a 24-hour
+  // report), the same location and the same 音源發聲特性. Re-importing a file then
+  // matched all three to the SAME existing row and wrote them into that one slot in
+  // turn, so the daytime reading was silently replaced by the night one — different
+  // statutory limits, wrong number filed, and the only feedback was "更新 N 筆".
+  const keyOf = (r) => [r['日期(起)'], r['時間(起)'], r[locField], itemIdentityKey(r, cat)].join('\u0001');
+  const identityKeys = new Set(['日期(起)', '時間(起)', locField, itemField,
+    ...(hasTimeSegmentField(cat) ? ['監測時段'] : [])]);
 
+  // A queue per key, not a single index: when a site legitimately has two rows with
+  // the same identity (平日 and 假日 sampled on one date), each candidate consumes a
+  // different existing row instead of both piling onto the first.
   const existingByKey = new Map();
-  existingRows.forEach((r, idx) => { if (!existingByKey.has(keyOf(r))) existingByKey.set(keyOf(r), idx); });
+  existingRows.forEach((r, idx) => {
+    const k = keyOf(r);
+    if (!existingByKey.has(k)) existingByKey.set(k, []);
+    existingByKey.get(k).push(idx);
+  });
 
   const brandNew = [];
   const conflicts = [];
 
   candidateRows.forEach(candidate => {
     const key = keyOf(candidate);
-    const existingIdx = existingByKey.get(key);
-    if (existingIdx === undefined) { brandNew.push(candidate); return; }
+    const bucket = existingByKey.get(key);
+    if (!bucket || bucket.length === 0) { brandNew.push(candidate); return; }
+    const existingIdx = bucket.shift();
     const existingRow = existingRows[existingIdx];
     const diffFields = [];
     cat.fields.forEach(f => {
@@ -3953,6 +4301,16 @@ function buildSuggestedRows(project, catKey, cat, result) {
       // correct the identity fields to the specific missing item being added.
       const template = candidateRows.find(r => !historicalCategory || r['檢測類別'] === historicalCategory) || candidateRows[0];
       newRow = { ...template };
+      // The template is ANOTHER item's row at the same site — good for shared,
+      // site-level fields (coordinates, 管制標準), wrong for anything item-specific.
+      // Overlay this item's own remembered snapshot so it doesn't inherit, say,
+      // 水溫's NIEA W217 and unit 4. The preview literally promises "檢測方法／單位…
+      // 會依過去記錄先幫您填好"; before this it showed one thing and wrote another.
+      Object.entries(snapshot || {}).forEach(([k, v]) => { if (v) newRow[k] = v; });
+      // If history had no method/unit for this item, blank the template's so the
+      // item-memory fallback below can actually fire instead of being shadowed.
+      if (cat.methodField && !(snapshot || {})[cat.methodField]) newRow[cat.methodField] = '';
+      if (cat.unitField && !(snapshot || {})[cat.unitField]) newRow[cat.unitField] = '';
     } else {
       // Entirely-absent location (suggestion.entirelyAbsent): this quarter's report
       // has no rows for this site at all, so there's no current data to base shared
@@ -3970,7 +4328,11 @@ function buildSuggestedRows(project, catKey, cat, result) {
     // Only date/time/value are left blank for manual entry — everything else
     // (comparison relation, detection limit, method, unit, coordinates, remarks...)
     // carries over as-is, per the person's explicit request.
-    ['日期(起)', '時間(起)', '日期(迄)', '時間(迄)', '檢測數值', '監測數值'].forEach(k => { if (k in newRow) newRow[k] = ''; });
+    // 比較關係 and 檢測極限 describe the TEMPLATE row's measurement, not this one —
+    // carrying them over would tag a blank row as ND, or give it another item's
+    // detection limit.
+    ['日期(起)', '時間(起)', '日期(迄)', '時間(迄)', '檢測數值', '監測數值', '比較關係', '檢測極限']
+      .forEach(k => { if (k in newRow) newRow[k] = ''; });
     const mem = itemMemory[itemName];
     if (mem) {
       if (cat.methodField && !newRow[cat.methodField] && mem.method) newRow[cat.methodField] = mem.method;
@@ -4088,11 +4450,19 @@ function confirmSmartImport() {
       Object.assign(result.rows[idx], overrides);
     });
   });
-  DataStore.saveSiteAliases(project.id, catKey, savedAliases);
+  try {
+    DataStore.saveSiteAliases(project.id, catKey, savedAliases);
+  } catch (err) {
+    console.error(err);
+    alert('瀏覽器的儲存空間已滿，這批資料沒有存進去。\n\n請先用右上角「匯出備份」把現有資料存成檔案，再刪除不需要的計畫，然後重新匯入。');
+    closeImportModal();
+    return;
+  }
 
   let selectedRows = filterRowsBySelection(result.rows, cat.itemField);
   const suggestedRows = buildSuggestedRows(project, catKey, cat, result);
   selectedRows = selectedRows.concat(suggestedRows);
+  applyLimitFixMode(selectedRows, cat); // 檢測極限 must be a bare number — see renderLimitWarning
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
 
   // Tag rows with a batch id PER SOURCE FILE, not one shared id for the whole confirm
@@ -4115,7 +4485,7 @@ function confirmSmartImport() {
       if (!useNewSet || useNewSet.has(i)) updates.push({ existingIndex: c.existingIndex, newData: c.candidateRow });
     });
     if (brandNew.length === 0 && updates.length === 0) { alert('這批資料跟現有資料完全相同，或您選擇全部保留原有資料，沒有任何變更。'); return; }
-    finalizeImportCommit(project, catKey, cat, brandNew, updates, assignBatchId, 'smart');
+    runImportCommit(() => finalizeImportCommit(project, catKey, cat, brandNew, updates, assignBatchId, 'smart'));
   };
 
   if (conflicts.length === 0) {
@@ -4123,6 +4493,22 @@ function confirmSmartImport() {
     proceed(null);
   } else {
     openConflictResolutionModal(conflicts, ({ useNew }) => proceed(useNew));
+  }
+}
+
+/** Wraps a commit so a full localStorage reports itself instead of throwing into the
+ *  void. Without this, a QuotaExceededError escaped mid-save: nothing was written,
+ *  the modal just sat there, and the person walked away believing the import worked. */
+function runImportCommit(fn) {
+  try {
+    fn();
+  } catch (err) {
+    console.error(err);
+    const quota = err && (err.name === 'QuotaExceededError' || /quota/i.test(err.message || ''));
+    alert(quota
+      ? '瀏覽器的儲存空間已滿，這批資料沒有存進去。\n\n請先用右上角「匯出備份」把現有資料存成檔案，再刪除不需要的計畫，然後重新匯入。'
+      : '匯入時發生錯誤，這批資料沒有存進去：' + (err && err.message ? err.message : err));
+    closeImportModal();
   }
 }
 
@@ -4177,6 +4563,7 @@ function confirmImport() {
     }
   });
   const selectedRows = filterRowsBySelection(newRows, cat.itemField);
+  applyLimitFixMode(selectedRows, cat); // 檢測極限 must be a bare number — see renderLimitWarning
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
 
   const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
@@ -4191,7 +4578,7 @@ function confirmImport() {
       if (!useNewSet || useNewSet.has(i)) updates.push({ existingIndex: c.existingIndex, newData: c.candidateRow });
     });
     if (brandNew.length === 0 && updates.length === 0) { alert('這批資料跟現有資料完全相同，或您選擇全部保留原有資料，沒有任何變更。'); return; }
-    finalizeImportCommit(project, catKey, cat, brandNew, updates, assignBatchId, 'generic');
+    runImportCommit(() => finalizeImportCommit(project, catKey, cat, brandNew, updates, assignBatchId, 'generic'));
   };
 
   if (conflicts.length === 0) {
@@ -4262,11 +4649,16 @@ async function backupImport(file) {
 }
 
 // ---------- init ----------
+/**
+ * Wiring first, rendering last.
+ *
+ * init() used to render before attaching a single listener and had no try/catch, so
+ * any exception thrown while drawing (a malformed value in localStorage was enough)
+ * aborted it and left a page that LOOKS normal but where every button is inert —
+ * including 匯出備份, so the data couldn't even be rescued. Rendering last, inside a
+ * guard, means the worst case is a blank content area on a fully working page.
+ */
 function init() {
-  renderVersionBadge();
-  renderProjectList();
-  renderContent();
-
   document.getElementById('versionBadge').addEventListener('click', openChangelogModal);
   document.getElementById('btnChangelogClose').addEventListener('click', () => document.getElementById('changelogModal').classList.add('hidden'));
 
@@ -4337,7 +4729,11 @@ function init() {
     document.getElementById('customItemUnit').value = '';
     document.getElementById('customItemName').focus();
   });
-  document.getElementById('btnCommonItemsCancel').addEventListener('click', () => document.getElementById('commonItemsModal').classList.add('hidden'));
+  document.getElementById('btnCommonItemsCancel').addEventListener('click', () => {
+    document.getElementById('commonItemsModal').classList.add('hidden');
+    const popup = document.getElementById('colFilterPopup');
+    if (popup) popup.classList.add('hidden');
+  });
   document.getElementById('btnCommonItemsApply').addEventListener('click', () => {
     const project = getCurrentProject();
     const catKey = state.commonItemsCatKey;
@@ -4415,19 +4811,41 @@ function init() {
   // that the Cancel button itself is reliably visible, there's no longer a need for
   // this safety net there; closing the import modal requires the explicit Cancel
   // button (or finishing/cancelling a batch import via its own controls).
+  // #colFilterPopup is a single shared body-level dropdown. Closing a modal that had
+  // one open used to leave it floating over the data grid, covering controls, with no
+  // way to dismiss it — so every modal-close path hides it too.
+  const hideSharedPopup = () => {
+    const popup = document.getElementById('colFilterPopup');
+    if (popup) popup.classList.add('hidden');
+  };
   document.querySelectorAll('.modal-overlay').forEach(overlay => {
     if (overlay.id === 'importModal') return;
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.classList.add('hidden');
+      if (e.target === overlay) { overlay.classList.add('hidden'); hideSharedPopup(); }
     });
   });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
+    hideSharedPopup();
     document.querySelectorAll('.modal-overlay').forEach(overlay => {
       if (overlay.id === 'importModal') return;
       if (!overlay.classList.contains('hidden')) overlay.classList.add('hidden');
     });
   });
+
+  // Render LAST, and never let a drawing error take the listeners down with it.
+  try {
+    renderVersionBadge();
+    renderProjectList();
+    renderContent();
+  } catch (err) {
+    console.error('初始畫面繪製失敗', err);
+    const content = document.getElementById('content');
+    if (content) {
+      content.innerHTML = '<div class="empty-state"><p>⚠️ 讀取本機資料時發生問題，畫面無法完整顯示。</p>'
+        + '<p>其他功能仍可使用——建議先點右上角「匯出備份」保存目前資料。</p></div>';
+    }
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

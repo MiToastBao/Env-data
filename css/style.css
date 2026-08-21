@@ -273,6 +273,27 @@ table.data-grid td.col-actions { text-align: center; }
    layout whose values were guessed, or a category that can only take a completed
    template. Same box, louder. */
 .warning-strong { background: #fdecea; border-color: #e08b7f; border-width: 2px; line-height: 1.65; }
+/* .modal label sets flex-direction:column for the stacked form labels in the project
+   and link modals. These five are horizontal by nature — a checkbox beside its
+   caption, an inline 年/季 picker — and were being stacked by that broader rule,
+   which floated each checkbox above its own label text. */
+.period-picker-label, .item-check, .conflict-item-header label,
+.common-items-quantity label, .modal label.common-items-checked-only {
+  flex-direction: row; align-items: center;
+}
+/* The "檢測極限 isn't a number" choice, shown in the import preview. */
+.limit-fix-options { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.limit-fix-option {
+  display: flex; flex-direction: row; align-items: flex-start; gap: 9px;
+  background: #fff; border: 1px solid var(--border); border-radius: 6px;
+  padding: 9px 12px; cursor: pointer; font-size: 13px; line-height: 1.6;
+}
+.limit-fix-option:hover { border-color: var(--primary); }
+.limit-fix-option input { margin-top: 4px; flex-shrink: 0; }
+.limit-fix-option .hint { font-size: 12px; }
+/* A stored 檢測極限 that still isn't a bare number — flagged in the grid so it can't
+   be filed by accident. */
+input.cell-invalid { border: 2px solid var(--danger) !important; background: #fdecea; }
 .shortfall-note { color: var(--text-muted); font-size: 12px; display: block; margin: 2px 0 6px 22px; line-height: 1.6; }
 .notice-info { background: #e8f0fe; border: 1px solid #a8c7fa; padding: 9px 12px; border-radius: 6px; font-size: 12.5px; margin: 0 0 10px 0; line-height: 1.65; }
 .period-picker {
