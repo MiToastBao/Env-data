@@ -79,6 +79,12 @@ function pushUndoSnapshot(projectId, catKey, description) {
   if (state.undoStack[key].length > UNDO_STACK_LIMIT) state.undoStack[key].shift();
   state.redoStack[key] = [];
 }
+/** 丟掉最上面那個復原點——動作最後發現「其實什麼都沒改」時用，
+ *  免得復原清單裡多一個按了沒反應的項目。 */
+function popUndoSnapshot(projectId, catKey) {
+  const stack = state.undoStack[undoKey(projectId, catKey)];
+  if (stack && stack.length > 0) stack.pop();
+}
 function peekUndo(projectId, catKey) {
   const stack = state.undoStack[undoKey(projectId, catKey)];
   return stack && stack.length > 0 ? stack[stack.length - 1] : null;
@@ -464,8 +470,151 @@ function selectProject(id) {
   if (!confirmProjectSwitchIfImporting(id)) return;
   state.currentProjectId = id;
   state.currentTab = 'basic';
+  migrateNightVibrationItem(id);
   renderProjectList();
   renderContent();
+}
+
+// ── v4.30 一次性處理：夜間振動的 Lvd(10) → Lvn(10) ──────────────────────────
+//
+// 分成兩半，理由不同：
+//
+//  1. **內部帳本（跨季測站記憶、測項方法記憶）一律自動轉換，不問。**
+//     那是使用者看不到的東西，而且不轉換一定會出事：舊記憶裡的
+//     「Lvd(10)::夜間」在本版匯入時會被當成「這個測項不見了」，
+//     而缺少測項的建議是預設打勾的——使用者不取消就會多出一筆空白列。
+//
+//  2. **看得見的資料列要先問過才改。** 那是使用者已經整理好、甚至已經申報出去的
+//     內容，程式不該自己動手。每個計畫只問一次，回答「不要」就記住不再問。
+const VIB_MIGRATION_FLAG_KEY = 'envapp_vibnight_migrated_v1';
+
+function vibMigrationDone(projectId) {
+  try {
+    const done = JSON.parse(localStorage.getItem(VIB_MIGRATION_FLAG_KEY)) || {};
+    return !!done[projectId];
+  } catch (e) { return false; }
+}
+function markVibMigrationDone(projectId) {
+  try {
+    const done = JSON.parse(localStorage.getItem(VIB_MIGRATION_FLAG_KEY)) || {};
+    done[projectId] = true;
+    localStorage.setItem(VIB_MIGRATION_FLAG_KEY, JSON.stringify(done));
+  } catch (e) { /* 記不住就下次再問一次，不影響資料 */ }
+}
+
+/** 內部帳本的轉換。沒有畫面、不需要同意，而且每次開啟計畫跑都是安全的（冪等）。 */
+function migrateVibBookkeeping(projectId) {
+  const cat = CATEGORIES.noise;
+  // 跨季測站記憶：識別碼與記下來的測項名稱一起改。
+  const history = DataStore.getSiteItemHistory(projectId, 'noise');
+  let historyChanged = false;
+  Object.keys(history).forEach(loc => {
+    const entries = history[loc];
+    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return;
+    Object.keys(entries).forEach(key => {
+      const entry = entries[key];
+      if (!entry || typeof entry !== 'object') return;
+      const seg = entry.timeSegment || '';
+      const fixedName = canonicalVibItemName(entry.itemName, seg);
+      /*
+       * 只處理「夜間的 Lvd(10)」這一種，其餘一律原封不動。
+       *
+       * 第一版是先組出 `${fixedName}::${seg}` 再跟原本的 key 比對，結果把所有
+       * 「key 的長相剛好不是這個格式」的舊資料也一起改寫、刪除——包含更早期
+       * 沒有時段的記憶格式，以及跟本次修正毫無關係的測項。函式註解寫著只動一種
+       * 組合，就該只動一種。
+       */
+      if (fixedName === entry.itemName) return;
+      const fixedKey = `${fixedName}::${seg}`;
+      const existing = entries[fixedKey];
+      const merged = { ...entry, itemName: fixedName };
+      if (existing) {
+        /*
+         * 兩個識別碼同時存在（使用者在舊版就手動改過一部分）。筆數取兩者的較大值、
+         * 日期取聯集，**不相加**——相加會把同一次量測算成兩筆，下次匯入就會出現
+         * 「缺 N 筆」的假警報。少算不會有人受害（頂多不提醒），多算會。
+         */
+        merged.count = Math.max(existing.count || 1, entry.count || 1);
+        merged.dates = [...new Set([...(existing.dates || []), ...(entry.dates || [])])];
+        merged.snapshot = entry.snapshot || existing.snapshot;
+      }
+      entries[fixedKey] = merged;
+      delete entries[key];
+      historyChanged = true;
+    });
+  });
+  if (historyChanged) DataStore.saveSiteItemHistory(projectId, 'noise', history);
+
+  // 測項方法記憶是用純測項名稱當 key（沒有時段），所以不能改名，
+  // 而是把 Lvd(10) 記住的方法與單位「複製」一份給 Lvn(10)——兩者本來就同方法同單位。
+  const memory = DataStore.getItemMemory(projectId, 'noise');
+  if (memory[VIB_LV10_DAY] && !memory[VIB_LV10_NIGHT]) {
+    DataStore.updateItemMemory(projectId, 'noise', { [VIB_LV10_NIGHT]: { ...memory[VIB_LV10_DAY] } });
+  }
+  return cat;
+}
+
+/** 找出所有「夜間 ＋ 振動 ＋ Lvd(10)」的資料列——依定義那就是錯的組合。 */
+function findNightVibrationRowsToFix(projectId) {
+  const cat = CATEGORIES.noise;
+  const rows = DataStore.getData(projectId, 'noise');
+  const hits = [];
+  rows.forEach((r, idx) => {
+    if (r['檢測類別'] === '振動' && r['監測時段'] === '夜間' && r[cat.itemField] === VIB_LV10_DAY) {
+      hits.push({ idx, location: r[cat.locationField] || '（未填地點）', date: r['日期(起)'] || '' });
+    }
+  });
+  return hits;
+}
+
+function migrateNightVibrationItem(projectId) {
+  if (!projectId) return;
+  migrateVibBookkeeping(projectId); // 無論如何都要做，而且冪等
+  if (vibMigrationDone(projectId)) return;
+  const hits = findNightVibrationRowsToFix(projectId);
+  /*
+   * 沒有要改的就直接離開，**不要記旗標**。
+   *
+   * 旗標的意思是「這個人說過不要」，不是「檢查過了」。第一版連「沒東西可改」
+   * 也一併記起來，於是日後把上一季用舊版產生的完成版申報檔匯回來——那裡面帶著
+   * 夜間的 Lvd(10)——就再也不會有人提醒他了。
+   */
+  if (hits.length === 0) return;
+
+  const locs = [...new Set(hits.map(h => h.location))];
+  const locText = locs.slice(0, 6).join('、') + (locs.length > 6 ? ` 等 ${locs.length} 個測站` : '');
+  const ok = confirm(
+    `【夜間振動的音源發聲特性】
+
+`
+    + `官方的音源發聲特性，環境振動分成日間 Lvd(10) 與夜間 Lvn(10) 兩種`
+    + `（d 是 day、n 是 night）。舊版程式不分日夜，一律填 Lvd(10)，夜間那一筆是錯的。
+
+`
+    + `這個計畫裡有 ${hits.length} 筆「夜間 + 振動」的資料寫著 Lvd(10)：
+`
+    + `　${locText}
+
+`
+    + `要幫您改成 Lvn(10) 嗎？
+`
+    + `・只改「音源發聲特性」這一欄，日期、數值、地點等其他欄位一律不動。
+`
+    + `・日間的 Lvd(10)、營建振動的 Lveq／Lvmax 都不會被動到。
+`
+    + `・改之前建議先「匯出備份」；本程式沒有復原按鈕。
+
+`
+    + `按「取消」就維持原樣，之後不再詢問（您仍可在表格上自行修改）。`
+  );
+  if (!ok) { markVibMigrationDone(projectId); return; } // 只記住「不要」
+
+  const cat = CATEGORIES.noise;
+  const rows = DataStore.getData(projectId, 'noise');
+  hits.forEach(h => { rows[h.idx][cat.itemField] = VIB_LV10_NIGHT; });
+  DataStore.saveData(projectId, 'noise', rows);
+  learnSiteItemHistory(projectId, 'noise', cat, rows);
+  alert(`已將 ${hits.length} 筆夜間振動的音源發聲特性改為 ${VIB_LV10_NIGHT}。`);
 }
 
 // ---------- content area ----------
@@ -714,6 +863,7 @@ function renderCategoryTab(project, catKey) {
     });
     if (freshRows.length === 0) { alert('目前篩選範圍內沒有資料可匯出。'); return; }
     if (!confirmLimitBeforeExport(freshRows, cat)) return;
+    if (!confirmRequiredBeforeExport(freshRows, cat)) return;
     ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey, freshRows);
     showToast('📥 已匯出。<strong>若之後修改這份檔案</strong>（手動補值、新增測項等），完成後可到本頁上方點原本的「📥 匯入資料」按鈕、選擇這份修改過的檔案<strong>重新匯入即可</strong>——系統會自動比對，內容相同的資料會忽略，內容不同的會列出讓您確認要不要用新版本取代，不會憑空覆蓋或造成重複。', 9000);
   });
@@ -1130,8 +1280,14 @@ function displayFieldOrder(cat) {
   ];
 }
 function rowHtml(cat, row, idx) {
-  const pinnedCells = displayFieldOrder(cat).slice(0, 2).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
-  const restCells = displayFieldOrder(cat).slice(2).map(f => `<td>${fieldControlHTML(f, row[f.key], `data-row="${idx}"`)}</td>`).join('');
+  /*
+   * 這一列少了哪些必填欄位，一次算好再傳給每一格——不要每一格各算一次，
+   * 一列二十幾欄乘上幾百列會很慢。
+   */
+  const missingHere = new Map(missingRequiredFields(row, cat).map(m => [m.key, m.why]));
+  const ctl = (f) => fieldControlHTML(f, row[f.key], `data-row="${idx}"`, missingHere.get(f.key));
+  const pinnedCells = displayFieldOrder(cat).slice(0, 2).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${ctl(f)}</td>`).join('');
+  const restCells = displayFieldOrder(cat).slice(2).map(f => `<td>${ctl(f)}</td>`).join('');
   // 操作 (delete button) and # (row number) sit right after 地點/測項 (the pinned
   // columns), before the rest of the normally-scrolling fields — reducing the
   // pinned/sticky column chain from 5 down to 3 (勾選, 地點, 測項). Fewer adjacent
@@ -1144,30 +1300,63 @@ function rowHtml(cat, row, idx) {
   return `<tr data-row="${idx}"><td class="col-check">${checkboxHTML(` class="row-check" data-row="${idx}"`)}</td>${pinnedCells}<td class="col-actions"><button class="row-del-btn" data-row="${idx}" title="刪除此列">🗑</button></td><td class="col-num">${idx + 1}</td>${restCells}</tr>`;
 }
 
-function fieldControlHTML(field, value, rowAttr) {
+/**
+ * @param missingWhy 這一格「該填而沒填」時的原因文字；沒有就是 undefined。
+ *   有值時整格畫紅框並附說明，讓使用者看得到要補哪裡——以前完全沒有提示，
+ *   而「補回缺少測項」產生的空白列是預設打勾的，很容易就這樣送出去。
+ */
+function fieldControlHTML(field, value, rowAttr, missingWhy) {
   value = value ?? '';
   const base = `${rowAttr} data-field="${field.key}"`;
+  const missTip = missingWhy
+    ? ` title="${escapeAttr(`「${field.label}」是${missingWhy}，目前是空的。`)}"`
+    : '';
+  const missCls = missingWhy ? ' cell-required-missing' : '';
   switch (field.type) {
     case 'select': {
+      /*
+       * 存進來的值有可能不在官方清單裡，而且是真的會發生：
+       *   ・使用者自己的 115Q2 噪音申報檔，頻率範圍寫「20 Hz 至 200Hz」
+       *     （官方是「20 Hz 至 200 Hz」，中間少一個空格）
+       *   ・別家公司填好交來的生態檔，特有性寫「特有／特亞／外來」
+       *     （官方只有「特有種」「特有亞種」）
+       *
+       * 舊寫法只把清單裡的值標 selected，於是這種值畫出來是**一片空白**——
+       * 看的人以為欄位沒填。更糟的是那個 <select> 的目前值真的就是空字串，
+       * 所以只要它收到一次 change（點開下拉再關掉就會），存起來的值就被清成空白，
+       * 而且 頻率範圍 是必填欄位。實測：存的是「20 Hz 至 200Hz」→ 畫面空白 →
+       * 碰一下 → 存的變成空白 → 匯出也是空白。整個過程沒有任何提示。
+       *
+       * 改成：清單外的值照樣列成一個選項並選起來（值不會消失），
+       * 同時用紅框標示、滑鼠移上去說明為什麼，讓人看得見要修。
+       */
+      const value_ = String(value ?? '');
+      const known = field.options.includes(value_);
       const opts = field.options.map(o => {
         const label = (field.optionLabels && field.optionLabels[o]) || o || '（未選擇）';
-        return `<option value="${escapeAttr(o)}" ${o === value ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+        return `<option value="${escapeAttr(o)}" ${o === value_ ? 'selected' : ''}>${escapeHtml(label)}</option>`;
       }).join('');
-      const titleAttr = field.help ? ` title="${escapeAttr(field.help)}"` : '';
-      return `<select ${base}${titleAttr}>${opts}</select>`;
+      const extra = known || value_ === ''
+        ? ''
+        : `<option value="${escapeAttr(value_)}" selected>${escapeHtml(value_)}（非標準值）</option>`;
+      const cls = extra || missCls ? ` class="${extra ? 'cell-invalid' : ''}${missCls}"` : '';
+      const tip = extra
+        ? ` title="「${escapeAttr(value_)}」不在官方允許的選項裡（${escapeAttr(field.options.filter(Boolean).join('、'))}），申報時可能被退件。請從清單中改選正確的值。"`
+        : (missTip || (field.help ? ` title="${escapeAttr(field.help)}"` : ''));
+      return `<select ${base}${cls}${tip}>${opts}${extra}</select>`;
     }
     case 'date':
       // Plain text rather than a native <input type=date>: native date pickers render
       // according to browser/OS locale and can't be forced to show "YYYY/MM/DD" —
       // typing "2026/5/12" or "2026-5-12" both work, normalized on blur.
-      return `<input type="text" ${base} value="${escapeAttr(toDateDisplayValue(value))}" class="date-input" placeholder="YYYY/MM/DD" inputmode="numeric" maxlength="10">`;
+      return `<input type="text" ${base}${missTip} value="${escapeAttr(toDateDisplayValue(value))}" class="date-input${missCls}" placeholder="YYYY/MM/DD" inputmode="numeric" maxlength="10">`;
     case 'time':
       // Plain text rather than a native <input type=time>: native time pickers on many
       // devices show a scroll-wheel that's fiddly to land on an exact second, and on
       // some mobile browsers don't reliably fire change events at all. Typing "1430",
       // "14:30", or "14:30:00" all work — normalized to HH:MM on blur (the official
       // template's own time format has no seconds either).
-      return `<input type="text" ${base} value="${escapeAttr(toTimeDisplayValue(value))}" class="time-input" placeholder="HH:MM" inputmode="numeric" maxlength="8">`;
+      return `<input type="text" ${base}${missTip} value="${escapeAttr(toTimeDisplayValue(value))}" class="time-input${missCls}" placeholder="HH:MM" inputmode="numeric" maxlength="8">`;
     case 'suggest': {
       const listId = `suggest-${field.key.replace(/[^a-zA-Z0-9]/g, '')}`;
       if (!document.getElementById(listId)) {
@@ -1176,19 +1365,20 @@ function fieldControlHTML(field, value, rowAttr) {
         dl.innerHTML = field.options.map(o => `<option value="${escapeAttr(o)}">`).join('');
         document.body.appendChild(dl);
       }
-      return `<input type="text" ${base} value="${escapeAttr(value)}" list="${listId}">`;
+      return `<input type="text" ${base}${missTip} value="${escapeAttr(value)}" list="${listId}"${missCls ? ` class="${missCls.trim()}"` : ''}>`;
     }
     case 'unitcode':
-      return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input" data-codetype="unit" title="${escapeAttr(lookupUnit(value))}" placeholder="代碼">`;
+      return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}" data-codetype="unit" title="${escapeAttr(missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupUnit(value))}" placeholder="代碼">`;
     case 'agencycode':
-      return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input" data-codetype="agency" title="${escapeAttr(lookupAgency(value))}" placeholder="代碼">`;
+      return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}" data-codetype="agency" title="${escapeAttr(missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupAgency(value))}" placeholder="代碼">`;
     default: {
-      // 檢測極限 may only ever hold a bare number. Flag anything else in the grid so
-      // a value that slipped in (typed by hand, or imported with "照原樣匯入") can't
-      // reach the filing unnoticed.
+      // 噪音（含振動）的「監測數值」固定顯示兩位小數（官方資料辭典的規定）。
+      // 這是補零不是改數字：39.2 顯示成 39.20。非數值（ND、未檢測…）原樣保留。
+      // 在這裡做而不是只在存檔時做，是為了讓 v4.29 以前存下來的舊資料一打開就對齊。
+      if (field.key === NOISE_VALUE_FIELD) value = formatNoiseValue(value);
       const bad = field.key === LIMIT_FIELD && String(value).trim() !== '' && !isPlainNumber(value);
-      const cls = bad ? ' class="cell-invalid"' : '';
-      const tip = bad ? ' title="「檢測極限」只能填數值。請改成純數字，或清空這一格。"' : '';
+      const cls = bad || missCls ? ` class="${bad ? 'cell-invalid' : ''}${missCls}"` : '';
+      const tip = bad ? ' title="「檢測極限」只能填數值。請改成純數字，或清空這一格。"' : missTip;
       return `<input type="text" ${base}${cls}${tip} value="${escapeAttr(value)}">`;
     }
   }
@@ -1229,6 +1419,17 @@ function wireGridEvents(project, catKey, cat) {
           }
         }
       }
+    }
+    /*
+     * 監測數值補成兩位小數。
+     *
+     * 位置很重要：要在 deriveComparisonRelation 之後，因為那一段可能會把值換掉
+     * （輸入「<40」會變成 比較關係="<" ＋ 監測數值="40"），先補零就會被它抵銷。
+     * 而且只在**失焦時**（learn=true）做——每一次按鍵都補的話，使用者才打了「3」
+     * 就被改成「3.00」，游標跳掉、也打不出 39.2。
+     */
+    if (learn && fieldKey === NOISE_VALUE_FIELD) {
+      rows[rowIdx][fieldKey] = formatNoiseValue(rows[rowIdx][fieldKey]);
     }
     DataStore.saveData(project.id, catKey, rows);
     // Keep the site-item history snapshot current with manual corrections too — not
@@ -1528,7 +1729,15 @@ function wireGridEvents(project, catKey, cat) {
     // flag). Do it once here, when the field is finished, so the remembered snapshot
     // reflects the completed value rather than every prefix of it.
     const edited = !valueUnchanged(t);
-    if (edited && !isDateTimeInput) commit(rowIdx, fieldKey, t.value, { learn: true });
+    if (edited && !isDateTimeInput) {
+      commit(rowIdx, fieldKey, t.value, { learn: true });
+      // 監測數值補零之後要把畫面上的輸入框也一起換過來，否則存的是 39.20、
+      // 格子裡卻還寫著 39.2，直到下一次整頁重繪才對得上。
+      if (fieldKey === NOISE_VALUE_FIELD) {
+        const shown = formatNoiseValue(t.value);
+        if (shown !== t.value) t.value = shown;
+      }
+    }
     // What this field held before the edit, in STORAGE form — the date/time sync
     // needs it to identify "the rows that were part of the same visit as this one",
     // which the source itself can no longer say once its own date has changed.
@@ -1742,10 +1951,32 @@ function wireFileStaging({ dropzoneId, fileInputId, listId, confirmBtnId, onConf
   return { reset: () => { staged = []; renderList(); } };
 }
 
+/**
+ * 手動新增一列時要帶上期別。
+ *
+ * _period 以前只有匯入那條路徑會寫（finalizeImportCommit），手動新增與
+ * 「常用測項新增」都沒有。後果：那些列變成「未標示期別」，而畫面正在篩某一季時
+ * 它們**當場就從表格上消失**，依季度匯出時也不會被帶進去——使用者補了一筆
+ * 漏掉的測項，結果那一筆從來沒有被送出去，而且沒有任何提示。
+ * 而且期別在畫面上沒有地方可以編輯，所以事後也救不回來。
+ *
+ * 規則：目前正在篩某一季就用那一季；沒有篩選（顯示全部）時，用這個類別
+ * 最後一次匯入的期別——那幾乎一定是使用者現在正在整理的那一季。
+ */
+function currentPeriodForNewRow(project, catKey) {
+  const filtered = state.periodFilter[catKey];
+  if (filtered && filtered !== '__none__') return filtered;
+  const batches = DataStore.getImportBatches(project.id, catKey);
+  for (let i = batches.length - 1; i >= 0; i--) if (batches[i].period) return batches[i].period;
+  const rows = DataStore.getData(project.id, catKey);
+  for (let i = rows.length - 1; i >= 0; i--) if (rows[i]._period) return rows[i]._period;
+  return '';
+}
+
 function addEmptyRow(project, catKey) {
   const cat = CATEGORIES[catKey];
   const rows = DataStore.getData(project.id, catKey);
-  const blank = {};
+  const blank = { _period: currentPeriodForNewRow(project, catKey) };
   cat.fields.forEach(f => { blank[f.key] = ''; });
   rows.push(blank);
   DataStore.saveData(project.id, catKey, rows);
@@ -2139,7 +2370,7 @@ function openMethodModal(project, catKey) {
   const memory = DataStore.getItemMemory(project.id, catKey);
   const itemField = cat.itemField;
 
-  const groups = {}; // itemName -> { indices, method, unitCode }
+  const groups = {}; // itemName -> { indices, method, unitCode, methodSet, unitSet }
   rows.forEach((row, idx) => {
     const item = (row[itemField] || '').trim() || '（未命名項目）';
     if (!groups[item]) {
@@ -2147,9 +2378,16 @@ function openMethodModal(project, catKey) {
         indices: [],
         method: row[cat.methodField] || (memory[item] && memory[item].method) || '',
         unitCode: cat.unitField ? (row[cat.unitField] || (memory[item] && memory[item].unitCode) || '') : null,
+        // 同一個測項目前實際存在幾種不同的方法／單位。跨季是合法的差異：
+        // 溶氧 115Q1 用 NIEA W455、115Q2 用 W422，兩個都對。這裡要讓使用者
+        // 看得到「按下去會把它們統一成一種」。
+        methodSet: new Set(),
+        unitSet: new Set(),
       };
     }
     groups[item].indices.push(idx);
+    if (row[cat.methodField]) groups[item].methodSet.add(row[cat.methodField]);
+    if (cat.unitField && row[cat.unitField]) groups[item].unitSet.add(row[cat.unitField]);
     if (!groups[item].method && row[cat.methodField]) groups[item].method = row[cat.methodField];
     if (cat.unitField && !groups[item].unitCode && row[cat.unitField]) groups[item].unitCode = row[cat.unitField];
   });
@@ -2164,12 +2402,19 @@ function openMethodModal(project, catKey) {
         <th>測項</th><th>檢測方法</th>${cat.unitField ? '<th>單位代碼</th>' : ''}<th>筆數</th>
       </tr></thead>
       <tbody id="methodItemsBody">
-        ${entries.map(([item, g]) => `<tr data-item="${escapeAttr(item)}">
-          <td>${escapeHtml(item)}${!g.method ? ' <span class="req" title="尚未有檢測方法">＊</span>' : ''}</td>
-          <td><input type="text" data-method-field="method" value="${escapeAttr(g.method)}" placeholder="例：NIEA W417"></td>
-          ${cat.unitField ? `<td><input type="text" data-method-field="unitCode" value="${escapeAttr(g.unitCode || '')}" class="code-input" data-codetype="unit" title="${escapeAttr(lookupUnit(g.unitCode))}" placeholder="代碼"></td>` : ''}
+        ${entries.map(([item, g]) => {
+          const mixMethod = g.methodSet.size > 1 ? [...g.methodSet].join('、') : '';
+          const mixUnit = g.unitSet.size > 1 ? [...g.unitSet].join('、') : '';
+          const warn = mixMethod || mixUnit
+            ? `<div class="hint" style="color:#b45309;margin-top:4px">⚠️ 目前這個測項有不只一種${mixMethod ? `檢測方法（${escapeHtml(mixMethod)}）` : ''}${mixMethod && mixUnit ? '、' : ''}${mixUnit ? `單位代碼（${escapeHtml(mixUnit)}）` : ''}。跨季本來就可能不同，按「儲存」會把它們全部改成同一種。</div>`
+            : '';
+          return `<tr data-item="${escapeAttr(item)}">
+          <td>${escapeHtml(item)}${!g.method ? ' <span class="req" title="尚未有檢測方法">＊</span>' : ''}${warn}</td>
+          <td><input type="text" data-method-field="method" value="${escapeAttr(g.method)}" data-seeded="${escapeAttr(g.method)}" placeholder="例：NIEA W417"></td>
+          ${cat.unitField ? `<td><input type="text" data-method-field="unitCode" value="${escapeAttr(g.unitCode || '')}" data-seeded="${escapeAttr(g.unitCode || '')}" class="code-input" data-codetype="unit" title="${escapeAttr(lookupUnit(g.unitCode))}" placeholder="代碼"></td>` : ''}
           <td>${g.indices.length}</td>
-        </tr>`).join('')}
+        </tr>`;
+        }).join('')}
       </tbody>
     </table>`;
     wrap.querySelectorAll('.code-input').forEach(inp => {
@@ -2202,13 +2447,27 @@ function saveMethodModal() {
   // can't recover from.
   pushUndoSnapshot(projectId, catKey, `套用檢測方法／單位代碼`);
 
+  /*
+   * ⚠️ 只寫「使用者真的改過」的欄位。
+   *
+   * 舊寫法是把畫面上每一格的值無條件套用到所有同名測項的資料列，而畫面上的值
+   * 是拿「第一筆遇到的」當種子。後果：打開這個視窗、什麼都沒改、按一下儲存，
+   * 就會把其他季度不同的檢測方法一起改成第一筆那個。實測：溶氧 115Q1 是
+   * NIEA W455、115Q2 是 NIEA W422，按下儲存之後兩季都變成 W455——
+   * 而 Q2 的申報就帶著實驗室從來沒用過的方法。
+   *
+   * data-seeded 存的是開窗當下填進去的值；和現在的值相同就代表沒動過，跳過。
+   */
   document.querySelectorAll('#methodItemsBody tr').forEach(tr => {
     const item = tr.dataset.item;
     const values = {};
     tr.querySelectorAll('[data-method-field]').forEach(el => {
       const targetField = el.dataset.methodField === 'method' ? cat.methodField : cat.unitField;
-      if (targetField) values[targetField] = el.value;
+      if (!targetField) return;
+      if (el.value === (el.dataset.seeded ?? '')) return; // 沒改過就不要動任何資料列
+      values[targetField] = el.value;
     });
+    if (Object.keys(values).length === 0) return;
     rows.forEach(row => {
       const rowItem = (row[itemField] || '').trim() || '（未命名項目）';
       if (rowItem === item) { Object.assign(row, values); touchedRows.push(row); }
@@ -2219,6 +2478,12 @@ function saveMethodModal() {
     if (Object.keys(memFields).length) memoryUpdates[item] = memFields;
   });
 
+  if (touchedRows.length === 0 && Object.keys(memoryUpdates).length === 0) {
+    popUndoSnapshot(projectId, catKey); // 什麼都沒改，不要留一個空的復原點
+    closeMethodModal();
+    alert('沒有任何欄位被修改，資料維持原樣。');
+    return;
+  }
   DataStore.saveData(projectId, catKey, rows);
   if (Object.keys(memoryUpdates).length) DataStore.updateItemMemory(projectId, catKey, memoryUpdates);
   // Also refresh the FULL per-location snapshot memory, not just the flat item-name
@@ -2531,6 +2796,7 @@ function confirmExportSelect() {
   });
   for (const job of jobs) {
     if (!confirmLimitBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
+    if (!confirmRequiredBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
   }
   let exportedCount = 0;
   jobs.forEach(({ catKey, rows }) => {
@@ -2681,6 +2947,49 @@ function applyLimitFixMode(rows, cat) {
  * an explicit "照原樣匯入" — so ask rather than silently exporting it.
  * Returns true if the export should go ahead.
  */
+/**
+ * 匯出前檢查必填欄位（依 115 年版官方資料辭典，見 schema.js 的 missingRequiredFields）。
+ *
+ * 為什麼一定要有這一關：
+ *  ・「補回缺少的測項」產生的空白列，日期(起)、數值、單位全是空的，而且**預設打勾**。
+ *    確認之後那些列就躺在表格裡，匯出時原封不動送出去。
+ *  ・地質報告本身沒寫檢測類別，程式不猜（那是對的），但它是必填欄位。
+ *  ・從報告讀不到座標的類別（水質、地質常見）也是必填。
+ * 這些以前完全沒有人擋，只有「檢測極限不是純數值」有檢查。
+ *
+ * ⚠️ 只提醒，不阻擋。114 年以前的舊格式有些欄位當時不是必填，使用者自己最清楚
+ * 這一份是不是真的需要補；所以列出來讓他決定「回去修正」還是「照樣匯出」。
+ */
+function confirmRequiredBeforeExport(rows, cat) {
+  const counts = new Map(); // 欄位 → 缺的筆數
+  let badRows = 0;
+  rows.forEach((r) => {
+    const missing = missingRequiredFields(r, cat);
+    if (missing.length === 0) return;
+    badRows += 1;
+    missing.forEach((m) => {
+      const key = `${m.label}｜${m.why}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+  });
+  if (badRows === 0) return true;
+  const list = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([k, n]) => {
+      const [label, why] = k.split('｜');
+      return `　・${label}：${n} 筆未填${why === '必填' ? '' : `（${why}）`}`;
+    })
+    .join('\n');
+  return confirm(
+    `「${cat.label}」有 ${badRows} 筆資料的必填欄位還沒填：\n${list}`
+    + `${counts.size > 8 ? `\n　…另有 ${counts.size - 8} 種欄位` : ''}\n\n`
+    + `這些是官方資料辭典列為必填的欄位，空白可能導致上傳被退件。\n`
+    + `（在表格中這些格子會用紅框標示，滑鼠移上去有說明）\n\n`
+    + `按「確定」仍要照原樣匯出，按「取消」回去修正。`
+  );
+}
+
 function confirmLimitBeforeExport(rows, cat) {
   const bad = findBadLimitValues(rows, cat);
   if (bad.length === 0) return true;
@@ -4020,9 +4329,9 @@ function renderSmartImportPreview() {
                 const label = (f.optionLabels && f.optionLabels[o]) || o || '（未選擇）';
                 return `<option value="${escapeAttr(o)}" ${o === val ? 'selected' : ''}>${escapeHtml(label)}</option>`;
               }).join('');
-              return `<td><select data-site-field="${f.key}">${opts}</select></td>`;
+              return `<td><select data-site-field="${f.key}" data-seeded="${escapeAttr(val)}">${opts}</select></td>`;
             }
-            return `<td><input type="text" data-site-field="${f.key}" value="${escapeAttr(val)}"></td>`;
+            return `<td><input type="text" data-site-field="${f.key}" data-seeded="${escapeAttr(val)}" value="${escapeAttr(val)}"></td>`;
           }).join('')}
           <td class="site-row-count">${site.rowIndices.length}</td>
           <td style="text-align:center"><input type="checkbox" data-site-remember checked></td>
@@ -4070,9 +4379,16 @@ function hasTimeSegmentField(cat) {
   return cat.fields.some(f => f.key === '監測時段');
 }
 /** A stable identity for one "kind of measurement" at a site — item name, plus
- *  監測時段 when the category has that field (see hasTimeSegmentField). */
+ *  監測時段 when the category has that field (see hasTimeSegmentField).
+ *
+ *  夜間振動的音源發聲特性在 v4.29 以前被寫成 Lvd(10)（正確應為 Lvn(10)）。
+ *  這裡把那個**錯誤組合**正規化，讓舊資料與本版新匯入的資料算同一個測項——
+ *  否則舊記憶裡的 Lvd(10)::夜間 會被當成「這個測項不見了」而預設打勾補一筆空白列，
+ *  重新匯入同一份報告也會因為配不到舊列而多附加一筆。詳見 schema.js。 */
 function itemIdentityKey(row, cat) {
-  return hasTimeSegmentField(cat) ? `${row[cat.itemField]}::${row['監測時段'] || ''}` : row[cat.itemField];
+  if (!hasTimeSegmentField(cat)) return row[cat.itemField];
+  const seg = row['監測時段'] || '';
+  return `${canonicalVibItemName(row[cat.itemField], seg)}::${seg}`;
 }
 // 比較關係 is DERIVED from 檢測數值/監測數值 (see deriveComparisonRelation below),
 // not an independent site/method attribute — it must never be historically
@@ -4130,7 +4446,11 @@ function learnSiteItemHistory(projectId, catKey, cat, rows) {
   const entries = relevantRows.map(r => ({
     location: r[locField],
     identityKey: itemIdentityKey(r, cat),
-    itemName: r[itemField],
+    // 記下來的名稱也要正規化。這份 itemName 是日後「補回缺少的測項」時用來重建
+    // 資料列的（buildSuggestedRows），留著舊的 Lvd(10) 會把錯誤再種回去一次。
+    itemName: hasTimeSegmentField(cat)
+      ? canonicalVibItemName(r[itemField], r['監測時段'] || '')
+      : r[itemField],
     timeSegment: hasTimeSegmentField(cat) ? (r['監測時段'] || '') : '',
     itemCategory: r['檢測類別'] || '',
     date: r['日期(起)'] || '',
@@ -4184,10 +4504,26 @@ function analyzeImportAgainstExisting(existingRows, candidateRows, cat) {
     const existingRow = existingRows[existingIdx];
     const diffFields = [];
     cat.fields.forEach(f => {
-      if (identityKeys.has(f.key)) return;
+      /*
+       * 識別欄位原則上不列進差異（配對成功就代表它們一樣），但有一個例外：
+       * 音源發聲特性經過 canonicalVibItemName 正規化之後，「夜間的 Lvd(10)」與
+       * Lvn(10) 會配到同一列——**字面上卻不一樣**。不把它列出來，使用者在衝突
+       * 視窗看到的差異表會說「只差小數點寫法」，按下確定卻連測項名稱一起被換掉。
+       * 要換可以，但必須寫在畫面上讓他看見。
+       */
+      const isIdentity = identityKeys.has(f.key);
+      if (isIdentity && f.key !== itemField) return;
       const oldVal = existingRow[f.key] || '';
       const newVal = candidate[f.key] || '';
-      if (oldVal !== newVal) diffFields.push({ key: f.key, label: f.label, type: f.type, oldVal, newVal });
+      if (oldVal === newVal) return;
+      /*
+       * 「39.2」與「39.20」是同一個數字，只是寫法不同（v4.30 起監測數值一律補成
+       * 兩位小數；舊資料、完成版範本匯入的資料則不一定）。把它算成差異的話，
+       * 每一筆舊資料在下次匯入時都會跳出一列衝突，而衝突視窗承諾的是
+       * 「內容完全相同的部分會自動忽略」。數字相同就不算差異。
+       */
+      if (sameNumericValue(oldVal, newVal)) return;
+      diffFields.push({ key: f.key, label: f.label, type: f.type, oldVal, newVal });
     });
     if (diffFields.length === 0) return; // truly identical — silently skip, nothing to decide
     conflicts.push({
@@ -4445,9 +4781,31 @@ function confirmSmartImport() {
     if (remember) savedAliases[aliasKey] = overrides;
     else delete savedAliases[aliasKey];
 
-    // apply overrides to every row belonging to this site
+    /*
+     * ⚠️ 一個「測站」可能橫跨好幾次採樣。
+     *
+     * 這裡的分組鍵值是「測點編號或原始地點名稱」，**沒有帶採樣日期**，而一次匯入
+     * 好幾份月報是系統明確支援的用法。表格裡那一列的值是拿第一份檔案的資料當種子，
+     * 舊寫法再無條件 Object.assign 到整組——於是 3 月、4 月、5 月被當成同一組，
+     * 4 月與 5 月各自報告裡的座標會被 3 月的蓋掉。
+     * （系統其他地方的座標同步都要求「同地點 ＋ 同日期」，註解也寫明
+     *   同一個測站不同次採訪的座標可能真的不一樣。）
+     *
+     * 改成分兩種情況：
+     *   ・使用者**真的在表格裡改過**那一格（值 ≠ data-seeded）→ 是明確指令，整組套用。
+     *   ・沒改過 → 只補「那一列本來就空白」的欄位，已經有值的一律不動。
+     * 單月匯入（最常見）行為完全不變，因為那時整組本來就只有一次採樣。
+     */
+    const editedFields = new Set();
+    tr.querySelectorAll('[data-site-field]').forEach(el => {
+      if (el.value !== (el.dataset.seeded ?? '')) editedFields.add(el.dataset.siteField);
+    });
     site.rowIndices.forEach(idx => {
-      Object.assign(result.rows[idx], overrides);
+      const row = result.rows[idx];
+      Object.entries(overrides).forEach(([key, value]) => {
+        if (editedFields.has(key)) { row[key] = value; return; }
+        if (String(row[key] ?? '').trim() === '') row[key] = value;
+      });
     });
   });
   try {
@@ -4658,6 +5016,24 @@ async function backupImport(file) {
  * including 匯出備份, so the data couldn't even be rescued. Rendering last, inside a
  * guard, means the worst case is a blank content area on a fully working page.
  */
+/*
+ * 儲存空間滿的時候，不管是哪一條路徑寫入失敗，都要看得到訊息。
+ * 用節流避免一次操作寫好幾個 key 時彈出一整排視窗。
+ */
+let lastStorageAlertAt = 0;
+DataStore.onStorageError = (err) => {
+  console.error(err);
+  const now = Date.now();
+  if (now - lastStorageAlertAt < 3000) return;
+  lastStorageAlertAt = now;
+  alert(
+    '⚠️ 這次的修改沒有存進去——瀏覽器的儲存空間已滿。\n\n'
+    + '畫面上顯示的是您剛才輸入的內容，但實際存下來的還是舊的。\n\n'
+    + '請先用右上角「匯出備份」把現有資料存成檔案，再刪除不需要的計畫或季度，'
+    + '然後重新整理頁面確認。'
+  );
+};
+
 function init() {
   document.getElementById('versionBadge').addEventListener('click', openChangelogModal);
   document.getElementById('btnChangelogClose').addEventListener('click', () => document.getElementById('changelogModal').classList.add('hidden'));
@@ -4772,7 +5148,9 @@ function init() {
     // item's copies elsewhere, which is awkward to assign locations against.
     for (let g = 0; g < quantity; g++) {
       picks.forEach(({ entry, variant }) => {
-        const blank = {};
+        // 期別要跟著（理由見 currentPeriodForNewRow）——沒有的話這些列會變成
+        // 「未標示期別」，依季度篩選或匯出時整批被漏掉。
+        const blank = { _period: currentPeriodForNewRow(project, catKey) };
         cat.fields.forEach(f => { blank[f.key] = ''; });
         blank[cat.itemField] = entry.itemName;
         if (cat.methodField && variant.method) blank[cat.methodField] = variant.method;

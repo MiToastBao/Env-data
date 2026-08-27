@@ -464,8 +464,8 @@ const SmartParse = {
         leq = vals[0] || ''; lmax = vals[1] || '';
       }
       const common = { ...baseRow, '管制標準': '營建工程', '管制區': zone, '環境音量標準': '0', '頻率範圍': '20 Hz 至 20kHz', '檢測類別': '營建工程噪音', '監測單位': '16' };
-      if (leq) rows.push({ ...common, '音源發聲特性': '均能音量(Leq)', '監測數值': this.formatNumber(leq) });
-      if (lmax) rows.push({ ...common, '音源發聲特性': '最大音量(Lmax)', '監測數值': this.formatNumber(lmax) });
+      if (leq) rows.push({ ...common, '音源發聲特性': '均能音量(Leq)', '監測數值': formatNoiseValue(this.formatNumber(leq)) });
+      if (lmax) rows.push({ ...common, '音源發聲特性': '最大音量(Lmax)', '監測數值': formatNoiseValue(this.formatNumber(lmax)) });
     } else if (isBV) {
       // 振動測值 header row: Lveq | Lvmax | Lv5 | Lv10 | ... with the numbers directly
       // underneath. Only the two metrics that have an official 音源發聲特性 code are
@@ -489,7 +489,7 @@ const SmartParse = {
           rows.push({
             ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
             '檢測類別': '振動', '監測時段': tod, '音源發聲特性': m.item,
-            '監測單位': '159', '監測數值': this.formatNumber(v), '監測方法': methodV,
+            '監測單位': '159', '監測數值': formatNoiseValue(this.formatNumber(v)), '監測方法': methodV,
           });
         });
       }
@@ -502,7 +502,7 @@ const SmartParse = {
       }
       rows.push({
         ...baseRow, '管制標準': '營建工程', '管制區': zone, '環境音量標準': '0', '頻率範圍': '20 Hz 至 200 Hz',
-        '檢測類別': '低頻噪音', '音源發聲特性': '均能音量(Leq,LF)', '監測單位': '16', '監測數值': this.formatNumber(leqLF),
+        '檢測類別': '低頻噪音', '音源發聲特性': '均能音量(Leq,LF)', '監測單位': '16', '監測數值': formatNoiseValue(this.formatNumber(leqLF)),
       });
     }
     return rows.length ? rows : null;
@@ -510,7 +510,10 @@ const SmartParse = {
 
   /** N-xx(平日/假日) 24hr ambient noise, or V-xx(平日/假日) 24hr vibration. */
   parseNoise24hrSheet(sheetName, grid) {
-    const isVib = /^V-?\d/i.test(sheetName) || !!this.findCell(grid, /Lv日\(Lv10\)=/);
+    const isVib = /^V-?\d/i.test(sheetName)
+      || !!this.findCell(grid, /Lv日\(Lv10\)=/)
+      // 只寫夜間值的振動工作表原本認不出來，整張會被默默丟掉。
+      || !!this.findCell(grid, /Lv夜\(Lv10\)=/);
     // Don't require the specific "(6~20)" hours — 道路交通噪音 reports use a
     // different daytime window (e.g. "(7~20)"), and hardcoding the hours meant
     // those sheets never matched here at all.
@@ -577,7 +580,7 @@ const SmartParse = {
             rows.push({
               ...baseRow, '管制標準': '噪音管制法第7條第1項', '管制區': '', '環境音量標準': '', '頻率範圍': '20 Hz 至 20kHz',
               '檢測類別': noiseCategory, '監測時段': p.tod, '音源發聲特性': '均能音量(Leq)',
-              '監測單位': '16', '監測數值': String(Math.round(parseFloat(v) * 10) / 10), '監測方法': method,
+              '監測單位': '16', '監測數值': formatNoiseValue(String(Math.round(parseFloat(v) * 10) / 10)), '監測方法': method,
             });
           }
         });
@@ -594,19 +597,32 @@ const SmartParse = {
       // import preview's collapsed "其他測項" list instead of quietly doubling the
       // number of rows imported. (Construction vibration, BV, is different: Lveq and
       // Lvmax are both primary there, the same way BN reports Leq and Lmax.)
+      // Lv10 的音源發聲特性是**看時段決定的**：日間 Lvd(10)、夜間 Lvn(10)
+      // （官方噪音資料辭典第 21 列，d=day / n=night，見 schema.js 的 vibLv10ItemFor）。
+      // v4.29 以前日夜共用一個 itemLabel，夜間那一筆填成 Lvd(10)，是錯的。
+      //
+      // Lveq 沒有日夜之分（官方代碼只有「事件振動位準(Lveq)」一個），所以它維持
+      // 固定名稱——用 itemFor 這個函式而不是把規則寫在迴圈裡，就是為了讓兩者
+      // 的差別留在各自的定義上，不會有人日後「順手」把規則套到 Lveq 去。
       const vibMetrics = [
-        { labelKey: 'Lv10', dayRegex: /Lv日\(Lv10\)=/, nightRegex: /Lv夜\(Lv10\)=/, itemLabel: 'Lvd(10)' },
-        { labelKey: 'Lveq', dayRegex: /Lv日\(Lveq\)=/, nightRegex: /Lv夜\(Lveq\)=/, itemLabel: '事件振動位準(Lveq)', secondary: true },
+        { labelKey: 'Lv10', dayRegex: /Lv日\(Lv10\)=/, nightRegex: /Lv夜\(Lv10\)=/, itemFor: (tod) => vibLv10ItemFor(tod) },
+        { labelKey: 'Lveq', dayRegex: /Lv日\(Lveq\)=/, nightRegex: /Lv夜\(Lveq\)=/, itemFor: () => '事件振動位準(Lveq)', secondary: true },
       ];
       vibMetrics.forEach(metric => {
         const dayVal = this.labelValue(grid, metric.dayRegex);
         const nightVal = this.labelValue(grid, metric.nightRegex);
         [{ v: dayVal, tod: '日間' }, { v: nightVal, tod: '夜間' }].forEach(p => {
           if (p.v && !isNaN(parseFloat(p.v))) {
+            const itemLabel = metric.itemFor(p.tod);
+            if (!itemLabel) return; // 沒有對應官方代碼的時段就不產生資料列
             rows.push({
               ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
-              '檢測類別': '振動', '監測時段': p.tod, '音源發聲特性': metric.itemLabel,
-              '監測單位': '159', '監測數值': String(Math.round(parseFloat(p.v) * 10) / 10), '監測方法': method,
+              '檢測類別': '振動', '監測時段': p.tod, '音源發聲特性': itemLabel,
+              '監測單位': '159',
+              // 報告上印的就是一位小數（儲存格格式 0.0），所以先四捨五入到一位，
+              // 再依官方「小數點2位數」的規定補零成 39.20——數值不變，只是寫法。
+              '監測數值': formatNoiseValue(String(Math.round(parseFloat(p.v) * 10) / 10)),
+              '監測方法': method,
               _secondaryItem: !!metric.secondary,
             });
           }
@@ -1063,11 +1079,26 @@ const SmartParse = {
       });
     }
     const colOfLabel = (re) => headerCells.findIndex(s => s !== undefined && re.test(s));
+    const cItem = colOfLabel(/檢驗項目|檢測項目/);
+    const cValue = colOfLabel(/檢測值|檢測結果|檢驗結果|測定值|結\s*果/);
     const cLimit = colOfLabel(/偵測\s*極限|檢測\s*極限/);
     const cUnit = colOfLabel(/^單\s*位$/);
     const cMethod = colOfLabel(/檢測方法|分析方法|檢驗方法/);
     if (cLimit >= 0 && cUnit >= 0 && cUnit < cLimit) return null;
     if (cUnit >= 0 && cMethod >= 0 && cMethod < cUnit) return null;
+    /*
+     * 有抓到欄位位置就**照欄位讀**，不要「刪掉空白格再照順序取」。
+     *
+     * 舊寫法是 row.filter(v => v !== '') 之後用 cells[0..4]。只要中間有一格是空的，
+     * 整列就往左移一格：水溫、pH、導電度、懸浮固體這些本來就沒有偵測極限的項目
+     * （很多實驗室那一格是空的，不寫「--」），單位會被讀成偵測極限、
+     * 檢測方法會被讀成單位——而且因為單位讀不到，程式會走「沒有單位欄 ⇒ 無(161)」
+     * 那條路並且回報 confident:true，所以連「單位可能有問題」的提醒都不會出現。
+     * 實測：`["水溫","28.5","","℃","NIEA W217"]` → 單位 161（應為 4）。
+     *
+     * 找不到欄位位置時（版型太特別）才退回原本的位置式讀法，行為與舊版相同。
+     */
+    const byColumn = cItem >= 0 && cValue >= 0 && cValue > cItem;
 
     // find the literal "檢測值" marker row that precedes the item rows
     let startRow = headerHit.r + 1;
@@ -1083,16 +1114,35 @@ const SmartParse = {
       const first = cells[0];
       if (/以下空白|備註|聲明書|本報告|公司名稱|負責人|檢驗室主管|第\d+頁/.test(first)) break;
       if (cells.length < 2) continue;
-      const itemName = this.normalizeItemName(cells[0]);
-      const valueRaw = cells[1];
-      let idx = 2;
-      // "--", "—", "─" and friends all mean "no detection limit applies here"
-      const limitRaw = /^[-–—─]{1,2}$/.test(cells[idx] || '') ? '' : (cells[idx] || '');
-      if (cells[idx] !== undefined) idx++;
-      let unitText = '';
-      if (cells[idx] && !/^NIEA/i.test(cells[idx])) { unitText = cells[idx]; idx++; }
-      let methodText = '';
-      if (cells[idx] && /^NIEA/i.test(cells[idx])) { methodText = cells[idx]; idx++; }
+      const dash = (v) => (/^[-–—─]{1,2}$/.test(v || '') ? '' : (v || ''));
+      let itemName, valueRaw, limitRaw, unitText, methodText;
+      if (byColumn) {
+        const at = (c) => (c >= 0 ? this.cellStr(row[c]) : '');
+        itemName = this.normalizeItemName(at(cItem));
+        valueRaw = at(cValue);
+        limitRaw = dash(at(cLimit));
+        unitText = at(cUnit);
+        methodText = at(cMethod);
+        if (itemName === '' || valueRaw === '') continue;
+      } else {
+        itemName = this.normalizeItemName(cells[0]);
+        valueRaw = cells[1];
+        let idx = 2;
+        // "--", "—", "─" and friends all mean "no detection limit applies here"
+        limitRaw = dash(cells[idx]);
+        if (cells[idx] !== undefined) idx++;
+        unitText = '';
+        /*
+         * 檢測方法不是只有 NIEA。CNS、EPA、APHA、電極法、碘定量法都是實驗室
+         * 真的會寫的東西，而 extractMethodCode 本來就認得它們——只有這裡寫死
+         * 了 /^NIEA/，於是非 NIEA 的方法會被當成單位吃掉，該列的檢測方法則
+         * 退回工作表上的「採樣方法」（那是採樣，不是分析方法）。
+         */
+        const looksLikeMethod = (v) => !!v && (/^(NIEA|CNS|EPA|ASTM|APHA|ISO)/i.test(v) || /法$/.test(v));
+        if (cells[idx] && !looksLikeMethod(cells[idx])) { unitText = cells[idx]; idx++; }
+        methodText = '';
+        if (cells[idx] && looksLikeMethod(cells[idx])) { methodText = cells[idx]; idx++; }
+      }
 
       const { cmp, val, note } = this.parseValueCell(valueRaw);
       // No unit column at all for this item (e.g. pH is dimensionless) means "無" —

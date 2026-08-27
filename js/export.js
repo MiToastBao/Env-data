@@ -85,6 +85,10 @@ const ExportEngine = {
       const val = r[f.key] || '';
       if (f.type === 'date') return this._dateCell(val);
       if (f.type === 'time') return this._timeCell(val);
+      // 噪音（含振動）的監測數值固定兩位小數。這裡再做一次是保險：
+      // v4.29 以前存下來、而且使用者從來沒點過那一格的舊資料，交出去的檔案
+      // 也必須符合官方「小數點2位數」的規定。補零而已，數值不變。
+      if (f.key === NOISE_VALUE_FIELD) return formatNoiseValue(val);
       return val;
     }));
     const wsData = XLSX.utils.aoa_to_sheet([dataHeaders, ...dataRows]);

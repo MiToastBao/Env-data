@@ -329,7 +329,10 @@ const AutoDetect = {
       if (this.STOP_ROW_RE.test(joined) && rows.length > 0) break;
 
       const get = (key) => (byKey[key] === undefined ? '' : this.cellStr(row[byKey[key]]));
-      const itemName = SmartParse.normalizeItemName(get('item'));
+      // normalizeItemName 會把括號整段拿掉（「Lv日(Lv10)」→「Lv日」），所以振動的
+      // 原字標示要在正規化**之前**先留一份，否則 applyVibRawLabel 永遠比對不到。
+      const rawItemName = get('item');
+      const itemName = SmartParse.normalizeItemName(rawItemName);
       const valueRaw = get('value');
       if (byKey.item !== undefined && itemName === '') continue;
       if (byKey.value !== undefined && valueRaw === '') continue;
@@ -392,6 +395,8 @@ const AutoDetect = {
       out._rawLocation = location;
       out._autoDetected = true;
       out._uncertainUnit = !!unitText && !unitLookup.confident;
+      // 放在最後：檢測類別是上面幾行才寫進去的，早一步呼叫會被蓋掉。
+      applyVibRawLabel(out, cat, rawItemName);
       rows.push(out);
     }
 
@@ -499,6 +504,9 @@ const AutoDetect = {
         row._autoDetected = true;
         row._secondaryItem = !preferred;
         row._blockLabel = block.label;
+        // 和上面那條路徑一樣放最後：這個區塊不會自己填檢測類別，
+        // 但擺在最後才不會被日後新增的欄位覆蓋掉。
+        applyVibRawLabel(row, cat, entry.item);
         out.push(row);
       });
     });
@@ -807,3 +815,20 @@ const AutoDetect = {
     return { rows, matchedSheets, skippedSheets };
   },
 };
+
+/**
+ * 自動偵測讀到振動報告的原字標示（Lv日(Lv10) 這種）時，翻成官方的音源發聲特性
+ * 並補上監測時段。只作用在噪音類別、且只認 schema.js 裡列出的那四種標示；
+ * 其餘測項一個字都不動。
+ */
+function applyVibRawLabel(row, cat, rawItemName) {
+  if (!cat || cat.key !== 'noise') return;
+  // 先認原字（未經 normalizeItemName 去括號的那一份），沒有才退回欄位現值。
+  const hit = normalizeVibRawLabel(rawItemName) || normalizeVibRawLabel(row[cat.itemField]);
+  if (!hit) return;
+  row[cat.itemField] = hit.item;
+  if ('監測時段' in row) row['監測時段'] = hit.timeSegment;
+  // 這條路徑猜出來的檢測類別對振動一律是空的，所以這裡直接指定；
+  // 若已經有值（使用者的報告真的寫了）就尊重原值。
+  if ('檢測類別' in row && !row['檢測類別']) row['檢測類別'] = '振動';
+}

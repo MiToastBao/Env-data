@@ -171,6 +171,7 @@ water|總硬度|NIEA W208|47
 noise|均能音量(Leq)|NIEA P201|16
 noise|均能音量(Leq,LF)|NIEA P205|16
 noise|Lvd(10)|NIEA P204|159
+noise|Lvn(10)|NIEA P204|159
 noise|事件振動位準(Lveq)|NIEA P204|159
 
 # ---------- 地質 (geo) ----------

@@ -235,8 +235,25 @@ const DataStore = {
       return [];
     }
   },
+  /*
+   * ⚠️ 存不進去一定要讓人知道。
+   *
+   * localStorage 滿了會丟 QuotaExceededError，而 setItem 是原子的——舊值原封不動
+   * 留著。匯入那條路徑（runImportCommit）有接住並提示，但手動改格子、座標管理、
+   * 檢測方法管理、批次修改、刪除列全都沒有：例外一路丟進 focusout 處理常式，
+   * 被瀏覽器默默吃掉，畫面顯示新值、存下去的還是舊值，使用者以為改好了。
+   *
+   * 這裡集中處理：先通知（由 app.js 掛上 onStorageError 顯示訊息），再照樣往上丟，
+   * 原本已經有 try/catch 的呼叫端行為完全不變。
+   */
+  onStorageError: null,
   saveData(projectId, category, rows) {
-    localStorage.setItem(this._dataKey(projectId, category), JSON.stringify(rows));
+    try {
+      localStorage.setItem(this._dataKey(projectId, category), JSON.stringify(rows));
+    } catch (err) {
+      if (typeof this.onStorageError === 'function') this.onStorageError(err);
+      throw err;
+    }
   },
   clearData(projectId, category) {
     this.saveData(projectId, category, []);
@@ -316,5 +333,16 @@ const DataStore = {
       localStorage.removeItem(this._siteAliasKey(projectId, cat));
       localStorage.removeItem(this._batchKey(projectId, cat));
     });
+    // v4.30 的一次性轉換旗標。它不是每個類別各一把，而是整份 JSON 一個物件，
+    // 所以要挑掉這個專案的那一項，不能整把刪掉（會影響其他專案）。
+    try {
+      const key = 'envapp_vibnight_migrated_v1';
+      const done = JSON.parse(localStorage.getItem(key)) || {};
+      if (done[projectId]) {
+        delete done[projectId];
+        if (Object.keys(done).length) localStorage.setItem(key, JSON.stringify(done));
+        else localStorage.removeItem(key);
+      }
+    } catch (e) { /* best effort：旗標留著最多就是重問一次，不影響資料 */ }
   },
 };

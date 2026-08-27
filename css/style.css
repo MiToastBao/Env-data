@@ -423,3 +423,11 @@ table.conflict-diff-table td.diff-new { color: var(--primary-dark); font-weight:
   padding: 2px 6px; border-radius: 50%; line-height: 1; flex-shrink: 0;
 }
 .staged-file-remove:hover { background: var(--danger); color: #fff; }
+
+/* 必填欄位還沒填：用虛線橘框標示，和「值有錯」的 cell-invalid 實線紅框區分開。
+   「沒填」和「填錯」是兩件事，混成同一種顏色的話使用者分不出要補什麼。 */
+input.cell-required-missing,
+select.cell-required-missing {
+  border: 1.5px dashed #d97706 !important;
+  background: #fffbeb !important;
+}
