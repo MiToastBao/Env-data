@@ -57,11 +57,19 @@ const ExportEngine = {
     // says midnight — and "99:99" became 4:39 on 1900-01-03. Neither is a time the
     // person can spot as wrong once it is a number.
     if (mi > 59 || s > 59) return hms || '';
-    if (h > 24 || (h === 24 && (mi > 0 || s > 0))) return hms || '';
+    /*
+     * ⚠️ v4.37：24:00 以前會被寫成 0，也就是**同一天的開頭 00:00**。
+     * 畫面上寫 24:00、檔案裡是 00:00，兩者不一致而且沒有任何提示——
+     * 這是唯一一項會「靜靜改掉使用者輸入的資料」的行為。
+     *
+     * 官方五份資料辭典都寫「勿輸入 24:00，僅能輸入 00:00~23:59 之間的時間」，
+     * 所以正確的做法不是幫它挑一個數字，而是**不要把它變成數字**：
+     * 原樣留成文字，讓它在檔案裡看得出來是錯的。
+     * 使用者在畫面上會看到紅框、匯出前也會被列出來，兩道提示都給過了。
+     */
+    if (h > 23) return hms || '';
     const frac = (h * 3600 + mi * 60 + s) / 86400;
-    // 24:00:00 is midnight at the END of the day; Excel's h:mm shows 1.0 as 0:00,
-    // which is the same clock reading, so store it as 0 rather than as a date.
-    return { t: 'n', v: frac >= 1 ? 0 : frac, z: 'h:mm' };
+    return { t: 'n', v: frac, z: 'h:mm' };
   },
 
   buildWorkbook(project, basicInfo, categoryKey, rowsOverride) {

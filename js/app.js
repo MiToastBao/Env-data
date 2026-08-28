@@ -864,6 +864,7 @@ function renderCategoryTab(project, catKey) {
       return r._period === activePeriod;
     });
     if (freshRows.length === 0) { alert('目前篩選範圍內沒有資料可匯出。'); return; }
+    if (!confirmTimeRangeBeforeExport(freshRows, cat)) return;
     if (!confirmLimitBeforeExport(freshRows, cat)) return;
     if (!confirmRequiredBeforeExport(freshRows, cat)) return;
     ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey, freshRows);
@@ -1450,7 +1451,19 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey) {
       // some mobile browsers don't reliably fire change events at all. Typing "1430",
       // "14:30", or "14:30:00" all work — normalized to HH:MM on blur (the official
       // template's own time format has no seconds either).
-      return `<input type="text" ${base}${missTip} value="${escapeAttr(toTimeDisplayValue(value))}" class="time-input${missCls}" placeholder="HH:MM" inputmode="numeric" maxlength="8">`;
+    {
+      /*
+       * 官方限 00:00~23:59（勿填 24:00）。超出範圍的值**照樣顯示出來**、
+       * 用紅框標示，不會被默默改掉——和上面 select 遇到清單外的值同一個原則：
+       * 值不能消失，但要看得見它是錯的。
+       */
+      const badTime = DateTimeUtil.outOfRangeTimeReason(value);
+      const cls = `time-input${badTime ? ' cell-invalid' : ''}${missCls}`;
+      const tip = badTime
+        ? ` title="${escapeAttr(`「${toTimeDisplayValue(value)}」${badTime}。請改成 23:59（一天的最後一分鐘）或正確的時間。`)}"`
+        : missTip;
+      return `<input type="text" ${base}${tip} value="${escapeAttr(toTimeDisplayValue(value))}" class="${cls}" placeholder="HH:MM" inputmode="numeric" maxlength="8">`;
+    }
     case 'suggest': {
       /*
        * ⚠️ 這個 id 以前是 `suggest-` ＋ 欄位名稱去掉所有非英數字元。
@@ -1884,11 +1897,40 @@ function wireGridEvents(project, catKey, cat) {
     const isDateTimeInput = t.classList.contains('time-input') || t.classList.contains('date-input');
 
     if (t.classList.contains('time-input')) {
-      const normalized = normalizeTimeString(t.value); // canonical HH:MM:00 for storage
+      let normalized = normalizeTimeString(t.value); // canonical HH:MM:00 for storage
+      /*
+       * 打了 24:00 就當場問（v4.37）。
+       *
+       * 官方五份資料辭典都寫「勿輸入 24:00，僅能輸入 00:00~23:59」。
+       * 舊版是**匯出的時候**把 24:00 悄悄寫成 00:00——畫面上是一天的結尾、
+       * 檔案裡卻是同一天的開頭，而且完全沒有提示。
+       *
+       * ⚠️ 按「取消」時**不會**幫他改，值原樣留著、格子畫紅框。
+       * 使用者可能是照著報告上的寫法先打進來，之後才要回頭確認到底是幾點；
+       * 幫他挑一個數字等於又做了一次「靜靜改掉輸入」，那正是這一版要修的事。
+       */
+      const badTime = DateTimeUtil.outOfRangeTimeReason(normalized);
+      if (badTime && confirm(
+        `「${toTimeDisplayValue(normalized) || normalized}」${badTime}。\n\n`
+        + `要改成 23:59（一天的最後一分鐘）嗎？\n\n`
+        + `按「確定」改成 23:59；按「取消」保留現在填的內容，\n`
+        + `這一格會用紅框標示，匯出前也會再提醒一次。`
+      )) {
+        normalized = DateTimeUtil.clampToDayEnd(normalized);
+      }
       // slice(0,5) blindly chopped anything it couldn't parse — a value the person
       // typed, or an imported "連續24小時", lost its last characters on every blur.
       t.value = toTimeDisplayValue(normalized) || normalized;
       commit(rowIdx, fieldKey, normalized);
+      /*
+       * 紅框要當場出現，不能等下一次整頁重繪——按了「取消」之後表格不會重畫，
+       * 使用者看到的還是原來那一格。標示如果要捲開才看得到就不算標示。
+       */
+      const stillBad = DateTimeUtil.outOfRangeTimeReason(normalized);
+      t.classList.toggle('cell-invalid', Boolean(stillBad));
+      t.title = stillBad
+        ? `「${toTimeDisplayValue(normalized) || normalized}」${stillBad}。請改成 23:59（一天的最後一分鐘）或正確的時間。`
+        : '';
     }
     if (t.classList.contains('date-input')) {
       const normalized = normalizeDateString(t.value); // ISO YYYY-MM-DD for storage
@@ -2966,6 +3008,7 @@ function confirmExportSelect() {
     jobs.push({ catKey, rows });
   });
   for (const job of jobs) {
+    if (!confirmTimeRangeBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
     if (!confirmLimitBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
     if (!confirmRequiredBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
   }
@@ -3158,6 +3201,43 @@ function confirmRequiredBeforeExport(rows, cat) {
     + `這些是官方資料辭典列為必填的欄位，空白可能導致上傳被退件。\n`
     + `（在表格中這些格子會用紅框標示，滑鼠移上去有說明）\n\n`
     + `按「確定」仍要照原樣匯出，按「取消」回去修正。`
+  );
+}
+
+/*
+ * 匯出前清點超出 00:00~23:59 的時間（v4.37）。
+ *
+ * 為什麼要有這一道：畫面上的紅框只有捲到那一格才看得到，而一份季報有上百列。
+ * 這是最後一道——舊版在這個位置什麼都不做，24:00 就這樣被寫成 00:00 送出去。
+ */
+function findOutOfRangeTimes(rows, cat) {
+  const timeFields = cat.fields.filter(f => f.type === 'time').map(f => f.key);
+  const counts = new Map(); // 「欄位｜值」 → 筆數
+  rows.forEach((r) => {
+    timeFields.forEach((k) => {
+      if (!DateTimeUtil.outOfRangeTimeReason(r[k])) return;
+      const key = `${k}｜${toTimeDisplayValue(r[k]) || r[k]}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+  });
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function confirmTimeRangeBeforeExport(rows, cat) {
+  const bad = findOutOfRangeTimes(rows, cat);
+  if (bad.length === 0) return true;
+  const total = bad.reduce((n, [, c]) => n + c, 0);
+  const list = bad.slice(0, 6)
+    .map(([k, n]) => { const [f, v] = k.split('｜'); return `　・${f}＝${v}（${n} 筆）`; })
+    .join('\n');
+  return confirm(
+    `「${cat.label}」有 ${total} 筆資料的時間超出 00:00~23:59：\n${list}`
+    + `${bad.length > 6 ? `\n　…另有 ${bad.length - 6} 種` : ''}\n\n`
+    + `官方規定時間限 24 小時制的 00:00~23:59，明講「勿輸入 24:00」。\n`
+    + `一天的結尾請填 23:59。\n\n`
+    + `（在表格中這些格子會用紅框標示，滑鼠移上去有說明）\n`
+    + `按「確定」仍要照原樣匯出——這些格子會以文字寫入，不會被改成 00:00；\n`
+    + `按「取消」回去修正。`
   );
 }
 

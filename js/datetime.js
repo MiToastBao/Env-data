@@ -222,6 +222,36 @@ const DateTimeUtil = {
     return String(raw).trim();
   },
 
+  /*
+   * 官方規定：時間限 24 小時制的 00:00~23:59，**勿輸入 24:00**。
+   * 五份資料辭典（空品／水質／地質／噪音／生態）都逐字重申這一句。
+   *
+   * 這裡回傳「為什麼超出範圍」，沒問題就回傳空字串。
+   *
+   * ⚠️ 只認**看起來就是時鐘值**的字串（HH:MM 或 HH:MM:SS）。
+   * 其他讀不懂的內容（例如報告上寫的「連續24小時」）不在這裡處理——
+   * 那些本來就會原樣留著讓人看得見要改，硬把它們也標成「時間超出範圍」
+   * 只會讓真正該修的 24:00 淹沒在雜訊裡。
+   */
+  outOfRangeTimeReason(v) {
+    const s = String(v ?? '').trim();
+    if (s === '') return '';
+    const m = s.match(/^(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?$/);
+    if (!m) return '';
+    const h = +m[1], mi = +m[2], sec = +(m[3] || 0);
+    if (h > 23) return '官方規定時間只能填 00:00~23:59，不可以填 24:00 以上';
+    if (mi > 59 || sec > 59) return '分或秒超過 59';
+    return '';
+  },
+
+  /** 24:00 / 24:00:00 → 23:59:00。其餘原樣回傳。 */
+  clampToDayEnd(v) {
+    const s = String(v ?? '').trim();
+    const m = s.match(/^(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?$/);
+    if (!m || +m[1] <= 23) return s;
+    return '23:59:00';
+  },
+
   /** Stored "YYYY-MM-DD" -> what the person sees, "YYYY/MM/DD". */
   toDisplayDate(v) {
     const s = String(v ?? '').trim();
