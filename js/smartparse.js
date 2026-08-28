@@ -464,8 +464,8 @@ const SmartParse = {
         leq = vals[0] || ''; lmax = vals[1] || '';
       }
       const common = { ...baseRow, '管制標準': '營建工程', '管制區': zone, '環境音量標準': '0', '頻率範圍': '20 Hz 至 20kHz', '檢測類別': '營建工程噪音', '監測單位': '16' };
-      if (leq) rows.push({ ...common, '音源發聲特性': '均能音量(Leq)', '監測數值': formatNoiseValue(this.formatNumber(leq)) });
-      if (lmax) rows.push({ ...common, '音源發聲特性': '最大音量(Lmax)', '監測數值': formatNoiseValue(this.formatNumber(lmax)) });
+      if (leq) rows.push({ ...common, '音源發聲特性': '均能音量(Leq)', '監測數值': this.formatNumber(leq) });
+      if (lmax) rows.push({ ...common, '音源發聲特性': '最大音量(Lmax)', '監測數值': this.formatNumber(lmax) });
     } else if (isBV) {
       // 振動測值 header row: Lveq | Lvmax | Lv5 | Lv10 | ... with the numbers directly
       // underneath. Only the two metrics that have an official 音源發聲特性 code are
@@ -489,7 +489,7 @@ const SmartParse = {
           rows.push({
             ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
             '檢測類別': '振動', '監測時段': tod, '音源發聲特性': m.item,
-            '監測單位': '159', '監測數值': formatNoiseValue(this.formatNumber(v)), '監測方法': methodV,
+            '監測單位': '159', '監測數值': this.formatNumber(v), '監測方法': methodV,
           });
         });
       }
@@ -502,7 +502,7 @@ const SmartParse = {
       }
       rows.push({
         ...baseRow, '管制標準': '營建工程', '管制區': zone, '環境音量標準': '0', '頻率範圍': '20 Hz 至 200 Hz',
-        '檢測類別': '低頻噪音', '音源發聲特性': '均能音量(Leq,LF)', '監測單位': '16', '監測數值': formatNoiseValue(this.formatNumber(leqLF)),
+        '檢測類別': '低頻噪音', '音源發聲特性': '均能音量(Leq,LF)', '監測單位': '16', '監測數值': this.formatNumber(leqLF),
       });
     }
     return rows.length ? rows : null;
@@ -580,7 +580,7 @@ const SmartParse = {
             rows.push({
               ...baseRow, '管制標準': '噪音管制法第7條第1項', '管制區': '', '環境音量標準': '', '頻率範圍': '20 Hz 至 20kHz',
               '檢測類別': noiseCategory, '監測時段': p.tod, '音源發聲特性': '均能音量(Leq)',
-              '監測單位': '16', '監測數值': formatNoiseValue(String(Math.round(parseFloat(v) * 10) / 10)), '監測方法': method,
+              '監測單位': '16', '監測數值': String(Math.round(parseFloat(v) * 10) / 10), '監測方法': method,
             });
           }
         });
@@ -621,7 +621,7 @@ const SmartParse = {
               '監測單位': '159',
               // 報告上印的就是一位小數（儲存格格式 0.0），所以先四捨五入到一位，
               // 再依官方「小數點2位數」的規定補零成 39.20——數值不變，只是寫法。
-              '監測數值': formatNoiseValue(String(Math.round(parseFloat(p.v) * 10) / 10)),
+              '監測數值': String(Math.round(parseFloat(p.v) * 10) / 10),
               '監測方法': method,
               _secondaryItem: !!metric.secondary,
             });

@@ -777,6 +777,7 @@ function renderCategoryTab(project, catKey) {
         <button class="btn btn-ghost btn-sm" id="btnAddCommonItems">☑️ 常用測項新增</button>
         <button class="btn btn-ghost btn-sm" id="btnCoordManager">📍 測站座標管理</button>
         ${cat.methodField ? `<button class="btn btn-ghost btn-sm" id="btnMethodManager">🧪 檢測方法管理</button>` : ''}
+        <button class="btn btn-ghost btn-sm" id="btnDecimalSettings" title="設定各類別的數值欄位要顯示幾位小數，以及要用補零還是四捨五入。只影響畫面與匯出，不會改動存起來的原始值。">🔢 小數位數設定</button>
         <button class="btn btn-ghost btn-sm" id="btnBatchHistory">📜 匯入紀錄${batches.length ? ` (${batches.length})` : ''}</button>
         ${showPeriodUI ? `
         <select id="periodFilterSelect" title="篩選要查看／編輯／匯出哪一期的資料；「匯出此類別」會依此篩選範圍匯出">
@@ -845,6 +846,7 @@ function renderCategoryTab(project, catKey) {
     document.getElementById('btnMethodManager').addEventListener('click', () => openMethodModal(project, catKey));
   }
   document.getElementById('btnBatchHistory').addEventListener('click', () => openBatchHistoryModal(project, catKey));
+  document.getElementById('btnDecimalSettings').addEventListener('click', () => openDecimalSettingsModal(catKey));
   if (showPeriodUI) {
     document.getElementById('periodFilterSelect').addEventListener('change', (e) => {
       state.periodFilter[catKey] = e.target.value;
@@ -1169,7 +1171,7 @@ function openBatchEditModal(project, catKey, cat, indices) {
 
   const renderValueInput = () => {
     const field = editableFields.find(f => f.key === fieldSelect.value);
-    document.getElementById('batchEditValueWrap').innerHTML = fieldControlHTML(field, '', '');
+    document.getElementById('batchEditValueWrap').innerHTML = fieldControlHTML(field, '', '', undefined, catKey);
   };
   renderValueInput();
   fieldSelect.onchange = renderValueInput;
@@ -1201,6 +1203,98 @@ function openBatchEditModal(project, catKey, cat, indices) {
 }
 
 // ---------- import batch history ----------
+/*
+ * 小數位數設定面板。
+ *
+ * 為什麼做成使用者可調，而不是把官方規定寫死在程式裡：規定會改。
+ * 寫死的話規定一改就得改程式、重新打包、重新上傳；改成設定之後，
+ * 使用者自己在畫面上改一改就好，而出廠預設仍然是目前官方辭典的規定。
+ *
+ * ⚠️ 這個設定是**整台電腦共用**的，不是每個計畫一份——官方規定全國一致，
+ * 不會因計畫而異，每開一個新計畫就要重設一次反而容易漏。
+ */
+function openDecimalSettingsModal(currentCatKey) {
+  const modal = document.getElementById('decimalModal');
+  const wrap = document.getElementById('decimalSettingsWrap');
+  let draft = readDecimalSettings();
+
+  const render = () => {
+    const cats = CATEGORY_ORDER.filter(k => (DECIMAL_CONFIGURABLE_FIELDS[k] || []).length);
+    wrap.innerHTML = cats.map(catKey => {
+      const cat = CATEGORIES[catKey];
+      const rows = DECIMAL_CONFIGURABLE_FIELDS[catKey].map(fieldKey => {
+        const rule = draft[decimalSettingKey(catKey, fieldKey)] || DECIMAL_OFF;
+        const official = OFFICIAL_DECIMAL_RULES[decimalSettingKey(catKey, fieldKey)];
+        const modeOpts = Object.entries(DECIMAL_MODES)
+          .map(([v, label]) => `<option value="${v}" ${rule.mode === v ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
+        const digitOpts = Array.from({ length: DECIMAL_MAX_DIGITS + 1 }, (_, d) =>
+          `<option value="${d}" ${rule.digits === d ? 'selected' : ''}>${d} 位</option>`).join('');
+        // 用這個欄位真實存在的值當例子，比憑空舉 3.5 有說服力
+        const sample = sampleValueFor(catKey, fieldKey) || '3.5';
+        return `<tr>
+          <td>${escapeHtml(fieldKey)}</td>
+          <td><select data-dec-mode="${escapeAttr(decimalSettingKey(catKey, fieldKey))}">${modeOpts}</select></td>
+          <td><select data-dec-digits="${escapeAttr(decimalSettingKey(catKey, fieldKey))}" ${rule.mode === 'off' ? 'disabled' : ''}>${digitOpts}</select></td>
+          <td class="hint">${escapeHtml(sample)} → <strong>${escapeHtml(formatDecimal(sample, rule))}</strong></td>
+          <td class="hint">${official ? `官方：${escapeHtml(DECIMAL_MODES[official.mode])} ${official.digits} 位` : '官方無規定'}</td>
+        </tr>`;
+      }).join('');
+      return `<h4 style="margin:12px 0 6px">${escapeHtml(cat.label)}${catKey === currentCatKey ? '（目前這一類）' : ''}</h4>
+        <table class="mapping-table"><thead><tr>
+          <th>欄位</th><th>呈現方式</th><th>位數</th><th>範例</th><th>官方辭典</th>
+        </tr></thead><tbody>${rows}</tbody></table>`;
+    }).join('');
+
+    wrap.querySelectorAll('[data-dec-mode]').forEach(sel => {
+      sel.onchange = () => {
+        const key = sel.dataset.decMode;
+        draft[key] = { ...(draft[key] || DECIMAL_OFF), mode: sel.value };
+        render();
+      };
+    });
+    wrap.querySelectorAll('[data-dec-digits]').forEach(sel => {
+      sel.onchange = () => {
+        const key = sel.dataset.decDigits;
+        draft[key] = { ...(draft[key] || DECIMAL_OFF), digits: Number(sel.value) };
+        render();
+      };
+    });
+  };
+
+  render();
+  modal.classList.remove('hidden');
+
+  document.getElementById('btnDecimalCancel').onclick = () => modal.classList.add('hidden');
+  document.getElementById('btnDecimalReset').onclick = () => {
+    if (!confirm('要回復出廠預設嗎？\n\n只有「噪音－監測數值」會是補零 2 位，其餘欄位全部改成「不處理」（原樣顯示）。')) return;
+    draft = { ...DEFAULT_DECIMAL_SETTINGS };
+    render();
+  };
+  document.getElementById('btnDecimalOfficial').onclick = () => {
+    if (!confirm('要套用 115 年版官方資料辭典的建議嗎？\n\n噪音的監測數值，以及空氣／水質／地質的採樣深度、採樣水深、採樣地點高度、污染物採樣高度，都會設成補零 2 位。\n辭典沒有規定的欄位（例如各類別的檢測數值）維持你目前的設定。')) return;
+    draft = { ...draft, ...OFFICIAL_DECIMAL_RULES };
+    render();
+  };
+  document.getElementById('btnDecimalSave').onclick = () => {
+    writeDecimalSettings(draft);
+    modal.classList.add('hidden');
+    showToast('小數位數設定已儲存。存起來的原始值沒有被改動，只有顯示與匯出會照新設定。');
+    renderContentPreservingScroll();
+  };
+}
+
+/** 從目前資料裡找一個真實的值當範例，找不到就回 null。 */
+function sampleValueFor(catKey, fieldKey) {
+  const project = getCurrentProject();
+  if (!project) return null;
+  const rows = DataStore.getData(project.id, catKey) || [];
+  for (const r of rows) {
+    const v = String(r[fieldKey] ?? '').trim();
+    if (v && /^[+-]?\d*\.?\d+$/.test(v)) return v;
+  }
+  return null;
+}
+
 function openBatchHistoryModal(project, catKey) {
   const cat = CATEGORIES[catKey];
   const batches = DataStore.getImportBatches(project.id, catKey);
@@ -1285,7 +1379,7 @@ function rowHtml(cat, row, idx) {
    * 一列二十幾欄乘上幾百列會很慢。
    */
   const missingHere = new Map(missingRequiredFields(row, cat).map(m => [m.key, m.why]));
-  const ctl = (f) => fieldControlHTML(f, row[f.key], `data-row="${idx}"`, missingHere.get(f.key));
+  const ctl = (f) => fieldControlHTML(f, row[f.key], `data-row="${idx}"`, missingHere.get(f.key), cat.key);
   const pinnedCells = displayFieldOrder(cat).slice(0, 2).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${ctl(f)}</td>`).join('');
   const restCells = displayFieldOrder(cat).slice(2).map(f => `<td>${ctl(f)}</td>`).join('');
   // 操作 (delete button) and # (row number) sit right after 地點/測項 (the pinned
@@ -1305,7 +1399,7 @@ function rowHtml(cat, row, idx) {
  *   有值時整格畫紅框並附說明，讓使用者看得到要補哪裡——以前完全沒有提示，
  *   而「補回缺少測項」產生的空白列是預設打勾的，很容易就這樣送出去。
  */
-function fieldControlHTML(field, value, rowAttr, missingWhy) {
+function fieldControlHTML(field, value, rowAttr, missingWhy, catKey) {
   value = value ?? '';
   const base = `${rowAttr} data-field="${field.key}"`;
   const missTip = missingWhy
@@ -1372,10 +1466,17 @@ function fieldControlHTML(field, value, rowAttr, missingWhy) {
     case 'agencycode':
       return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}" data-codetype="agency" title="${escapeAttr(missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupAgency(value))}" placeholder="代碼">`;
     default: {
-      // 噪音（含振動）的「監測數值」固定顯示兩位小數（官方資料辭典的規定）。
-      // 這是補零不是改數字：39.2 顯示成 39.20。非數值（ND、未檢測…）原樣保留。
-      // 在這裡做而不是只在存檔時做，是為了讓 v4.29 以前存下來的舊資料一打開就對齊。
-      if (field.key === NOISE_VALUE_FIELD) value = formatNoiseValue(value);
+      /*
+       * 依「小數位數設定」把值格式化後顯示。設定是使用者自己調的
+       * （工具列的「🔢 小數位數設定」），出廠預設 ＝ 目前官方辭典的規定。
+       *
+       * ⚠️ 這裡改的只是**畫面上看到的字**，DataStore 裡存的永遠是原始值。
+       * 所以設定改來改去都能還原，設錯也救得回來。
+       * ⚠️ 一定要**連類別一起看**，不能只比對欄位名稱：官方哪天把水質的
+       * 「檢測數值」改名成「監測數值」（噪音現在就叫這個），只看名稱就會
+       * 把水質的值也套上噪音的規則。catKey 沒傳進來時一律不處理。
+       */
+      if (catKey) value = formatFieldValue(catKey, field.key, value);
       const bad = field.key === LIMIT_FIELD && String(value).trim() !== '' && !isPlainNumber(value);
       const cls = bad || missCls ? ` class="${bad ? 'cell-invalid' : ''}${missCls}"` : '';
       const tip = bad ? ' title="「檢測極限」只能填數值。請改成純數字，或清空這一格。"' : missTip;
@@ -1428,9 +1529,12 @@ function wireGridEvents(project, catKey, cat) {
      * 而且只在**失焦時**（learn=true）做——每一次按鍵都補的話，使用者才打了「3」
      * 就被改成「3.00」，游標跳掉、也打不出 39.2。
      */
-    if (learn && fieldKey === NOISE_VALUE_FIELD) {
-      rows[rowIdx][fieldKey] = formatNoiseValue(rows[rowIdx][fieldKey]);
-    }
+    /*
+     * ⚠️ 這裡**刻意不把格式化後的值寫回去**。
+     * v4.33 以前會寫回去（存的就是 39.20），那在「四捨五入」這個模式下會出事：
+     * 設成兩位就把 0.125 永久變成 0.13，設定改回去也救不回原始值。
+     * 現在存的永遠是使用者打的／報告上的原始值，格式化只發生在畫面與匯出。
+     */
     DataStore.saveData(project.id, catKey, rows);
     // Keep the site-item history snapshot current with manual corrections too — not
     // just at import time — so a value the person fixes by hand (e.g. filling in
@@ -1731,12 +1835,12 @@ function wireGridEvents(project, catKey, cat) {
     const edited = !valueUnchanged(t);
     if (edited && !isDateTimeInput) {
       commit(rowIdx, fieldKey, t.value, { learn: true });
-      // 監測數值補零之後要把畫面上的輸入框也一起換過來，否則存的是 39.20、
+      // 補零之後要把畫面上的輸入框也一起換過來，否則存的是 39.20、
       // 格子裡卻還寫著 39.2，直到下一次整頁重繪才對得上。
-      if (fieldKey === NOISE_VALUE_FIELD) {
-        const shown = formatNoiseValue(t.value);
-        if (shown !== t.value) t.value = shown;
-      }
+      // 失焦時把輸入框裡的字換成格式化後的樣子，讓它跟表格其他列一致。
+      // 存起來的仍然是原始值（見 commit 裡的說明），所以這只是顯示。
+      const shown = formatFieldValue(catKey, fieldKey, t.value);
+      if (shown !== t.value) t.value = shown;
     }
     // What this field held before the edit, in STORAGE form — the date/time sync
     // needs it to identify "the rows that were part of the same visit as this one",

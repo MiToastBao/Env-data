@@ -145,6 +145,25 @@
   </div>
 </div>
 
+<!-- 小數位數設定 Modal -->
+<div id="decimalModal" class="modal-overlay hidden">
+  <div class="modal modal-wide">
+    <h3>🔢 小數位數設定</h3>
+    <p class="hint">
+      設定各類別的數值欄位在<strong>畫面上與匯出的檔案裡</strong>要顯示幾位小數。
+      <strong>存起來的永遠是原始值</strong>，設定改回去隨時可以還原。
+      <strong>出廠預設只有「噪音－監測數值」補零 2 位，其餘欄位一律原樣</strong>；辭典另外還寫過五個欄位，列在最右欄供參考，要不要採用按「套用官方辭典建議」。規定若有變更，在這裡改就好，不用改程式。
+    </p>
+    <div id="decimalSettingsWrap" class="mapping-table-wrap"></div>
+    <div class="modal-actions">
+      <button id="btnDecimalReset" class="btn btn-ghost" title="只有噪音的監測數值補零 2 位，其餘全部不處理">回復出廠預設</button>
+      <button id="btnDecimalOfficial" class="btn btn-ghost" title="把 115 年版辭典寫過小數位數的六個欄位都設成補零 2 位">套用官方辭典建議</button>
+      <button id="btnDecimalCancel" class="btn btn-ghost">取消</button>
+      <button id="btnDecimalSave" class="btn btn-primary">儲存</button>
+    </div>
+  </div>
+</div>
+
 <!-- Changelog Modal -->
 <div id="changelogModal" class="modal-overlay hidden">
   <div class="modal modal-wide">

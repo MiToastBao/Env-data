@@ -66,6 +66,8 @@ const ExportEngine = {
 
   buildWorkbook(project, basicInfo, categoryKey, rowsOverride) {
     const cat = CATEGORIES[categoryKey];
+    // 一次讀出來給整張表用，不要每一格各讀一次 localStorage。
+    const decimalSettings = readDecimalSettings();
     const rows = rowsOverride || DataStore.getData(project.id, categoryKey);
 
     const wb = XLSX.utils.book_new();
@@ -85,10 +87,11 @@ const ExportEngine = {
       const val = r[f.key] || '';
       if (f.type === 'date') return this._dateCell(val);
       if (f.type === 'time') return this._timeCell(val);
-      // 噪音（含振動）的監測數值固定兩位小數。這裡再做一次是保險：
-      // v4.29 以前存下來、而且使用者從來沒點過那一格的舊資料，交出去的檔案
-      // 也必須符合官方「小數點2位數」的規定。補零而已，數值不變。
-      if (f.key === NOISE_VALUE_FIELD) return formatNoiseValue(val);
+      // 依「小數位數設定」格式化。這是交出去的檔案，所以一定要在這裡做一次
+      // ——使用者從來沒點過的格子，畫面上的格式化不會經過它。
+      // ⚠️ 連類別一起看，不能只比對欄位名稱（同名欄位可能屬於不同規則）。
+      if (decimalSettings) return formatDecimal(val, decimalRuleFor(categoryKey, f.key, decimalSettings));
+      return val;
       return val;
     }));
     const wsData = XLSX.utils.aoa_to_sheet([dataHeaders, ...dataRows]);

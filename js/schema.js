@@ -262,36 +262,130 @@ function canonicalVibItemName(itemName, timeSegment) {
   return itemName === VIB_LV10_DAY && timeSegment === '夜間' ? VIB_LV10_NIGHT : itemName;
 }
 
-// ── 噪音的「監測數值」固定顯示兩位小數 ──────────────────────────────────────
+// ── 小數位數設定（使用者可調） ──────────────────────────────────────────────
 //
-// 官方資料辭典對「監測數值」的說明是「請填數值，小數點2位數」。
-// 這裡做的是**補零**，不是提高精度：報告上印的是 39.2（檢測報告的儲存格格式
-// 就是 0.0），所以填的仍然是 39.2，只是寫成 39.20，和報告對得起來。
-// 非數值（空白、ND、文字說明）一律原樣保留。
-const NOISE_VALUE_FIELD = '監測數值';
-const NOISE_VALUE_DECIMALS = 2;
+// 起因：官方辭典的規定會改。v4.33 以前是把「哪些欄位要兩位小數」寫死在程式裡，
+// 規定一改就得改程式、重新發布。現在改成**使用者自己在畫面上設定**，
+// 程式只提供「出廠預設值 ＝ 目前官方辭典的規定」。
+//
+// **出廠預設只有一項：噪音的「監測數值」補零到 2 位。其餘一律「不處理」（原樣）。**
+//
+// 為什麼不把辭典寫到的六個欄位全部設成預設：使用者只親自確認過噪音那一條。
+// 程式替使用者決定申報數值要寫幾位，等於替他做了一個他沒同意的決定——
+// 而數值的位數本身就是資訊（補成兩位＝宣稱實驗室量到小數第二位）。
+// 辭典寫了什麼仍然完整保留在 OFFICIAL_DECIMAL_RULES，面板上逐欄顯示，
+// 並提供一鍵「套用官方辭典建議」，要不要採用由使用者自己按。
+//
+// 我把 115 年版五份辭典的說明欄整份讀出來比對過，寫了小數位數的只有這六個：
+//   噪音   監測數值              「請填數值，小數點2位數」  ← 出廠預設就是它
+//   空氣   採樣地點高度(公尺)     「請填小數點後兩位。」
+//   空氣   污染物採樣高度(公尺)   「請填小數點後兩位。」
+//   水質   採樣深度(公尺)         「請填小數點後兩位。」
+//   水質   採樣水深(公尺)         「請填小數點後兩位。」
+//   地質   採樣深度(公尺)         「請填小數點後兩位。」
+//
+// 空氣／水質／地質的「檢測數值」辭典**沒有**規定，所以預設不處理。
+// 硬套會製造假精度：空品報告 274 個值裡有 138 個原本只有 0～1 位小數。
+//
+// ⚠️ 兩種模式的差別很重要：
+//   補零（pad）    ：只加尾零，**絕不減少位數**。0.125 在兩位設定下仍是 0.125。
+//                    改的只是寫法，數字完全沒動。
+//   四捨五入（round）：真的會減少位數。0.125 在兩位設定下變成 0.13。
+//                    **但只影響畫面顯示與匯出的檔案，存起來的永遠是原始值**，
+//                    所以設定改回去、或改成別的位數，隨時都能還原。
+const DECIMAL_MODES = { off: '不處理', pad: '補零', round: '四捨五入' };
+const DECIMAL_SETTINGS_KEY = 'envapp_decimal_settings_v1';
+const DECIMAL_MAX_DIGITS = 6;
+
+/** 115 年版官方辭典寫了小數位數的欄位。**只用來在面板上顯示建議**，不自動套用。 */
+const OFFICIAL_DECIMAL_RULES = {
+  'noise|監測數值': { mode: 'pad', digits: 2 },
+  'air|採樣地點高度(公尺)': { mode: 'pad', digits: 2 },
+  'air|污染物採樣高度(公尺)': { mode: 'pad', digits: 2 },
+  'water|採樣深度(公尺)': { mode: 'pad', digits: 2 },
+  'water|採樣水深(公尺)': { mode: 'pad', digits: 2 },
+  'geo|採樣深度(公尺)': { mode: 'pad', digits: 2 },
+};
+
+/** 出廠預設。只有噪音的監測數值，其餘欄位一律不處理（原樣）。 */
+const DEFAULT_DECIMAL_SETTINGS = {
+  'noise|監測數值': { mode: 'pad', digits: 2 },
+};
+
+/*
+ * 設定面板要列出哪些欄位——**只列會填數字的欄位**。
+ * 全部欄位都列的話一個類別就二十幾列，五個類別加起來根本找不到要改的那一個。
+ * 日期、時間、地點、代碼那些欄位設小數位數沒有意義。
+ */
+const DECIMAL_CONFIGURABLE_FIELDS = {
+  air: ['檢測數值', '檢測極限', '採樣地點高度(公尺)', '污染物採樣高度(公尺)'],
+  water: ['檢測數值', '檢測極限', '採樣深度(公尺)', '採樣水深(公尺)'],
+  geo: ['檢測數值', '檢測極限', '採樣深度(公尺)'],
+  noise: ['監測數值'],
+  // 生態不列：它的「數量」是隻數／株數，本來就是整數，沒有小數位數的問題。
+  eco: [],
+};
+
+const DECIMAL_OFF = { mode: 'off', digits: 2 };
+
+function decimalSettingKey(catKey, fieldKey) { return `${catKey}|${fieldKey}`; }
+
+/** 讀出整份設定（含出廠預設）。壞掉的內容一律忽略，不讓它把畫面弄爆。 */
+function readDecimalSettings() {
+  let stored = {};
+  try {
+    const raw = localStorage.getItem(DECIMAL_SETTINGS_KEY);
+    if (raw) stored = JSON.parse(raw) || {};
+  } catch { stored = {}; }
+  const out = {};
+  for (const [key, rule] of Object.entries({ ...DEFAULT_DECIMAL_SETTINGS, ...stored })) {
+    if (!rule || typeof rule !== 'object') continue;
+    const mode = Object.prototype.hasOwnProperty.call(DECIMAL_MODES, rule.mode) ? rule.mode : 'off';
+    let digits = Number(rule.digits);
+    if (!Number.isInteger(digits) || digits < 0 || digits > DECIMAL_MAX_DIGITS) digits = 2;
+    out[key] = { mode, digits };
+  }
+  return out;
+}
+
+function writeDecimalSettings(settings) {
+  localStorage.setItem(DECIMAL_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+/** 這個類別的這個欄位，目前要怎麼呈現小數。沒設定過就是「不處理」。 */
+function decimalRuleFor(catKey, fieldKey, settings) {
+  const all = settings || readDecimalSettings();
+  return all[decimalSettingKey(catKey, fieldKey)] || DECIMAL_OFF;
+}
 
 /**
- * ⚠️ 這支只會**補零**，絕對不會減少位數。
+ * 依規則把一個值格式化。
  *
- * 一開始寫成 Number(v).toFixed(2)，那是錯的——它會把 67.235 變成 67.23、
- * 把 0.0006 變成 0.00，等於把實驗室印出來的位數砍掉。smartparse 的 formatNumber
- * 為了避免這件事特地寫了一整段註解說明「只用來削掉浮點雜訊，絕不低於原始位數」，
- * 這裡不能反過來把它抵銷掉。
- *
- * 規則：小數位數不足兩位就補到兩位，已經有兩位以上就原樣保留。
- * 非數值（空白、ND、<0.5、未檢測…）一律不動。
+ * ⚠️ 非數值（空白、ND、<0.5、未檢測、科學記號…）一律原樣保留，兩種模式都一樣。
+ * ⚠️ pad 只會**補零**，絕對不會減少位數——這一點是刻意的。
+ *    早期版本寫成 Number(v).toFixed(2)，會把 67.235 變成 67.23、0.0006 變成 0.00，
+ *    等於把實驗室印出來的位數砍掉。要減少位數請明確選「四捨五入」。
  */
-function formatNoiseValue(v) {
+function formatDecimal(v, rule) {
   const s = String(v ?? '').trim();
-  if (s === '') return s;
+  if (s === '' || !rule || rule.mode === 'off') return s;
   const m = s.match(/^([+-]?)(\d*)(?:\.(\d*))?$/);
-  if (!m || (m[2] === '' && (m[3] || '') === '')) return s; // ND、<0.5、未檢測、科學記號…原樣保留
+  if (!m || (m[2] === '' && (m[3] || '') === '')) return s;
+  const digits = rule.digits;
+  if (rule.mode === 'round') {
+    const n = Number(s);
+    return Number.isFinite(n) ? n.toFixed(digits) : s;
+  }
   const sign = m[1] === '-' ? '-' : '';
   const intPart = m[2] === '' ? '0' : m[2];
   const decPart = m[3] || '';
-  if (decPart.length >= NOISE_VALUE_DECIMALS) return `${sign}${intPart}.${decPart}`;
-  return `${sign}${intPart}.${decPart.padEnd(NOISE_VALUE_DECIMALS, '0')}`;
+  if (decPart.length >= digits) return digits === 0 && decPart === '' ? `${sign}${intPart}` : `${sign}${intPart}${decPart ? '.' + decPart : ''}`;
+  return `${sign}${intPart}.${decPart.padEnd(digits, '0')}`;
+}
+
+/** 給畫面／匯出用的一行式：查規則 ＋ 套用。 */
+function formatFieldValue(catKey, fieldKey, value, settings) {
+  return formatDecimal(value, decimalRuleFor(catKey, fieldKey, settings));
 }
 
 /** 兩個欄位值是不是「同一個數字、只是寫法不同」（39.2 與 39.20、0.3 與 0.30）。 */
