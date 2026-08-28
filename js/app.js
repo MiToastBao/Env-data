@@ -1452,14 +1452,26 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey) {
       // template's own time format has no seconds either).
       return `<input type="text" ${base}${missTip} value="${escapeAttr(toTimeDisplayValue(value))}" class="time-input${missCls}" placeholder="HH:MM" inputmode="numeric" maxlength="8">`;
     case 'suggest': {
-      const listId = `suggest-${field.key.replace(/[^a-zA-Z0-9]/g, '')}`;
+      /*
+       * ⚠️ 這個 id 以前是 `suggest-` ＋ 欄位名稱去掉所有非英數字元。
+       * 中文欄位名稱去掉之後**一個字都不剩**，所以「比較關係」與「調查項目」
+       * 算出來的 id 都是 `suggest-`——兩個完全不同的建議清單會撞在一起，
+       * 而且下面的 `if (!getElementById(listId))` 會讓先建立的那一個留著不換。
+       * 實際症狀：先開空品（比較關係）再開生態，生態的「調查項目」跳出來的
+       * 是 ＞、＜、ND。v4.35 之前只有「比較關係」一個 suggest 欄位，所以撞不到；
+       * v4.36 生態的「調查項目」也改成 suggest，這個洞就會踩到。
+       *
+       * 改成用欄位名稱的字碼組出 id，中文也有唯一值。
+       */
+      const listId = `suggest-${[...field.key].map(ch => ch.charCodeAt(0).toString(36)).join('')}`;
       if (!document.getElementById(listId)) {
         const dl = document.createElement('datalist');
         dl.id = listId;
         dl.innerHTML = field.options.map(o => `<option value="${escapeAttr(o)}">`).join('');
         document.body.appendChild(dl);
       }
-      return `<input type="text" ${base}${missTip} value="${escapeAttr(value)}" list="${listId}"${missCls ? ` class="${missCls.trim()}"` : ''}>`;
+      const maxAttr = field.maxLength ? ` maxlength="${field.maxLength}"` : '';
+      return `<input type="text" ${base}${missTip} value="${escapeAttr(value)}" list="${listId}"${maxAttr}${missCls ? ` class="${missCls.trim()}"` : ''}>`;
     }
     case 'unitcode':
       return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}" data-codetype="unit" title="${escapeAttr(missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupUnit(value))}" placeholder="代碼">`;
@@ -1559,17 +1571,28 @@ function wireGridEvents(project, catKey, cat) {
    *   - 平日 and 假日 are separate visits to the SAME site, told apart only by their
    *     sampling dates. Correcting the 假日 date must never reach the 平日 rows.
    *   - 噪音 and 振動 are separate sub-reports of the same visit, told apart by
-   *     檢測類別. They share their COORDINATES (one tripod, one position) but nothing
-   *     else — 管制區, 管制標準, 檢測方法 and so on belong to one or the other.
+   *     檢測類別. They share the things that come from STANDING IN ONE SPOT AT ONE
+   *     MOMENT — 座標 (one tripod, one position) and 日期／時間起迄 (the same visit) —
+   *     but nothing else: 管制區, 管制標準, 檢測方法 and so on belong to one or the
+   *     other. (v4.36：時間起迄 加入共用清單，依使用者說明「同一地點的噪音與振動，
+   *     座標一樣之外，時間起迄也會一樣」。)
+   *
+   * ⚠️ 這和「同一地點不同檢測項目」是**兩件不同的事**，不要混在一起看：
+   *   空品／水質／地質 在同一地點做了 PM10 與 PM2.5，那是**同一個檢測類別**底下
+   *   的兩個檢測項目——它們本來就走「同檢測類別」那條路徑，改 PM10 的座標
+   *   PM2.5 會跟著。這是既有規則，v4.36 完全沒有動到它。
+   *   噪音↔振動是**跨檢測類別**，只有噪音類別有這個需求。
    *
    * So the matching rules differ per field, and each caller says what it needs:
    *
    *   座標         same location + same 日期(起) AND 日期(迄); category ignored (noise
    *                and vibration share them); batch ignored (the two sub-reports can
    *                arrive as two separate files)
-   *   日期／時間    same location + same 檢測類別 + the date the row had BEFORE the edit
+   *   日期／時間    same location + the date the row had BEFORE the edit;
+   *                噪音類別：category ignored + batch ignored（和座標同一組）
+   *                其他類別：same 檢測類別 + same batch（維持既有行為）
    *   檢測類別      same location + same dates + the category the row had BEFORE the edit
-   *   其他欄位      same location + same 檢測類別 + same dates
+   *   其他欄位      same location + same 檢測類別 + same dates（噪音與振動各自獨立）
    *
    * `dateStart`/`dateEnd`/`category` override what to compare against, which is what
    * makes "the rows that matched me before I changed this" expressible: after the
@@ -1604,6 +1627,20 @@ function wireGridEvents(project, catKey, cat) {
   // can genuinely have slightly different coordinates between visits, so syncing
   // must never cross dates. Always asks first, same reasoning as the date/time sync
   // below.
+  /*
+   * 同步提示裡的「共 X 筆」拆成各檢測類別各幾筆。
+   * 使用者要的是看得出「同步給噪音幾筆、同步給振動幾筆」再決定按不按確定——
+   * 只講一個總數的話，跨檢測類別的同步等於盲按。
+   */
+  const countByCategory = (matches) => {
+    const counts = new Map();
+    matches.forEach(({ r }) => {
+      const c = r['檢測類別'] || '（未填檢測類別）';
+      counts.set(c, (counts.get(c) || 0) + 1);
+    });
+    return [...counts.entries()].map(([c, n]) => `${c} ${n} 筆`).join('、');
+  };
+
   const offerCoordSync = (rowIdx) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
@@ -1621,11 +1658,10 @@ function wireGridEvents(project, catKey, cat) {
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => COORD_FIELDS.some(f => r[f] !== source[f]));
     if (!anyDiff) return false;
-    const otherCats = [...new Set(matches.map(({ r }) => r['檢測類別']).filter(c => c && c !== source['檢測類別']))];
     const ok = confirm(
       `偵測到同一個測站「${source[locField]}」、同一次採樣（${toDateDisplayValue(source['日期(起)'])}`
       + `${source['日期(迄)'] && source['日期(迄)'] !== source['日期(起)'] ? ` ～ ${toDateDisplayValue(source['日期(迄)'])}` : ''}）`
-      + `還有 ${matches.length} 筆其他資料${otherCats.length ? `（含「${otherCats.join('」「')}」）` : ''}。\n`
+      + `還有 ${matches.length} 筆其他資料（${countByCategory(matches)}）。\n`
       + `是否要將這些資料的座標一併同步更新為與這一筆相同？\n\n`
       + `（座標是同一次採樣共用的，所以噪音與振動會一起更新。`
       + `其他欄位不會被動到，${'不同採樣日期的資料（例如平日／假日）也完全不受影響。'}`
@@ -1650,29 +1686,60 @@ function wireGridEvents(project, catKey, cat) {
    * of the same visit as this one".
    */
   const DATE_TIME_FIELDS = ['日期(起)', '時間(起)', '日期(迄)', '時間(迄)'];
+  /*
+   * 噪音類別：日期／時間跨「檢測類別」同步（v4.36）
+   * ------------------------------------------------
+   * 使用者的說明：同一地點的噪音與振動，是同一次到場的兩份子報告——
+   * 「座標會一樣之外，時間起迄也會一樣」。所以這一組欄位改成和座標同一個群組：
+   * 忽略檢測類別、忽略匯入檔案（噪音與振動常常是兩份分開的檔案）。
+   *
+   * ⚠️ 只有噪音類別。空品／水質／地質在同一地點同一天出現兩個檢測類別
+   * （例如水質的「河川」與「地下水」）是兩次不同的採樣，時間本來就不見得一樣，
+   * 讓它們互相同步會把不相干的資料改掉。
+   *
+   * ⚠️ 日期和時間仍然是**同一組**在同步，不是只放寬時間：如果只讓時間跨類別，
+   * 那麼修正日期時噪音那幾列的日期變了、振動沒變，兩邊就再也配不成
+   * 「同一地點＋同一日期」，下一次同步就找不到彼此了。
+   *
+   * 群組仍然是用「這一列**改之前**的日期」定義的，所以平日／假日依舊分得開。
+   */
+  const crossCategoryDateTime = catKey === 'noise';
   const offerDateTimeSync = (rowIdx, fieldKey, prevValue) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
-    if (!source || !source._batchId || !source[locField]) return false;
+    if (!source || !source[locField]) return false;
+    if (!crossCategoryDateTime && !source._batchId) return false;
     const prevStart = (fieldKey === '日期(起)' && prevValue !== undefined) ? prevValue : source['日期(起)'];
     const prevEnd = (fieldKey === '日期(迄)' && prevValue !== undefined) ? prevValue : source['日期(迄)'];
     if (!prevStart) return false;
     const matches = rows
       .map((r, idx) => ({ r, idx }))
       .filter(({ r, idx }) => idx !== rowIdx
-        && matchesSyncGroup(source, r, { dateStart: prevStart, dateEnd: prevEnd }));
+        && matchesSyncGroup(source, r, {
+          dateStart: prevStart,
+          dateEnd: prevEnd,
+          requireBatch: !crossCategoryDateTime,
+          requireCategory: !crossCategoryDateTime,
+        }));
     if (matches.length === 0) return false;
     const anyDiff = matches.some(({ r }) => DATE_TIME_FIELDS.some(f => r[f] !== source[f]));
     if (!anyDiff) return false;
     const ok = confirm(
-      `偵測到同一份檔案、同一個測站「${source[locField]}」`
-      + `${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}`
+      (crossCategoryDateTime
+        ? `偵測到同一個測站「${source[locField]}」`
+        : `偵測到同一份檔案、同一個測站「${source[locField]}」`
+          + `${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}`)
       + `、原本同樣是 ${toDateDisplayValue(prevStart)}`
-      + `${prevEnd && prevEnd !== prevStart ? ` ～ ${toDateDisplayValue(prevEnd)}` : ''} 這一次採樣的，還有 ${matches.length} 筆資料。\n`
+      + `${prevEnd && prevEnd !== prevStart ? ` ～ ${toDateDisplayValue(prevEnd)}` : ''} 這一次採樣的，還有 ${matches.length} 筆資料`
+      + `${crossCategoryDateTime ? `（${countByCategory(matches)}）` : ''}。\n`
       + `是否要將這些資料的採樣日期／時間一併同步更新為與這一筆相同？\n\n`
-      + `（只會套用到「原本跟這一筆同一次採樣」的資料——`
-      + `同測站不同次採樣（例如平日／假日）以及不同檢測類別的資料都不會被動到。`
+      + (crossCategoryDateTime
+        ? `（同一地點的噪音與振動是同一次到場，座標與時間起迄共用，所以會一起更新。`
+          + `管制標準、管制區、監測數值等其他欄位不會被動到——那些是噪音同步給噪音、`
+          + `振動同步給振動。同測站不同次採樣（例如平日／假日）也完全不受影響。`
+        : `（只會套用到「原本跟這一筆同一次採樣」的資料——`
+          + `同測站不同次採樣（例如平日／假日）以及不同檢測類別的資料都不會被動到。`)
       + `選擇「取消」則只修改目前這一筆。）`
     );
     if (!ok) return false;
@@ -4863,6 +4930,53 @@ function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assig
   alert(`已匯入「${cat.label}」：${summary.join('、') || '沒有變更'}。請於表格中核對內容是否正確，特別是尚未有測站設定的欄位。`);
 }
 
+/**
+ * 找出「晚間 ＋ 振動 ＋ Lv10」的資料列。
+ *
+ * 官方的振動音源發聲特性只有 Lvd(10)（日間）與 Lvn(10)（夜間）兩個代碼，**沒有晚間**
+ * ——振動參考日本振動規制法，只分日夜兩段。但報告上的「測定時間」是用噪音那套
+ * 三段規則（日／晚／夜）判的，所以營建工程若在 18:00~21:59 之間量測，
+ * 振動列會落在一個對振動不存在的時段。
+ *
+ * 程式預設把它併入夜間（Lvn(10)），但**不替使用者默默決定**：匯入時跳出來問一次。
+ * 營建工程本來就很少這麼晚量測，所以這個提醒不會常出現；真的出現時，
+ * 那一筆多半值得看一眼。
+ */
+function findEveningVibrationRows(rows, cat) {
+  return rows
+    .map((r, idx) => ({ r, idx }))
+    .filter(({ r }) =>
+      r['檢測類別'] === '振動'
+      && r['監測時段'] === '晚間'
+      && (r[cat.itemField] === VIB_LV10_DAY || r[cat.itemField] === VIB_LV10_NIGHT));
+}
+
+/**
+ * 問使用者晚間那幾筆振動要算 Lvn(10) 還是 Lvd(10)，並就地改好 rows。
+ * 回傳 false 代表使用者按了取消，整個匯入應該中止。
+ */
+function askEveningVibrationItem(rows, cat) {
+  const hits = findEveningVibrationRows(rows, cat);
+  if (!hits.length) return true;
+  const times = [...new Set(hits.map(({ r }) => `${r['日期(起)'] || ''} ${r['時間(起)'] || ''}`.trim()))];
+  const locs = [...new Set(hits.map(({ r }) => r[cat.locationField] || '（未填地點）'))];
+  const answer = confirm(
+    '【晚間量測的振動要算日間還是夜間？】\n\n'
+    + '官方的振動音源發聲特性只有兩個代碼：Lvd(10)（日間）與 Lvn(10)（夜間），沒有「晚間」。\n'
+    + '振動參考日本振動規制法，本來就只分日夜兩段；「晚間」是噪音那套三段分法。\n\n'
+    + `這次匯入有 ${hits.length} 筆振動落在 18:00~21:59：\n`
+    + `　時間：${times.slice(0, 4).join('、')}${times.length > 4 ? ` 等 ${times.length} 個時段` : ''}\n`
+    + `　測站：${locs.slice(0, 4).join('、')}${locs.length > 4 ? ` 等 ${locs.length} 個` : ''}\n\n`
+    + '要用哪一個？\n\n'
+    + '　【確定】＝ Lvn(10) 夜間（預設，日本振動規制法多數地區 19:00 後即為夜間）\n'
+    + '　【取消】＝ Lvd(10) 日間',
+  );
+  const item = answer ? VIB_LV10_NIGHT : VIB_LV10_DAY;
+  hits.forEach(({ idx }) => { rows[idx][cat.itemField] = item; });
+  showToast(`晚間的 ${hits.length} 筆振動已設為 ${item}。之後可在表格裡逐列調整。`);
+  return true;
+}
+
 function confirmSmartImport() {
   const project = getImportProject();
   if (!project) { alert('這次匯入鎖定的計畫已經不存在（可能已被刪除），請重新開啟匯入視窗。'); closeImportModal(); return; }
@@ -4926,6 +5040,8 @@ function confirmSmartImport() {
   selectedRows = selectedRows.concat(suggestedRows);
   applyLimitFixMode(selectedRows, cat); // 檢測極限 must be a bare number — see renderLimitWarning
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
+  // 晚間量測的振動：官方沒有晚間代碼，問過使用者再寫進去（見 askEveningVibrationItem）
+  if (!askEveningVibrationItem(selectedRows, cat)) return;
 
   // Tag rows with a batch id PER SOURCE FILE, not one shared id for the whole confirm
   // action — a multi-file import (e.g. three months' reports for the same site
@@ -5027,6 +5143,8 @@ function confirmImport() {
   const selectedRows = filterRowsBySelection(newRows, cat.itemField);
   applyLimitFixMode(selectedRows, cat); // 檢測極限 must be a bare number — see renderLimitWarning
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
+  // 對應欄位這條路徑同樣要問——完成版申報檔重新匯入時也可能帶著晚間的振動列
+  if (!askEveningVibrationItem(selectedRows, cat)) return;
 
   const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
   const assignBatchId = () => batchId; // one file, one batch id — no per-file split needed here

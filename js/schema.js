@@ -27,6 +27,24 @@ const CATEGORY_TYPE_OPTIONS = {
   noise: ['環境噪音', '道路交通噪音', '營建工程噪音', '公私場所噪音', '航空噪音', '低頻噪音', '振動'],
 };
 
+/*
+ * 生態的「調查項目」——建議清單，不是嚴格下拉。
+ *
+ * 來源：官方「環境監測填寫範本 115.8.18」的「總分類」工作表，生態污染別共 11 項，
+ * 逐字照抄（v4.36 依此份範本更新；舊版簡報只列 8 項，且第 8 項在同一份簡報裡
+ * 「其他動植物」與「維管束植物」兩種寫法並存——總分類寫的是維管束植物，
+ * 而且根本沒有「其他動植物」這一項）。
+ *
+ * ⚠️ 這裡刻意用 'suggest'（可選也可打）而不是 'select'（只能選）：
+ * 官方生態資料辭典第 18 列寫的是「請輸入文字 30 字以內。項目分類**可以請參考**
+ * 工作表-"總分類"或紅皮書名錄」，而且它自己的填寫示範用了「裸子植物」——
+ * 那不在總分類這 11 項裡面。鎖成下拉會讓合法的值打不進去。
+ */
+const ECO_SURVEY_ITEMS = [
+  '魚類', '鳥類', '爬蟲類', '兩棲類', '蝶類', '哺乳類', '昆蟲類',
+  '淡水魚類', '陸域爬行類', '陸域哺乳類', '維管束植物',
+];
+
 // 比較關係 is documented as ">, <, ND" only, but real completed filings also use
 // free-text markers like "未檢測" (equipment failure) etc., so this is a text field
 // with suggestions rather than a strict enum.
@@ -204,12 +222,24 @@ const CATEGORIES = {
         help: '2：WGS84（全球座標，例如經度 120.681，緯度 24.147）／3：TWD97-TM2（投影座標系，例如 X=193150, Y=2670900）' },
       { key: '採樣座標-經度 X', required: true, label: '採樣座標-經度 X', type: 'number' },
       { key: '採樣座標-緯度 Y', required: true, label: '採樣座標-緯度 Y', type: 'number' },
-      { key: '調查項目', required: true, label: '調查項目', type: 'text' },
+      { key: '調查項目', required: true, label: '調查項目', type: 'suggest', options: ECO_SURVEY_ITEMS, maxLength: 30,
+        help: '可從清單選，也可以自己輸入（官方寫「可以參考」總分類或紅皮書名錄，範本自己的示範就用了清單外的「裸子植物」）。30 字以內。' },
       { key: '調查頻率', required: true, label: '調查頻率', type: 'text' },
       { key: '環境現況描述', required: true, label: '環境現況描述', type: 'textarea' },
       { key: '學名', required: true, label: '學名', type: 'text' },
       { key: '中文名', required: true, label: '中文名', type: 'text' },
       { key: '數量', required: true, label: '數量', type: 'text' },
+      /*
+       * 「單位」——v4.36 補上。官方 115.8.18 的空白表單「生態檢測項目」共 21 欄，
+       * 這一欄夾在「數量」與「特有性」之間；舊版少了它，匯出只有 20 欄，
+       * 欄位對不上就是整份退件。**位置不可以移動**，環境部是按欄序讀的。
+       *
+       * ⚠️ 這是自由文字，不是單位代碼。官方辭典第 23 列：「選填。若不可數，
+       * 可填寫單位，例如：批、群；或覆蓋度：%」——填的是「群」「%」這種字，
+       * 不是 1~161 的代碼。所以 eco 的 unitField 仍然維持 null。
+       */
+      { key: '單位', label: '單位', type: 'text',
+        help: '選填。若不可數可填單位（例如：批、群），或覆蓋度（%）。這一欄填文字，不是單位代碼。' },
       { key: '特有性', label: '特有性', type: 'select', options: ['', '特有種', '特有亞種'] },
       { key: '保育分類', label: '保育分類', type: 'select', options: ['', 'I', 'II', 'III'] },
       { key: '調查方法描述', label: '調查方法描述', type: 'textarea', required: true },
@@ -244,6 +274,19 @@ const VIB_LV10_NIGHT = 'Lvn(10)';
 function vibLv10ItemFor(timeSegment) {
   if (timeSegment === '日間') return VIB_LV10_DAY;
   if (timeSegment === '夜間') return VIB_LV10_NIGHT;
+  /*
+   * 「晚間」是**噪音**的時段分法（日／晚／夜三段）。振動參考日本振動規制法，
+   * 只分日間與夜間兩段——官方的音源發聲特性也只有 Lvd(10)、Lvn(10) 兩個代碼，
+   * 沒有晚間版本。
+   *
+   * 而報告上的「測定時間」是用噪音那套三段規則判的，所以營建工程若在
+   * 18:00~21:59 之間量測，振動列會拿到「晚間」這個對振動不存在的時段。
+   * 舊版在這裡回傳 null，呼叫端就整列跳過——Lv10 **靜靜不見**，畫面上沒有提示。
+   *
+   * 依使用者確認：**振動的晚間併入夜間**（日本振動規制法多數地區日間是
+   * 08:00~19:00，19:00 之後轉夜間，比 22:00 才轉更接近實務）。
+   */
+  if (timeSegment === '晚間') return VIB_LV10_NIGHT;
   return null;
 }
 
@@ -259,7 +302,10 @@ function vibLv10ItemFor(timeSegment) {
  * 它只動「夜間的 Lvd(10)」這一個組合——依定義那就是錯的，所以不會誤傷任何正確資料。
  */
 function canonicalVibItemName(itemName, timeSegment) {
-  return itemName === VIB_LV10_DAY && timeSegment === '夜間' ? VIB_LV10_NIGHT : itemName;
+  // 走 vibLv10ItemFor 而不是自己比對「夜間」，這樣「晚間也算夜間」那條規則
+  // 只需要維護在一個地方——否則跨季比對會把同一個測項當成兩個。
+  if (itemName !== VIB_LV10_DAY) return itemName;
+  return vibLv10ItemFor(timeSegment) === VIB_LV10_NIGHT ? VIB_LV10_NIGHT : itemName;
 }
 
 // ── 小數位數設定（使用者可調） ──────────────────────────────────────────────
