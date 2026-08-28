@@ -69,10 +69,15 @@ function deepCopy(v) { return JSON.parse(JSON.stringify(v)); }
  *  before the change, not after. A fresh destructive action also clears any pending
  *  redo history for this key — standard undo/redo semantics: once you make a new
  *  change, the "future" that redo pointed to no longer makes sense to reapply. */
-function pushUndoSnapshot(projectId, catKey, description) {
+function pushUndoSnapshot(projectId, catKey, description, rowsOverride) {
   const key = undoKey(projectId, catKey);
   if (!state.undoStack[key]) state.undoStack[key] = [];
-  const rows = DataStore.getData(projectId, catKey);
+  /*
+   * rowsOverride：呼叫端已經把資料改掉了，但它知道「改之前」長什麼樣。
+   * 表格裡改一格是這種情況——值在每一次按鍵就寫進去了，等到失焦才知道
+   * 這是一次真正的編輯，那時候只能靠 baseline 把那一格還原成舊值來拍快照。
+   */
+  const rows = rowsOverride || DataStore.getData(projectId, catKey);
   const batches = DataStore.getImportBatches(projectId, catKey);
   const presets = getItemPresets(catKey);
   state.undoStack[key].push({ description, rows: deepCopy(rows), batches: deepCopy(batches), presets: deepCopy(presets) });
@@ -84,6 +89,12 @@ function pushUndoSnapshot(projectId, catKey, description) {
 function popUndoSnapshot(projectId, catKey) {
   const stack = state.undoStack[undoKey(projectId, catKey)];
   if (stack && stack.length > 0) stack.pop();
+}
+/** 事後補上更精確的說明——例如「修改『座標』」在同步之後變成
+ *  「修改『座標』並同步 4 筆」。一次使用者動作只留一個復原點。 */
+function retitleUndoSnapshot(projectId, catKey, description) {
+  const stack = state.undoStack[undoKey(projectId, catKey)];
+  if (stack && stack.length > 0) stack[stack.length - 1].description = description;
 }
 function peekUndo(projectId, catKey) {
   const stack = state.undoStack[undoKey(projectId, catKey)];
@@ -1574,8 +1585,28 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey) {
  *
  * 回傳被按下的那個選項的 key，關掉或按 Esc 回傳 null。
  */
-function askSyncChoice({ title, body, options, wide = false }) {
+/*
+ * 同步視窗開著的時候，不可以再開第二個。
+ * ────────────────────────────────────
+ * 視窗一打開就會把焦點移到第一顆按鈕上——而焦點離開原本那一格，
+ * 又會再觸發一次 focusout，於是同一次編輯開了兩個視窗：
+ * 第二個把第一個的按鈕覆蓋掉，而且它已經沒有「改之前的值」可以還原
+ * （baseline 在第一次就被清掉了），「取消修改」那顆就這樣消失。
+ * 症狀正是使用者回報的「少了取消的功能」。
+ */
+let syncDialogOpen = false;
+
+/*
+ * `dismissKey`：按 Esc 或點視窗外面時，等同按了哪一個選項。
+ *
+ * 以前是 null（＝只改這一筆），但那樣不合直覺——使用者按 Esc 的意思是
+ * 「算了，我不要改」，結果那一格卻默默留著新值，而且沒有任何提示。
+ * 那正是這一版一直在避免的事：沒有講出來的資料變更。
+ * 現在只要還原得回去，Esc 就等同「取消修改」。
+ */
+function askSyncChoice({ title, body, options, wide = false, dismissKey = null }) {
   return new Promise((resolve) => {
+    syncDialogOpen = true;
     const modal = document.getElementById('syncChoiceModal');
     const actions = document.getElementById('syncChoiceActions');
     // 有列表的時候放寬視窗，免得「會怎麼改」那一欄擠成一直條
@@ -1587,12 +1618,17 @@ function askSyncChoice({ title, body, options, wide = false }) {
     const finish = (key) => {
       if (done) return;
       done = true;
+      syncDialogOpen = false;
       document.removeEventListener('keydown', onKey);
+      modal.removeEventListener('click', onBackdrop);
       modal.classList.add('hidden');
       actions.innerHTML = '';
       resolve(key);
     };
-    const onKey = (e) => { if (e.key === 'Escape') finish(null); };
+    const onKey = (e) => { if (e.key === 'Escape') finish(dismissKey); };
+    // 點視窗外面的深色區域也算取消——和 Esc 同一個意思
+    const onBackdrop = (e) => { if (e.target === modal) finish(dismissKey); };
+    modal.addEventListener('click', onBackdrop);
     options.forEach((opt) => {
       const btn = document.createElement('button');
       btn.className = `btn ${opt.primary ? 'btn-primary' : 'btn-ghost'} btn-sm`;
@@ -1811,17 +1847,50 @@ function wireGridEvents(project, catKey, cat) {
    *
    * 回傳 true 代表真的改了東西（呼叫端要重畫）。
    */
-  const applySync = async ({ rows, rowIdx, matches, fields, what, note = '', when = '' }) => {
+  const applySync = async ({ rows, rowIdx, matches, fields, what, note = '', when = '', revert = null }) => {
     /*
      * ⚠️ `rows` 一定要由呼叫端傳進來，不可以在這裡重新 DataStore.getData()。
      * getData 每次都會從 localStorage 重新 JSON.parse，回來的是**全新的物件**——
      * 在這裡重讀一次的話，matches 裡的列屬於呼叫端那一份陣列，改了它們卻存另一份，
      * 結果就是視窗按了、畫面重畫了、資料一格都沒變，而且完全沒有錯誤訊息。
      */
+    if (syncDialogOpen) return false;   // 已經有一個同步視窗開著了，不要再問一次
     const source = rows[rowIdx];
     if (!source) return false;
     const differing = matches.filter(({ r }) => fields.some(f => r[f] !== source[f]));
     if (differing.length === 0) return false;
+
+    /*
+     * 「取消修改」——把剛剛改的那一格還原回去（v4.40）
+     * ────────────────────────────────────────────────
+     * 使用者回報：誤觸的時候沒有退路。原本四個選項全都是「這一筆已經改了，
+     * 只是要不要擴散出去」，少了「我根本不想改」這個答案；
+     * 而且 Esc 關掉視窗等同「只改這一筆」，那一格照樣是新值。
+     *
+     * ⚠️ 只還原**使用者剛剛動的那一格**。座標／日期時間雖然是整組同步，
+     * 但來源這一列只有被編輯的那一格變過，其餘欄位本來就沒動。
+     * ⚠️ 沒有 baseline（例如程式內部呼叫）時就不顯示這個選項，
+     * 不要拿猜的值去「還原」。
+     */
+    const canRevert = revert && revert.field !== undefined && revert.previous !== undefined
+      && String(revert.previous) !== String(source[revert.field] ?? '');
+    const revertLabelValue = canRevert
+      ? (String(revert.previous).trim() === '' ? '空白'
+        : (fields.includes('日期(起)') || fields.includes('日期(迄)')) && /^\d{4}-\d{2}-\d{2}$/.test(String(revert.previous))
+          ? toDateDisplayValue(revert.previous)
+          : /^\d{1,2}:\d{2}/.test(String(revert.previous)) ? toTimeDisplayValue(revert.previous)
+            : String(revert.previous))
+      : '';
+    const revertOption = canRevert
+      ? [{ key: 'revert', label: `取消修改（還原為 ${revertLabelValue}）` }]
+      : [];
+    const doRevert = () => {
+      source[revert.field] = revert.previous;
+      DataStore.saveData(project.id, catKey, rows);
+      // 資料回到動手之前了，那個復原點按下去不會有任何變化——不要留一個死項目
+      popUndoSnapshot(project.id, catKey);
+      return true;
+    };
 
     const locField = cat.locationField;
     const where = `同一個測站「${source[locField]}」${when ? `、${when}` : ''}`;
@@ -1842,14 +1911,17 @@ function wireGridEvents(project, catKey, cat) {
           + `${note ? `<div style="margin-top:10px">${note}</div>` : ''}`
           + `<div style="margin-top:6px">不同採樣日期的資料（例如平日／假日）完全不受影響。</div>`,
         wide: true,
+        dismissKey: canRevert ? 'revert' : 'none',
         options: [
           { key: 'all', label: `兩邊都同步（${differing.length} 筆）`, primary: true },
           { key: 'other', label: `只同步給${otherName} ${other.length} 筆` },
           { key: 'same', label: `只同步給${myName} ${same.length} 筆` },
-          { key: null, label: '只改這一筆' },
+          { key: 'none', label: '只改這一筆' },
+          ...revertOption,
         ],
       });
-      if (!key) return false;
+      if (key === 'revert') return doRevert();
+      if (!key || key === 'none') return false;
       chosen = key === 'all' ? differing : key === 'other' ? other : same;
     } else {
       /*
@@ -1865,18 +1937,27 @@ function wireGridEvents(project, catKey, cat) {
           + `${note ? `<div style="margin-top:10px">${note}</div>` : ''}`
           + `<div style="margin-top:6px">不同採樣日期的資料（例如平日／假日）完全不受影響。</div>`,
         wide: true,
+        dismissKey: canRevert ? 'revert' : 'none',
         options: [
           { key: 'all', label: `一併同步（${differing.length} 筆）`, primary: true },
-          { key: null, label: '只改這一筆' },
+          { key: 'none', label: '只改這一筆' },
+          ...revertOption,
         ],
       });
-      if (!key) return false;
+      if (key === 'revert') return doRevert();
+      if (!key || key === 'none') return false;
       chosen = differing;
     }
 
     chosen.forEach(({ r }) => { fields.forEach(f => { r[f] = source[f]; }); });
     DataStore.saveData(project.id, catKey, rows);
     learnSiteItemHistory(project.id, catKey, cat, chosen.map(m => m.r).concat([source]));
+    /*
+     * 復原點在編輯發生時就已經拍好了（snapshotEdit），這裡只是把說明補精確。
+     * 不再另外拍一張——否則「改一格＋同步」要按兩次復原才回得去，
+     * 而使用者心裡那是一個動作。
+     */
+    retitleUndoSnapshot(project.id, catKey, `修改「${what}」並同步 ${chosen.length} 筆`);
     return true;
   };
 
@@ -1884,7 +1965,26 @@ function wireGridEvents(project, catKey, cat) {
   const visitLabel = (start, end) => `同一次採樣（${toDateDisplayValue(start)}`
     + `${end && end !== start ? ` ～ ${toDateDisplayValue(end)}` : ''}）`;
 
-  const offerCoordSync = (rowIdx) => {
+  /*
+   * 一次使用者動作＝一個復原點（v4.40）
+   * ──────────────────────────────────
+   * 表格裡改一格、以及接下來可能發生的同步，合起來算**一次**動作：
+   * 按一下「↩️ 復原上一步」就要全部回到動手之前，不能按兩次。
+   *
+   * 值在每一次按鍵就已經寫進去了，所以這裡是把 baseline 塞回那一格，
+   * 用「改之前」的樣子拍快照，再把現值留著。這樣只複製一次，
+   * 也不必在使用者只是點進格子看一眼的時候就先拍一張。
+   */
+  const snapshotEdit = (rowIdx, fieldKey, previous, label) => {
+    if (previous === undefined) return false;
+    const before = DataStore.getData(project.id, catKey);
+    if (!before[rowIdx]) return false;
+    before[rowIdx][fieldKey] = previous;
+    pushUndoSnapshot(project.id, catKey, `修改「${label}」`, before);
+    return true;
+  };
+
+  const offerCoordSync = (rowIdx, fieldKey, prevValue) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
@@ -1900,6 +2000,7 @@ function wireGridEvents(project, catKey, cat) {
         && matchesSyncGroup(source, r, { requireBatch: false, requireCategory: false }));
     return applySync({
       rows, rowIdx, matches, fields: COORD_FIELDS, what: '座標',
+      revert: { field: fieldKey, previous: prevValue },
       when: visitLabel(source['日期(起)'], source['日期(迄)']),
       note: '座標是同一次採樣共用的——一次到場就架一次腳架、就一個位置。其他欄位不會被動到。',
     });
@@ -1955,6 +2056,7 @@ function wireGridEvents(project, catKey, cat) {
         }));
     return applySync({
       rows, rowIdx, matches, fields: DATE_TIME_FIELDS, what: '採樣日期／時間',
+      revert: { field: fieldKey, previous: prevValue },
       when: `原本同樣是 ${toDateDisplayValue(prevStart)}`
         + `${prevEnd && prevEnd !== prevStart ? ` ～ ${toDateDisplayValue(prevEnd)}` : ''} 這一次採樣的`,
       note: crossCategoryDateTime
@@ -2024,7 +2126,7 @@ function wireGridEvents(project, catKey, cat) {
   const canCrossNoiseVib = (fieldKey) =>
     catKey === 'noise' && !NOISE_VIB_DISTINCT_FIELDS.includes(fieldKey);
 
-  const offerGenericFieldSync = (rowIdx, fieldKey) => {
+  const offerGenericFieldSync = (rowIdx, fieldKey, prevValue) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
@@ -2039,6 +2141,7 @@ function wireGridEvents(project, catKey, cat) {
     const fieldLabel = (cat.fields.find(f => f.key === fieldKey) || {}).label || fieldKey;
     return applySync({
       rows, rowIdx, matches, fields: [fieldKey],
+      revert: { field: fieldKey, previous: prevValue },
       what: `「${fieldLabel}」（${source[fieldKey] || '空白'}）`,
       when: `同一天（${toDateDisplayValue(source['日期(起)'])}）`,
       note: cross
@@ -2083,10 +2186,13 @@ function wireGridEvents(project, catKey, cat) {
       t.dataset.syncBaseline = t.value; // a second change compares against this one
       const fieldKey = t.dataset.field;
       const rowIdx = Number(t.dataset.row);
+      const label = (cat.fields.find(f => f.key === fieldKey) || {}).label || fieldKey;
+      const snapped = snapshotEdit(rowIdx, fieldKey, previous, label);
       // 同步視窗是非同步的（要等使用者按按鈕），所以這裡要 await。
-      if (COORD_FIELDS.includes(fieldKey) && await offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
+      if (COORD_FIELDS.includes(fieldKey) && await offerCoordSync(rowIdx, fieldKey, previous)) { renderContentPreservingScroll(); return; }
       if (fieldKey === '檢測類別' && offerCategorySync(rowIdx, previous)) { renderContentPreservingScroll(); return; }
-      if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && await offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
+      if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && await offerGenericFieldSync(rowIdx, fieldKey, previous)) { renderContentPreservingScroll(); return; }
+      if (snapped) renderContentPreservingScroll(); // 讓「↩️ 復原上一步」按鈕出現
     }
   });
   // use focusout (bubbles) rather than blur to catch this via delegation; only
@@ -2170,9 +2276,12 @@ function wireGridEvents(project, catKey, cat) {
     delete t.dataset.syncBaseline;
     if (!edited) return; // focused and left without editing — nothing to sync
 
-    if (COORD_FIELDS.includes(fieldKey) && await offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
+    const label = (cat.fields.find(f => f.key === fieldKey) || {}).label || fieldKey;
+    const snapped = snapshotEdit(rowIdx, fieldKey, prevStored, label);
+    if (COORD_FIELDS.includes(fieldKey) && await offerCoordSync(rowIdx, fieldKey, prevStored)) { renderContentPreservingScroll(); return; }
     if (DATE_TIME_FIELDS.includes(fieldKey) && await offerDateTimeSync(rowIdx, fieldKey, prevStored)) { renderContentPreservingScroll(); return; }
-    if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && await offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
+    if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && await offerGenericFieldSync(rowIdx, fieldKey, prevStored)) { renderContentPreservingScroll(); return; }
+    if (snapped) renderContentPreservingScroll(); // 讓「↩️ 復原上一步」按鈕出現
   });
   tbody.addEventListener('click', (e) => {
     const btn = e.target.closest('.row-del-btn');
