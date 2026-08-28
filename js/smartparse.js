@@ -144,15 +144,42 @@ const SmartParse = {
   // ---------- small converters ----------
 
   /** "115.01.30" / "115年02月05日" / "115.03.09(平日)" -> "YYYY-MM-DD" (ROC year + 1911) */
+  /**
+   * 從第 `from` 列起，還有沒有「看起來是檢測項目資料」的一列？
+   * 用來分辨「表尾的備註」與「表格中間的一列備註」——見 parseLabItemTableSheet。
+   * 條件刻意保守：至少兩格有內容，第一格是短的文字（項目名稱），
+   * 第二格讀得出一個檢測值（數字或 ND／<／>）。
+   */
+  _hasItemRowBelow(grid, from) {
+    for (let r = from; r < grid.length; r++) {
+      const cells = grid[r].map(v => this.cellStr(v)).filter(v => v !== '');
+      if (cells.length < 2) continue;
+      const name = cells[0];
+      if (name.length > 20 || /^\d/.test(name)) continue;
+      if (/^[\s　（(【「\[]*(以下空白|聲明書|本報告|公司名稱|負責人|檢驗室主管|第\d+頁)/.test(name)) return false;
+      if (/^(N\.?D\.?|[<>]?\s*\d)/i.test(cells[1])) return true;
+    }
+    return false;
+  },
+
   rocDateToISO(text) {
-    if (!text) return '';
-    const s = String(text);
-    let m = s.match(/(\d{2,3})[.\-年](\d{1,2})[.\-月](\d{1,2})/);
-    if (!m) return '';
-    const y = parseInt(m[1], 10) + 1911;
-    const mo = String(m[2]).padStart(2, '0');
-    const d = String(m[3]).padStart(2, '0');
-    return `${y}-${mo}-${d}`;
+    if (text === null || text === undefined || text === '') return '';
+    /*
+     * 交給 DateTimeUtil 統一處理，不再自己寫一份。
+     *
+     * 舊版是這一行：/(\d{2,3})[.\-年](\d{1,2})[.\-月](\d{1,2})/，一律 +1911。
+     * 三個問題，每一個都會產生「看起來對、其實錯」的日期：
+     *   ・沒有錨定：報告上的 pH 範圍「6.0-9.0」、樣品編號「…-W26-01.1」
+     *     都會被讀成日期。
+     *   ・一律當民國年：報告改用西元寫「2026-06-25」，26 被當成民國 26 年 →
+     *     1937-06-25。
+     *   ・不認 `/` 分隔（115/06/25）、不認 Excel 傳來的日期序號與 Date 物件。
+     * DateTimeUtil._extractDate 這三件事都做對了，而且會驗行事曆
+     * （2026-02-30 直接判為無效，不會被 Date.UTC 滾成 3 月 2 日）。
+     * 讀不出來就回空字串，行為和舊版一致。
+     */
+    const parsed = DateTimeUtil.parseAny(text);
+    return parsed && parsed.date ? parsed.date : '';
   },
   addDaysISO(iso, days) {
     if (!iso) return '';
@@ -161,12 +188,21 @@ const SmartParse = {
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   },
-  /** "10:05~10:07" -> ["10:05:00","10:07:00"] */
+  /**
+   * "10:05~10:07" -> ["10:05:00","10:07:00"]
+   *
+   * ⚠️ 全形也要認：報告上寫「23：50～00：10」（全形冒號、全形波浪號）是很常見的，
+   * 舊版只認半形，整個時段就讀不到——而噪音的「監測時段」與「音源發聲特性」
+   * 是從起始時間推出來的，讀不到時間就會推成日間／Lvd(10)，實際上是夜間／Lvn(10)。
+   * 分隔符號的集合刻意和 autodetect.js 的 splitTimeRange 一模一樣：
+   * 同一個概念兩套寫法、其中一套少認幾個符號，正是這次檢查抓到最多的一類問題。
+   */
   splitTimeRange(text) {
     if (!text) return ['', ''];
-    const m = String(text).match(/(\d{1,2}:\d{2})\s*[~\-至]\s*(\d{1,2}:\d{2})/);
+    const m = String(text).match(/(\d{1,2}[:：]\d{2})\s*[~～至\-－—–]\s*(\d{1,2}[:：]\d{2})/);
     if (!m) return ['', ''];
-    return [m[1] + ':00', m[2] + ':00'];
+    const half = (v) => v.replace(/：/g, ':');
+    return [half(m[1]) + ':00', half(m[2]) + ':00'];
   },
   hourToTod(hh) {
     const h = parseInt(hh, 10);
@@ -209,14 +245,25 @@ const SmartParse = {
     const entries = Object.entries(AGENCY_CODES).filter(([code]) => code !== 'AA');
     const exact = entries.find(([, name]) => name === clean);
     if (exact) return exact[0];
-    // Longest match wins. Iterating in key order returned the PARENT company for a
-    // branch office — "台灣檢驗科技股份有限公司高雄分公司" resolved to code 35
-    // (the parent) instead of 105, because the parent's shorter name is a prefix and
-    // its numeric key comes first. A wrong 檢測機構許可證號 on an official filing.
-    const hits = entries
-      .filter(([, name]) => clean.includes(name) || name.includes(clean))
-      .sort((a, b) => String(b[1]).length - String(a[1]).length);
-    return hits.length ? hits[0][0] : '';
+    /*
+     * 包含關係有**兩個方向**，而且該選哪一個剛好相反。分開處理。
+     *
+     * ① 報告寫的名稱「包含」代碼表上的名稱 → 報告比代碼表更完整，取**最長**的。
+     *    「台灣檢驗科技股份有限公司高雄分公司」同時包含 35（母公司）和
+     *    105（高雄分公司）的名稱，正解是 105。這是舊版加上長度排序要修的情況。
+     *
+     * ② 代碼表上的名稱「包含」報告寫的名稱 → 報告是簡寫，比代碼表更模糊，
+     *    取**最短**的。「台灣檢驗科技(股)公司」去掉括號後是「台灣檢驗科技」，
+     *    35 和 105 都包含它——舊版一律取最長，於是給了 105（高雄分公司），
+     *    正解是 35。報告沒說哪家分公司，就不該替它挑一家。
+     *
+     * ①優先於②：報告寫得出完整名稱，是比簡寫強得多的證據。
+     */
+    const byLen = (dir) => (a, b) => dir * (String(a[1]).length - String(b[1]).length);
+    const contains = entries.filter(([, name]) => name && clean.includes(name)).sort(byLen(-1));
+    if (contains.length) return contains[0][0];
+    const containedBy = entries.filter(([, name]) => name && name.includes(clean)).sort(byLen(1));
+    return containedBy.length ? containedBy[0][0] : '';
   },
 
   UNIT_ALIASES: {
@@ -338,9 +385,37 @@ const SmartParse = {
     // requested precision. Anything a lab actually PRINTED keeps every digit it
     // printed, which is what protects 0.0004 and 0.0006.
     const significantDigits = String(Math.abs(n)).replace(/[^0-9]/g, '').replace(/^0+/, '').length;
-    if (significantDigits > 10) return String(Number(n.toFixed(decimals)));
-    const printedDecimals = (raw.split('.')[1] || '').replace(/[^0-9].*$/, '').length;
-    return String(Number(n.toFixed(Math.min(Math.max(decimals, printedDecimals), 12))));
+    if (significantDigits > 10) return this._plainDecimal(n, decimals);
+    let printedDecimals = (raw.split('.')[1] || '').replace(/[^0-9].*$/, '').length;
+    /*
+     * 科學記號要把指數算進小數位數，否則位數會少算到把值整個抹掉：
+     * 報告寫 5.0E-7，小數點後只看得到一個「0」→ 位數算成 1 → 進位成 3 位
+     * → 0.000 → **變成 0**。戴奧辛、重金屬的 MDL 真的會低到這個量級。
+     * 正指數方向相反（3.5E+03 只需要 0 位），一樣要扣。
+     */
+    const expo = raw.match(/[eE]\s*([+-]?\d+)/);
+    if (expo) printedDecimals = Math.max(0, printedDecimals - parseInt(expo[1], 10));
+    return this._plainDecimal(n, Math.min(Math.max(decimals, printedDecimals), 12));
+  },
+
+  /**
+   * 四捨五入到指定位數，去掉多餘的尾零，而且**絕不寫成科學記號**。
+   *
+   * 舊寫法是 String(Number(n.toFixed(k)))。Number → String 這一步在數值小於
+   * 1e-6 時會自己轉成科學記號：0.0000001 變成字串 "1e-7"，接著原樣寫進
+   * 檢測數值 欄位。官方要的是數字，環境部那邊拿到 "1e-7" 只會是一個看不懂的
+   * 文字。低到這個量級的 MDL 在戴奧辛、重金屬報告裡是會出現的。
+   */
+  _plainDecimal(num, decimals) {
+    if (!isFinite(num)) return String(num);
+    const d = Math.max(0, Math.min(Math.round(decimals) || 0, 100));
+    // toFixed 在 |n| < 1e21 時保證輸出定點記號；超過的話再大也不是檢測數值了。
+    if (Math.abs(num) >= 1e21) return String(num);
+    let s = num.toFixed(d);
+    if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\.$/, '');
+    // -0 / -0.000 → 0
+    if (/^-0(\.0*)?$/.test(s)) s = s.replace('-', '');
+    return s === '' || s === '-' ? '0' : s;
   },
 
   /** Parse a raw "檢測值" cell into {比較關係, 檢測數值} pairs, handling ND / </> / scientific-ish notation. */
@@ -1122,7 +1197,23 @@ const SmartParse = {
       const cells = row.map(v => this.cellStr(v)).filter(v => v !== '');
       if (cells.length === 0) continue;
       const first = cells[0];
-      if (/以下空白|備註|聲明書|本報告|公司名稱|負責人|檢驗室主管|第\d+頁/.test(first)) break;
+      /*
+       * 表尾判斷。舊版是「第一格**含有**這幾個詞就停」，兩種情況會出事：
+       *   ・項目名稱本身含「備註」——「總磷（備註：以 P 計）」整張表在這裡截斷；
+       *   ・表格**中間**插一列「備註：本次因故補測」——那一列以下全部不匯入。
+       * 兩種都不會有任何提示，使用者只會覺得「怎麼少了幾項」。
+       *
+       * 改成：詞要在開頭（前面允許括號、引號、空白），而且「備註」這個詞
+       * 因為中間也常出現，要再往下看還有沒有真正的資料列——有就只跳過這一列。
+       * 其他幾個詞（聲明書、本報告、負責人…）只會出現在表尾，維持原本的 break。
+       */
+      const lead = /^[\s　（(【「\[]*/;
+      const rest = first.replace(lead, '');
+      if (/^(以下空白|聲明書|本報告|公司名稱|負責人|檢驗室主管|第\d+頁)/.test(rest)) break;
+      if (/^備註/.test(rest)) {
+        if (this._hasItemRowBelow(grid, r + 1)) continue;
+        break;
+      }
       if (cells.length < 2) continue;
       const dash = (v) => (/^[-–—─]{1,2}$/.test(v || '') ? '' : (v || ''));
       let itemName, valueRaw, limitRaw, unitText, methodText;
@@ -1160,19 +1251,20 @@ const SmartParse = {
       // unit *text* (unitText present but not found in the code table) is uncertain.
       const unitLookup = unitText ? this.reverseUnitLookup(unitText, itemName) : (this.ITEM_UNIT_OVERRIDES[itemName] ? { code: this.ITEM_UNIT_OVERRIDES[itemName], confident: true } : { code: '161', confident: true });
       const valFormatted = /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val;
-      // 檢測極限 only makes sense alongside "ND" (below detection limit entirely)
-      // or "<X" (below this specific threshold) — a plain measured value or a
-      // ">X" reading isn't characterized by a detection limit, so leave it blank
-      // even if the report's own 偵測極限 column happened to have something in it.
-      const limitApplies = cmp === 'ND' || cmp === '<';
+      // 檢測極限 is carried across EXACTLY as the report wrote it. There is no
+      // official rule tying it to 比較關係 — a lab that reports 鋅 0.39 mg/L
+      // alongside a 檢測極限 of 0.005 is stating a real, filable fact, and the
+      // earlier "only keep it for ND / <X" gate silently dropped hundreds of
+      // values per season that the person then had to retype by hand.
       // A limit that isn't a bare number is passed through UNCHANGED rather than
       // silently blanked. 檢測極限 may only hold a number in the filing, but the
       // person is the one who should decide what to do with a report that wrote
       // "<0.002" or "0.0004 mg/L" there — the import preview lists every such value
       // and offers 清成空白 / 只保留數字 / 照原樣匯入. Blanking it here would hide
       // both the report's real content and the choice.
-      const limitFormatted = !limitApplies ? ''
-        : (/^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : limitRaw);
+      // (`─` / `--` / blank in the report still means "no limit stated" — `dash()`
+      // above already turned those into ''.)
+      const limitFormatted = /^[\d.]+$/.test(limitRaw) ? this.formatNumber(limitRaw, 3) : limitRaw;
 
       const depthFields = kind === 'geo'
         ? { '採樣深度(公尺)': '' }

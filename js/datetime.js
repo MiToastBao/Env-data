@@ -162,11 +162,22 @@ const DateTimeUtil = {
     // Whether a half-day marker sits IMMEDIATELY beside the clock value that matched.
     // Testing the whole string meant "PM10 08:00" — the commonest token in this
     // entire domain — was read as 20:00 because "PM" appeared somewhere in the cell.
+    /*
+     * ⚠️ 英文的 am/pm 還要看**它前面是不是別的字的一部分**。
+     * 「ppm 08:00」——這個領域最常見的字之一——的結尾正好是 pm，
+     * 舊寫法只檢查「pm 後面接空白再接時間」，於是 08:00 被讀成 20:00。
+     * 同理 ppm 之外還有 sccm、Nm、ppb…；中文的「下午／上午」不會有這個問題，
+     * 所以只有英文那一組要加前置字元的檢查。
+     */
+    const enPm = /(^|[^0-9A-Za-z])[Pp]\.?[Mm]\.?[\s　]*$/;
+    const enAm = /(^|[^0-9A-Za-z])[Aa]\.?[Mm]\.?[\s　]*$/;
     const halfDayAround = (idx, len) => {
       const before = str.slice(Math.max(0, idx - 8), idx);
       const after = str.slice(idx + len, idx + len + 6);
-      const pm = /(下午|午後|[Pp]\.?[Mm]\.?)[\s　]*$/.test(before) || /^[\s　]*(下午|午後|[Pp]\.?[Mm]\.?)/.test(after);
-      const am = /(上午|凌晨|清晨|[Aa]\.?[Mm]\.?)[\s　]*$/.test(before) || /^[\s　]*(上午|凌晨|清晨|[Aa]\.?[Mm]\.?)/.test(after);
+      const pm = /(下午|午後)[\s　]*$/.test(before) || enPm.test(before)
+        || /^[\s　]*(下午|午後)/.test(after) || /^[\s　]*[Pp]\.?[Mm]\.?([^0-9A-Za-z]|$)/.test(after);
+      const am = /(上午|凌晨|清晨)[\s　]*$/.test(before) || enAm.test(before)
+        || /^[\s　]*(上午|凌晨|清晨)/.test(after) || /^[\s　]*[Aa]\.?[Mm]\.?([^0-9A-Za-z]|$)/.test(after);
       return { pm, am };
     };
     const applyHalfDay = (h, idx, len) => {
@@ -176,14 +187,24 @@ const DateTimeUtil = {
       return h;
     };
 
-    // 12時00分 / 12時30 / 12時 — but never the 時 of 時間, which is a caption, not
-    // an hour ("檢測項目:PM10 時間:08:00" was being read as 10 o'clock).
-    let m = str.match(/(\d{1,2})\s*時(?!間)\s*(\d{1,2})?\s*分?/);
+    /*
+     * 12時00分 / 12時30 / 12時。
+     *
+     * 但「時」也可能是別的詞的頭一個字，那時候前面的數字不是幾點：
+     *   ・時間  「檢測項目:PM10 時間:08:00」→ 舊版讀成 10 點
+     *   ・時段  「第2時段 08:00」          → 舊版讀成 02:00
+     *   ・時制／時程／時候／時區 同理
+     * 所以這裡把整組排除掉，不是只排除「間」。
+     *
+     * ⚠️ 而且**讀不出合法的時／分就往下走**，不能直接 return ''。
+     * 舊版一旦這一條命中卻超出範圍就整個放棄，後面的 14:30 那一條根本沒機會跑——
+     * 同一格裡先出現一個假的「時」，真正的時間就被吃掉了。
+     */
+    let m = str.match(/(\d{1,2})\s*時(?!間|段|制|程|候|區|期)\s*(\d{1,2})?\s*分?/);
     if (m) {
       const h = applyHalfDay(parseInt(m[1], 10), m.index, m[0].length);
       const mi = parseInt(m[2] || 0, 10);
       if (h <= 23 && mi <= 59) return `${this.pad(h)}:${this.pad(mi)}:00`;
-      return '';
     }
     // 14:30 / 14:30:15 / 2:30 PM / 下午 02:30
     m = str.match(/(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?/);
@@ -236,20 +257,50 @@ const DateTimeUtil = {
   outOfRangeTimeReason(v) {
     const s = String(v ?? '').trim();
     if (s === '') return '';
-    const m = s.match(/^(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?$/);
-    if (!m) return '';
-    const h = +m[1], mi = +m[2], sec = +(m[3] || 0);
+    let h, mi, sec;
+    let m = s.match(/^(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?$/);
+    if (m) {
+      h = +m[1]; mi = +m[2]; sec = +(m[3] || 0);
+    } else if ((m = s.match(/^(\d{2})(\d{2})(\d{2})$/))) {
+      /*
+       * 沒有冒號的寫法也要認。_extractTime 收 143000／1430／930 這幾種，
+       * 但**只在數字合法時**才收；25:30 打成 `2530`、12:65 打成 `1265` 的時候
+       * 它讀不懂，就把原字串原樣留下——而這裡舊版只認冒號，於是那些值
+       * 一路過關：沒有紅框、匯出前不清點，就這樣送出去。
+       * 打錯的人不會因為少打一個冒號就比較不需要被提醒。
+       */
+      h = +m[1]; mi = +m[2]; sec = +m[3];
+    } else if ((m = s.match(/^(\d{1,2})(\d{2})$/))) {
+      h = +m[1]; mi = +m[2]; sec = 0;
+    } else {
+      return '';
+    }
     if (h > 23) return '官方規定時間只能填 00:00~23:59，不可以填 24:00 以上';
     if (mi > 59 || sec > 59) return '分或秒超過 59';
     return '';
   },
 
-  /** 24:00 / 24:00:00 → 23:59:00。其餘原樣回傳。 */
+  /**
+   * 這個值是不是「24:00 整」——唯一一個換成 23:59 有明確道理的寫法。
+   * 24:00 就是一天的最後一刻，而 25:30、99:00 不是任何時刻，只是打錯。
+   */
+  canClampToDayEnd(v) {
+    return /^24[:：]00(?:[:：]00)?$/.test(String(v ?? '').trim())
+      || /^2400(?:00)?$/.test(String(v ?? '').trim());
+  },
+
+  /**
+   * 24:00 / 24:00:00 / 2400 → 23:59:00。其餘一律原樣回傳。
+   *
+   * ⚠️ 舊版是「小時 ≤ 23 就原樣回傳，否則一律回 23:59」，
+   * 於是 25:30、99:00 這種明顯打錯的值也會被改成 23:59。
+   * 那不是把一天的結尾寫成合法值，是**替使用者挑一個他沒說過的時間**，
+   * 而且挑完之後畫面上再也看不出原本打的是什麼——正是 v4.37 要修掉的事。
+   * 24:00 有唯一合理的解釋，25:30 沒有，所以只有 24:00 會被換掉。
+   */
   clampToDayEnd(v) {
     const s = String(v ?? '').trim();
-    const m = s.match(/^(\d{1,2})[:：](\d{2})(?:[:：](\d{2}))?$/);
-    if (!m || +m[1] <= 23) return s;
-    return '23:59:00';
+    return this.canClampToDayEnd(s) ? '23:59:00' : s;
   },
 
   /** Stored "YYYY-MM-DD" -> what the person sees, "YYYY/MM/DD". */

@@ -17,6 +17,7 @@ const state = {
   // re-render (a sort click, an accepted sync, a column filter) can't silently clear
   // the search box while the ▾ filters still look active. That mismatch made
   // "select all visible + delete" act on far more rows than the person could see.
+  onlyProblems: {}, // { [catKey]: true } — 「⚠️ 只看需要修正的」是否開著（v4.43）
   columnFilters: {}, // { [catKey]: { [fieldKey]: Set of allowed display values } } — Excel-style AutoFilter
   columnSort: {}, // { [catKey]: { fieldKey, direction: 'asc'|'desc' } } — Excel-style column sort
   undoStack: {}, // { [`${projectId}::${catKey}`]: [{ description, rows, batches }] } — in-memory only, cleared on page reload (matches typical app undo behavior; deliberately not persisted to localStorage)
@@ -738,20 +739,39 @@ function renderBasicTab(project) {
   const body = document.getElementById('tabBody');
   const info = DataStore.getBasicInfo(project.id);
 
+  // 缺哪些必填（含「執行現況選了什麼才必填」的三個日期）——一次算好，
+  // 和匯出前的提醒用同一支 missingBasicInfoFields，不會兩邊講不一樣。
+  const missingBasic = missingBasicInfoFields(info);
   const fieldsHtml = BASIC_INFO_FIELDS.map(f => {
     const val = info[f.key] ?? '';
+    /*
+     * 必填而空白的欄位要看得見（v4.43）。
+     * 官方五份辭典都把「計畫代碼」「書件名稱」「執行現況」列為必填，
+     * 但這一頁以前只在標題後面印一個小小的＊，空著匯出也沒有人講一聲——
+     * 而這一頁的內容會寫進每一份匯出檔的「監測點基本資料」工作表。
+     * 用的是表格那邊同一個 cell-required-missing（橘色虛線框）。
+     */
+    const missWhy = (missingBasic.find(m => m.key === f.key) || {}).why;
+    const miss = missWhy ? ' cell-required-missing' : '';
+    const missTip = missWhy ? ` title="${escapeAttr(`「${f.label}」${missWhy}，目前是空的。`)}"` : '';
     let control;
     if (f.type === 'select') {
-      control = `<select data-field="${f.key}">${f.options.map(o => `<option value="${escapeAttr(o)}" ${o === val ? 'selected' : ''}>${o || '（未選擇）'}</option>`).join('')}</select>`;
+      control = `<select data-field="${f.key}"${miss ? ` class="${miss.trim()}"` : ''}${missTip}>${f.options.map(o => `<option value="${escapeAttr(o)}" ${o === val ? 'selected' : ''}>${o || '（未選擇）'}</option>`).join('')}</select>`;
     } else if (f.type === 'date') {
-      control = `<input type="text" data-field="${f.key}" value="${escapeAttr(toDateDisplayValue(val))}" class="date-input" placeholder="YYYY/MM/DD" inputmode="numeric" maxlength="10">`;
+      control = `<input type="text" data-field="${f.key}" value="${escapeAttr(toDateDisplayValue(val))}" class="date-input${miss}"${missTip} placeholder="YYYY/MM/DD" inputmode="numeric" maxlength="10">`;
     } else if (f.type === 'textarea') {
-      control = `<textarea data-field="${f.key}" rows="2">${escapeHtml(val)}</textarea>`;
+      control = `<textarea data-field="${f.key}"${miss ? ` class="${miss.trim()}"` : ''}${missTip} rows="2">${escapeHtml(val)}</textarea>`;
     } else {
-      control = `<input type="text" data-field="${f.key}" value="${escapeAttr(val)}">`;
+      control = `<input type="text" data-field="${f.key}"${miss ? ` class="${miss.trim()}"` : ''}${missTip} value="${escapeAttr(val)}">`;
     }
     const wide = (f.type === 'textarea' || f.key === '書件名稱') ? 'full' : '';
-    return `<label class="${wide}">${f.label}${f.required ? '<span class="req">＊</span>' : ''}
+    // 欄名和「＊」要包在同一個 span 裡。這個 <label> 是 flex-direction:column，
+    // 直接並排兩個節點的話「＊」會自己掉到下一行去，版面看起來像少了東西。
+    // 條件式必填的欄位，只有在條件成立時才顯示星號——永遠掛著星號會讓人
+    // 以為施工前也要填竣工日期。
+    const showStar = f.required || Boolean(missWhy)
+      || (Array.isArray(f.requiredWhenStatus) && f.requiredWhenStatus.includes(String(info['執行現況'] ?? '').trim()));
+    return `<label class="${wide}"><span class="basic-label">${f.label}${showStar ? '<span class="req">＊</span>' : ''}</span>
       ${control}
       ${f.help ? `<span class="field-help">${escapeHtml(f.help)}</span>` : ''}
     </label>`;
@@ -789,6 +809,68 @@ function renderBasicTab(project) {
 }
 
 // ---------- category data tab ----------
+/*
+ * ─────────────────────────────────────────────────────────────
+ * 座標一鍵四捨五入（v4.44）
+ * ─────────────────────────────────────────────────────────────
+ * 官方規定座標系統填 3（TWD97-TM2）時，經度 X 是 6 位數字、緯度 Y 是 7 位數字，
+ * 辭典範例 179159 / 2543818 都沒有小數點。但實驗室交來的座標常常帶小數
+ * （176031.1 / 2593075.81），一份季報就有幾十格要改，一格一格改很花時間
+ * 而且容易改錯。
+ *
+ * ⚠️ 只處理「小數點以下」，整數位數不對的**不碰**——那種是真的填錯了
+ * （少一位、多一位、或根本是 WGS84 的度數填錯欄位），四捨五入救不了它，
+ * 硬幫他補只會把「明顯的錯」變成「看起來對的錯」。
+ */
+function roundableCoordCells(rows) {
+  const out = [];
+  (rows || []).forEach((row) => {
+    if (String(row['座標系統'] ?? '').trim() !== '3') return;
+    [['採樣座標-經度 X', 6], ['採樣座標-緯度 Y', 7]].forEach(([key, want]) => {
+      const raw = String(row[key] ?? '').trim();
+      if (!/^\d+\.\d+$/.test(raw)) return;           // 沒有小數就沒事做
+      if (raw.split('.')[0].length !== want) return;  // 整數位數不對 → 不是四捨五入能解決的
+      const next = String(Math.round(parseFloat(raw)));
+      if (next === raw || next.length !== want) return;
+      out.push({ row, key, from: raw, to: next });
+    });
+  });
+  return out;
+}
+
+function runRoundCoords(projectId, catKey) {
+  const cat = CATEGORIES[catKey];
+  const rows = DataStore.getData(projectId, catKey);
+  const cells = roundableCoordCells(rows);
+  if (cells.length === 0) return;
+  const byRow = new Map();
+  cells.forEach((c) => {
+    const label = `${String(c.row[cat.locationField] ?? '').trim() || '（未填地點）'}　${toDateDisplayValue(c.row['日期(起)']) || ''}`;
+    if (!byRow.has(c.row)) byRow.set(c.row, { label, changes: [] });
+    byRow.get(c.row).changes.push(c);
+  });
+  // 逐筆列出「哪一筆、從什麼變成什麼」——只講「會改 N 格」使用者沒辦法判斷該不該按。
+  const lines = [...byRow.values()].slice(0, 12).map((r, i) =>
+    `${String(i + 1).padStart(2)}. ${r.label}\n` +
+    r.changes.map(c => `      ${c.key}：${c.from} → ${c.to}`).join('\n')
+  ).join('\n');
+  const more = byRow.size > 12 ? `\n　…另有 ${byRow.size - 12} 筆\n` : '';
+  if (!confirm(
+    `要把 ${byRow.size} 筆資料、共 ${cells.length} 格的 TWD97 座標四捨五入成整數嗎？\n\n`
+    + `${lines}${more}\n`
+    + `官方規定座標系統填 3（TWD97-TM2）時，經度 X 為 6 位數字、緯度 Y 為 7 位數字，不含小數\n`
+    + `（辭典範例 179159 / 2543818）。四捨五入的差距不到 1 公尺，不影響測站位置。\n\n`
+    + `改完之後可以用「↩️ 復原上一步」還原。`
+  )) return;
+
+  pushUndoSnapshot(projectId, catKey, `座標四捨五入（${cells.length} 格）`, rows);
+  cells.forEach((c) => { c.row[c.key] = c.to; });
+  DataStore.saveData(projectId, catKey, rows);
+  // 留在原地，不要跳回表格最上方（v4.41 的原則）。
+  renderContentPreservingScroll();
+  showToast(`📐 已把 ${cells.length} 格座標四捨五入成整數（${byRow.size} 筆資料）。可用「↩️ 復原上一步」還原。`, 7000);
+}
+
 function renderCategoryTab(project, catKey) {
   const cat = CATEGORIES[catKey];
   const allRows = DataStore.getData(project.id, catKey);
@@ -850,6 +932,12 @@ function renderCategoryTab(project, catKey) {
         </select>` : ''}
         <input type="text" id="rowSearchInput" value="${escapeAttr(state.rowSearch[catKey] || '')}" placeholder="🔍 搜尋任何欄位內容（測站、測項、日期…）" title="輸入關鍵字即時篩選畫面顯示的資料列，方便檢查或修正特定資料；不影響匯出範圍（匯出仍依上方期別篩選）">
         <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除篩選</button>
+        <button class="btn btn-ghost btn-sm" id="btnOnlyProblems" title="只顯示有紅框或橘框的資料列——必填沒填、值不符合官方格式規定、噪音振動連動規則對不起來的那幾筆。這只是畫面篩選，不影響匯出範圍。">⚠️ 只看需要修正的</button>
+        ${(() => {
+          // 只有真的有可以四捨五入的座標時才出現這顆——沒事的時候工具列不該多一顆按鈕。
+          const n = roundableCoordCells(displayRows).length;
+          return n ? `<button class="btn btn-ghost btn-sm" id="btnRoundCoords" title="官方規定座標系統填 3（TWD97）時，座標是 6 位／7 位整數，不含小數。這裡把帶小數的座標一次四捨五入成整數，套用前會先逐筆列出「從什麼變成什麼」讓您確認。">📐 座標四捨五入（${n} 格）</button>` : '';
+        })()}
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）${activePeriod ? '（僅目前篩選期別）' : ''}</button>
         <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別${activePeriod ? '（僅目前篩選期別）' : ''}</button>
         ${(() => { const u = peekUndo(project.id, catKey); return u ? `<button class="btn btn-ghost btn-sm" id="btnUndo" title="復原：${escapeAttr(u.description)}">↩️ 復原上一步</button>` : ''; })()}
@@ -927,7 +1015,9 @@ function renderCategoryTab(project, catKey) {
       return r._period === activePeriod;
     });
     if (freshRows.length === 0) { alert('目前篩選範圍內沒有資料可匯出。'); return; }
+    if (!confirmBasicInfoBeforeExport(project.id)) return;
     if (!confirmNoiseVibRuleBeforeExport(freshRows, cat)) return;
+    if (!confirmFormatBeforeExport(freshRows, cat)) return;
     if (!confirmTimeRangeBeforeExport(freshRows, cat)) return;
     if (!confirmLimitBeforeExport(freshRows, cat)) return;
     if (!confirmRequiredBeforeExport(freshRows, cat)) return;
@@ -1036,16 +1126,33 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
 
   const colFiltersForCat = () => state.columnFilters[catKey] || {};
 
+  /*
+   * 「這一列需要修正嗎」＝ 這一列有沒有畫上紅框或橘框的格子。
+   *
+   * 刻意用**畫面上實際的框**判斷，而不是再算一次規則：畫面標了什麼、
+   * 篩選就挑出什麼，兩者永遠對得起來。再算一次的話，哪天規則改了而只改一邊，
+   * 就會出現「篩選說有 3 筆，找過去卻只有 2 個紅框」這種最難查的狀況。
+   */
+  const rowNeedsFixInDom = (tr) => !!tr.querySelector('.cell-invalid, .cell-required-missing');
+
+  const roundBtn = document.getElementById('btnRoundCoords');
+  if (roundBtn) roundBtn.addEventListener('click', () => runRoundCoords(state.currentProjectId, catKey));
+
+  const onlyBtn = document.getElementById('btnOnlyProblems');
+  const problemCount = () => [...tbody.querySelectorAll('tr')].filter(rowNeedsFixInDom).length;
+
   const applyAllFilters = () => {
     const q = searchInput.value.trim().toLowerCase();
     state.rowSearch[catKey] = searchInput.value; // survives the next re-render
     const colFilters = colFiltersForCat();
     const anyColFilter = Object.values(colFilters).some(s => s && s.size > 0);
-    clearBtn.classList.toggle('hidden', q === '' && !anyColFilter);
+    const onlyBad = !!state.onlyProblems[catKey];
+    clearBtn.classList.toggle('hidden', q === '' && !anyColFilter && !onlyBad);
     let visible = 0;
     const rows = tbody.querySelectorAll('tr');
     rows.forEach(tr => {
       let matches = !q || rowSearchText(tr).includes(q);
+      if (matches && onlyBad) matches = rowNeedsFixInDom(tr);
       if (matches && anyColFilter) {
         for (const [fieldKey, allowedSet] of Object.entries(colFilters)) {
           if (!allowedSet || allowedSet.size === 0) continue;
@@ -1055,11 +1162,28 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
       tr.classList.toggle('row-hidden', !matches);
       if (matches) visible++;
     });
-    countEl.textContent = (q || anyColFilter) ? `符合篩選：${visible} / ${rows.length} 筆` : baseCountText;
+    countEl.textContent = (q || anyColFilter || onlyBad) ? `符合篩選：${visible} / ${rows.length} 筆` : baseCountText;
   };
+
+  if (onlyBtn) {
+    const n = problemCount();
+    // 按鈕上直接寫幾筆——使用者不必先按下去才知道有沒有事。
+    // 一筆都沒有的時候不讓按，並且講出「都沒問題」，比按了沒反應清楚。
+    onlyBtn.textContent = n > 0 ? `⚠️ 只看需要修正的（${n} 筆）` : '✅ 沒有需要修正的';
+    onlyBtn.disabled = n === 0;
+    if (n === 0) state.onlyProblems[catKey] = false;
+    onlyBtn.classList.toggle('btn-active', !!state.onlyProblems[catKey]);
+    onlyBtn.addEventListener('click', () => {
+      state.onlyProblems[catKey] = !state.onlyProblems[catKey];
+      onlyBtn.classList.toggle('btn-active', !!state.onlyProblems[catKey]);
+      applyAllFilters();
+    });
+  }
 
   searchInput.addEventListener('input', applyAllFilters);
   clearBtn.addEventListener('click', () => {
+    state.onlyProblems[catKey] = false;
+    if (onlyBtn) onlyBtn.classList.remove('btn-active');
     searchInput.value = '';
     state.rowSearch[catKey] = '';
     state.columnFilters[catKey] = {};
@@ -1509,7 +1633,9 @@ function rowHtml(cat, row, idx) {
    * 這是「已經填錯」的檢查——資料可能是別家公司交來的、或上一季匯入的，
    * 不見得經過這個程式的任何一條編輯路徑，所以只能在畫出來的時候看。
    */
-  const ruleHere = new Map(noiseVibRuleViolations(row, cat).map(v => [v.key, v.why]));
+  // v4.43：官方格式規則（座標範圍與位數、生態的字數上限／學名中文名／數量寫法）
+  // 走同一條路。同樣是「已經填錯」的檢查，來源多半是別家公司交來的檔案。
+  const ruleHere = new Map(allRuleViolations(row, cat).map(v => [v.key, v.why]));
   const ctl = (f) => fieldControlHTML(f, row[f.key], `data-row="${idx}"`, missingHere.get(f.key), cat.key, ruleHere.get(f.key));
   const pinnedCells = displayFieldOrder(cat).slice(0, 2).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${ctl(f)}</td>`).join('');
   const restCells = displayFieldOrder(cat).slice(2).map(f => `<td>${ctl(f)}</td>`).join('');
@@ -1537,6 +1663,17 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
     ? ` title="${escapeAttr(`「${field.label}」是${missingWhy}，目前是空的。`)}"`
     : '';
   const missCls = missingWhy ? ' cell-required-missing' : '';
+  /*
+   * 「值填了但不對」的共用提示（v4.43）。
+   * 以前只有 select 這一種欄位接得到 ruleWhy，可是官方格式規則要標的格子
+   * 大多不是下拉——座標是數字欄、學名／中文名是文字欄、環境現況描述是
+   * textarea、調查項目是建議清單。少接一種，那一類的紅框就永遠不會出現，
+   * 而 v4.42 的教訓正是「標了看不見等於沒標」。
+   */
+  const ruleTip = ruleWhy
+    ? ` title="${escapeAttr(`${ruleWhy}。這是官方資料辭典明文規定，不改申報可能被退件。`)}"`
+    : '';
+  const ruleCls = ruleWhy ? ' cell-invalid' : '';
   switch (field.type) {
     case 'select': {
       /*
@@ -1572,7 +1709,7 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
       const badValue = Boolean(extra) || Boolean(ruleWhy);
       const cls = badValue || missCls ? ` class="${badValue ? 'cell-invalid' : ''}${missCls}"` : '';
       const tip = ruleWhy
-        ? ` title="${escapeAttr(`${ruleWhy}。這是官方明文規定的連動規則（115 年 7 月起加強檢核），不改申報會被退件。`)}"`
+        ? ruleTip
         : extra
           ? ` title="「${escapeAttr(value_)}」不在官方允許的選項裡（${escapeAttr(field.options.filter(Boolean).join('、'))}），申報時可能被退件。請從清單中改選正確的值。"`
           : (missTip || (field.help ? ` title="${escapeAttr(field.help)}"` : ''));
@@ -1582,7 +1719,7 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
       // Plain text rather than a native <input type=date>: native date pickers render
       // according to browser/OS locale and can't be forced to show "YYYY/MM/DD" —
       // typing "2026/5/12" or "2026-5-12" both work, normalized on blur.
-      return `<input type="text" ${base}${missTip} value="${escapeAttr(toDateDisplayValue(value))}" class="date-input${missCls}" placeholder="YYYY/MM/DD" inputmode="numeric" maxlength="10">`;
+      return `<input type="text" ${base}${ruleWhy ? ruleTip : missTip} value="${escapeAttr(toDateDisplayValue(value))}" class="date-input${ruleCls}${missCls}" placeholder="YYYY/MM/DD" inputmode="numeric" maxlength="10">`;
     case 'time':
       // Plain text rather than a native <input type=time>: native time pickers on many
       // devices show a scroll-wheel that's fiddly to land on an exact second, and on
@@ -1622,7 +1759,8 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
         document.body.appendChild(dl);
       }
       const maxAttr = field.maxLength ? ` maxlength="${field.maxLength}"` : '';
-      return `<input type="text" ${base}${missTip} value="${escapeAttr(value)}" list="${listId}"${maxAttr}${missCls ? ` class="${missCls.trim()}"` : ''}>`;
+      const sugCls = (ruleCls + missCls).trim();
+      return `<input type="text" ${base}${ruleWhy ? ruleTip : missTip} value="${escapeAttr(value)}" list="${listId}"${maxAttr}${sugCls ? ` class="${sugCls}"` : ''}>`;
     }
     case 'unitcode':
       return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}" data-codetype="unit" title="${escapeAttr(missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupUnit(value))}" placeholder="代碼">`;
@@ -1640,9 +1778,11 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
        * 把水質的值也套上噪音的規則。catKey 沒傳進來時一律不處理。
        */
       if (catKey) value = formatFieldValue(catKey, field.key, value);
-      const bad = field.key === LIMIT_FIELD && String(value).trim() !== '' && !isPlainNumber(value);
+      const bad = (field.key === LIMIT_FIELD && String(value).trim() !== '' && !isPlainNumber(value)) || Boolean(ruleWhy);
       const cls = bad || missCls ? ` class="${bad ? 'cell-invalid' : ''}${missCls}"` : '';
-      const tip = bad ? ' title="「檢測極限」只能填數值。請改成純數字，或清空這一格。"' : missTip;
+      const tip = ruleWhy
+        ? ruleTip
+        : (bad ? ' title="「檢測極限」只能填數值。請改成純數字，或清空這一格。"' : missTip);
       return `<input type="text" ${base}${cls}${tip} value="${escapeAttr(value)}">`;
     }
   }
@@ -2300,7 +2440,13 @@ function wireGridEvents(project, catKey, cat) {
        * 幫他挑一個數字等於又做了一次「靜靜改掉輸入」，那正是這一版要修的事。
        */
       const badTime = DateTimeUtil.outOfRangeTimeReason(normalized);
-      if (badTime && confirm(
+      /*
+       * 只有 24:00 才問「要不要改成 23:59」。
+       * 25:30、99:00、12:65 一樣會被標紅框、匯出前一樣會清點，但**不會**
+       * 拿 23:59 去頂替——那個數字不是使用者說過的任何時刻，替他挑一個
+       * 只會把「打錯了」變成「看起來對了」。
+       */
+      if (badTime && DateTimeUtil.canClampToDayEnd(normalized) && confirm(
         `「${toTimeDisplayValue(normalized) || normalized}」${badTime}。\n\n`
         + `要改成 23:59（一天的最後一分鐘）嗎？\n\n`
         + `按「確定」改成 23:59；按「取消」保留現在填的內容，\n`
@@ -3400,8 +3546,10 @@ function confirmExportSelect() {
     if (rows.length === 0) return; // nothing for this category in the chosen period
     jobs.push({ catKey, rows });
   });
+  if (!confirmBasicInfoBeforeExport(project.id)) return;
   for (const job of jobs) {
     if (!confirmNoiseVibRuleBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
+    if (!confirmFormatBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
     if (!confirmTimeRangeBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
     if (!confirmLimitBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
     if (!confirmRequiredBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
@@ -3669,6 +3817,69 @@ function confirmNoiseVibRuleBeforeExport(rows, cat) {
     + `是噪音時則不能填「無」。115 年 7 月起加強檢核這個組合。\n\n`
     + `（在表格中這些格子會用紅框標示，可用欄位篩選 ▾ 快速找到）\n`
     + `按「確定」仍要照原樣匯出，按「取消」回去修正。`
+  );
+}
+
+/*
+ * 匯出前清點「不符合官方格式規定」的資料（v4.43）
+ * ────────────────────────────────────────────────
+ * 座標範圍與位數、生態的字數上限／學名不可有中文／中文名不可有英文／
+ * 數量只能填數字或「-」。規則與說明文字都來自 schema.js 的
+ * fieldFormatViolations，那裡每一條都附了官方辭典原文。
+ *
+ * 和既有的幾道一致：**只提醒不阻擋**，全部正確時完全不跳。
+ */
+function findFormatViolations(rows, cat) {
+  const counts = new Map(); // 「欄位｜原因」 → { n, samples }
+  rows.forEach((r) => {
+    fieldFormatViolations(r, cat).forEach((v) => {
+      // 原因文字裡帶了目前的值，會讓每一筆都變成不同的一種——
+      // 這裡用欄位＋規則種類收斂，值另外收樣本。
+      const kind = v.why.replace(/（目前[^）]*）/g, '').replace(/目前是「[^」]*」/g, '').trim();
+      const key = `${v.key}｜${kind}`;
+      const cur = counts.get(key) || { n: 0, samples: [] };
+      cur.n += 1;
+      if (cur.samples.length < 3 && !cur.samples.includes(v.value)) cur.samples.push(v.value);
+      counts.set(key, cur);
+    });
+  });
+  return [...counts.entries()].sort((a, b) => b[1].n - a[1].n);
+}
+
+function confirmFormatBeforeExport(rows, cat) {
+  const bad = findFormatViolations(rows, cat);
+  if (bad.length === 0) return true;
+  const total = bad.reduce((n, [, v]) => n + v.n, 0);
+  const list = bad.slice(0, 8).map(([k, v]) => {
+    const [field] = k.split('｜');
+    const why = k.split('｜')[1];
+    return `　・「${field}」：${v.n} 筆　${why}\n　　　例如：${v.samples.map(s => `「${s}」`).join('、')}`;
+  }).join('\n');
+  return confirm(
+    `「${cat.label}」有 ${total} 筆資料不符合官方資料辭典的格式規定：\n${list}`
+    + `${bad.length > 8 ? `\n　…另有 ${bad.length - 8} 種` : ''}\n\n`
+    + `（在表格中這些格子會用紅框標示，滑鼠移上去有說明；\n`
+    + `　也可以按工具列的「⚠️ 只看需要修正的」把它們挑出來）\n`
+    + `按「確定」仍要照原樣匯出，按「取消」回去修正。`
+  );
+}
+
+/*
+ * 匯出前提醒「基本資料」的必填欄位（v4.43）
+ * ─────────────────────────────────────────
+ * 官方五份辭典都把「計畫代碼」「書件名稱」「執行現況」列為必填，
+ * 但程式以前只在建立專案時要求計畫代碼，另外兩個空著也沒人講。
+ * 這一頁的資料會寫進每一份匯出檔的「監測點基本資料」工作表。
+ */
+function confirmBasicInfoBeforeExport(projectId) {
+  const info = DataStore.getBasicInfo(projectId) || {};
+  const missing = missingBasicInfoFields(info);
+  if (missing.length === 0) return true;
+  return confirm(
+    `「基本資料」頁還有官方必填欄位是空的：\n`
+    + missing.map(m => `　・${m.label}（${m.why}）`).join('\n')
+    + `\n\n這些欄位會寫進匯出檔的「監測點基本資料」工作表，空白可能導致上傳被退件。\n\n`
+    + `按「確定」仍要照原樣匯出，按「取消」回去「基本資料」頁補填。`
   );
 }
 
@@ -4501,6 +4712,22 @@ function renderMappingStep() {
 }
 
 // ---------- smart import (report-form parser) preview ----------
+/*
+ * 自動判讀出來的這一列，讀得完不完整？
+ *
+ * 「必填欄位空白」沿用既有的 missingRequiredFields（同一份官方辭典規則，
+ * 不另外寫一份，免得兩邊哪天走鐘）；「下拉填了官方清單以外的值」的判斷
+ * 則和表格紅框那一條完全一致。
+ */
+function autoDetectedRowNeedsReview(row, cat) {
+  if (missingRequiredFields(row, cat).length > 0) return true;
+  return cat.fields.some((f) => {
+    if (f.type !== 'select' || !Array.isArray(f.options)) return false;
+    const v = String(row[f.key] ?? '').trim();
+    return v !== '' && !f.options.includes(v);
+  });
+}
+
 function renderSmartImportPreview() {
   const project = getImportProject();
   const catKey = state.importCatKey;
@@ -4581,6 +4808,23 @@ function renderSmartImportPreview() {
   // them keeps the data visible and recoverable without letting it in by accident.
   const datelessUids = result.rows.filter(r => !r['日期(起)']).map(r => r._rowUid);
   datelessUids.forEach(uid => state.excludedRowIndices.add(uid));
+
+  /*
+   * 自動判讀（_autoDetected）出來、而且**讀得不完整**的列，同樣預設不勾。
+   *
+   * 這些列不是任何一支為特定報告格式寫的解析器產生的，是系統照欄位標題猜的。
+   * 上面那則警告已經講得很清楚了，但它只是一段文字：一份三百列的檔案，
+   * 警告寫在最上面，人按下「確認匯入」的時候早就捲過去了，錯的資料照樣全進去。
+   *
+   * ⚠️ 刻意**不是**把自動判讀的列全部不勾。猜得完整又乾淨的檔案（七個必要欄位
+   * 都找到、沒有清單外的值）本來就該一路匯進去——全部不勾等於逼使用者每次
+   * 手動點三百個勾，那比不做還糟。只有「必填欄位是空的」或「下拉欄位填了官方
+   * 清單以外的值」的那幾列才預設不勾，因為那幾列一定要有人看過。
+   */
+  const autoSuspectUids = result.rows
+    .filter(r => r._autoDetected && autoDetectedRowNeedsReview(r, cat))
+    .map(r => r._rowUid);
+  autoSuspectUids.forEach(uid => state.excludedRowIndices.add(uid));
 
   /*
    * 採樣日期不屬於本次期別的列，同樣預設不勾（見 applyPeriodExclusions 的說明）。
@@ -4749,6 +4993,10 @@ function renderSmartImportPreview() {
       + `・已自動找到：${info.found.length ? escapeHtml(info.found.join('、')) : '（無）'}`
       + `${info.extra && info.extra.length ? `（另外還找到：${escapeHtml(info.extra.join('、'))}）` : ''}<br>`
       + `・<strong>找不到、需要您自行補上：${info.missing.length ? escapeHtml(info.missing.join('、')) : '（無，七個必要欄位都找到了）'}</strong><br>`
+      + (autoSuspectUids.length > 0
+        ? `・其中 <strong>${autoSuspectUids.length} 筆有必填欄位空白、或下拉欄位填了官方清單以外的值，已<u>預設不匯入</u></strong>`
+          + `（資料沒有被丟掉，展開下方「📋 詳細資料列表」確認後可以勾選回來）。<br>`
+        : `・這 ${autoRows.length} 筆的必填欄位都有值、也沒有清單外的值，維持<strong>預設勾選</strong>。<br>`)
       + `<span class="hint">小技巧：先匯入上一季同一個測站的資料，系統就會把座標、檢測方法、單位代碼等不會逐季改變的欄位自動沿用過來，這次只需確認日期／時間／數值。</span>`;
     document.getElementById('smartImportItemsWrap').after(warn);
   }

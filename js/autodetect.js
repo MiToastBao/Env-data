@@ -137,23 +137,56 @@ const AutoDetect = {
     return meta;
   },
 
-  /** "115.01.30~115.02.01" / "2/12 ~ 2/13" / a single date -> {start, end} ISO. */
+  /**
+   * 把一段「起～迄」切成兩半。
+   *
+   * ⚠️ 半形連字號 `-` 不能無條件當分隔符號——ISO 日期 `2026-06-25` 自己就有兩個，
+   * 切下去整個日期會碎掉。所以分兩步：先用不會誤傷的符號切；切不開的時候，
+   * 才試「兩邊有空白的 `-`」與「M/D-M/D 這種兩邊都不像 ISO 的 `-`」。
+   * 舊版是直接不認 `-`，於是報告寫 `2/12-2/13` 的日期整個讀不到。
+   */
+  _splitRangeParts(s) {
+    let parts = s.split(/\s*[~～至－—–]\s*|\s*--\s*/);
+    if (parts.length >= 2) return parts;
+    // "2026-06-25 - 2026-06-26"：連字號兩邊有空白，安全
+    parts = s.split(/\s+-\s+/);
+    if (parts.length >= 2) return parts;
+    // "2/12-2/13"：兩邊都是 M/D，不可能是 ISO 日期的一部分
+    const md = s.match(/^\s*(\d{1,2}\s*[/月]\s*\d{1,2}\s*日?)\s*-\s*(\d{1,2}\s*[/月]?\s*\d{0,2}\s*日?)\s*$/);
+    if (md) return [md[1], md[2]];
+    return [s];
+  },
+
+  /** "115.01.30~115.02.01" / "2/12 ~ 2/13" / "115年2月12日~13日" / a single date
+   *  -> {start, end} ISO. */
   splitDateRange(text, fallbackYear) {
     const s = String(text ?? '');
     if (s.trim() === '') return { start: '', end: '' };
-    const parts = s.split(/\s*[~～至－—]\s*|\s*--\s*/);
+    const parts = this._splitRangeParts(s);
     if (parts.length >= 2) {
       const a = DateTimeUtil.toISODate(parts[0]);
       let b = DateTimeUtil.toISODate(parts[1]);
       if (/^\d{4}-\d{2}-\d{2}$/.test(a)) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(b)) {
+          const pad = n => String(n).padStart(2, '0');
+          const y = parseInt(a.slice(0, 4), 10);
           // "2/12 ~ 2/13" — the second half has no year of its own
           const md = String(parts[1]).match(/(\d{1,2})\s*[/月-]\s*(\d{1,2})/);
+          // "115年2月12日~13日" — the second half is only a DAY. 這種寫法在
+          // 報告上很常見，舊版讀不到就把日期(迄) 設成和日期(起) 一樣，
+          // 一段跨兩天的採樣就被記成只採了一天。
+          const dOnly = String(parts[1]).match(/^\s*(\d{1,2})\s*日?\s*$/);
           if (md) {
-            const y = parseInt(a.slice(0, 4), 10);
-            const pad = n => String(n).padStart(2, '0');
             const y2 = parseInt(md[1], 10) < parseInt(a.slice(5, 7), 10) ? y + 1 : y;
             b = `${y2}-${pad(md[1])}-${pad(md[2])}`;
+          } else if (dOnly) {
+            const mo = parseInt(a.slice(5, 7), 10);
+            const d2 = parseInt(dOnly[1], 10);
+            // 「12日~3日」＝跨月，往後推一個月
+            const rollsOver = d2 < parseInt(a.slice(8, 10), 10);
+            const mo2 = rollsOver ? (mo === 12 ? 1 : mo + 1) : mo;
+            const y2 = rollsOver && mo === 12 ? y + 1 : y;
+            b = DateTimeUtil._ymd(y2, mo2, d2) || '';
           } else b = '';
         }
         return { start: a, end: b || a };
@@ -177,8 +210,10 @@ const AutoDetect = {
   splitTimeRange(text) {
     const s = String(text ?? '');
     if (s.trim() === '') return { start: '', end: '' };
-    const m = s.match(/(\d{1,2}[:：]\d{2})\s*[~～至\-—]\s*(\d{1,2}[:：]\d{2})/);
-    if (m) return { start: DateTimeUtil.toHMS(m[1].replace('：', ':')), end: DateTimeUtil.toHMS(m[2].replace('：', ':')) };
+    // 分隔符號集合與 smartparse.js 的 splitTimeRange 保持一致。
+    // `.replace('：', ':')` 只換第一個，"23：50" 沒事但寫法本身是陷阱，改成全換。
+    const m = s.match(/(\d{1,2}[:：]\d{2})\s*[~～至\-－—–]\s*(\d{1,2}[:：]\d{2})/);
+    if (m) return { start: DateTimeUtil.toHMS(m[1].replace(/：/g, ':')), end: DateTimeUtil.toHMS(m[2].replace(/：/g, ':')) };
     const one = DateTimeUtil.toHMS(s);
     return /^\d{2}:\d{2}:\d{2}$/.test(one) ? { start: one, end: one } : { start: '', end: '' };
   },
@@ -356,8 +391,12 @@ const AutoDetect = {
       const unitText = get('unit') || headerUnitText;
       const unitLookup = unitText ? SmartParse.reverseUnitLookup(unitText, itemName) : { code: '', confident: false };
       const methodText = SmartParse.extractMethodCode(get('method')) || metaMethod;
-      const limitRaw = get('limit').replace(/[-—─–]{1,2}/g, '').trim();
-      const limitApplies = cmp === 'ND' || cmp === '<';
+      // ANCHORED. An unanchored strip ate the minus sign out of scientific
+      // notation — "5.0E-4" became "5.0E4", i.e. the same reading off by eight
+      // orders of magnitude, with nothing on screen to show it happened. Only a
+      // cell that is NOTHING BUT dashes means "no limit stated".
+      const limitRaw = /^[-—─–]{1,2}$/.test(String(get('limit')).trim())
+        ? '' : String(get('limit')).trim();
       const location = get('location') || metaLocation;
       const agencyText = get('agency');
       const agencyCode = agencyText
@@ -374,11 +413,12 @@ const AutoDetect = {
       out[cat.itemField] = itemName || (valueFieldKey ? '（未標示）' : '');
       if (valueFieldKey) out[valueFieldKey] = /^[\d.]+$/.test(val) ? SmartParse.formatNumber(val, 3) : val;
       if (hasField('比較關係')) out['比較關係'] = cmp;
-      // Not a bare number? Pass it through unchanged and let the import preview ask
-      // what to do with it — see renderLimitWarning in app.js.
+      // Carried across exactly as the report wrote it, regardless of 比較關係 —
+      // same rule as parseLabItemTableSheet in smartparse.js. Not a bare number?
+      // Pass it through unchanged and let the import preview ask what to do with
+      // it — see renderLimitWarning in app.js.
       if (hasField('檢測極限')) {
-        out['檢測極限'] = !limitApplies ? ''
-          : (/^[\d.]+$/.test(limitRaw) ? SmartParse.formatNumber(limitRaw, 3) : limitRaw);
+        out['檢測極限'] = /^[\d.]+$/.test(limitRaw) ? SmartParse.formatNumber(limitRaw, 3) : limitRaw;
       }
       if (cat.unitField) out[cat.unitField] = unitLookup.code;
       if (cat.methodField) out[cat.methodField] = methodText;

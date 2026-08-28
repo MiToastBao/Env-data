@@ -7,15 +7,31 @@ const BASIC_INFO_FIELDS = [
     help: '格式為「英文代碼-四碼流水號」，例如 E-0001；如有延伸編碼請填 E-0001.1（請勿使用舊版三碼格式）' },
   { key: '書件案號', label: '書件案號', type: 'text',
     help: '共8碼：前7碼為數字，第8碼為英文大寫（若無可不填）' },
-  { key: '書件名稱', label: '書件名稱', type: 'text', help: '請填寫完整書件名稱，勿使用簡易寫法' },
+  // 官方五份辭典都把「書件名稱」「執行現況」列為必填（辭典 3、4），
+  // v4.42 以前程式當成選填，空著匯出也不會有人講一聲。
+  { key: '書件名稱', label: '書件名稱', type: 'text', required: true, help: '請填寫完整書件名稱，勿使用簡易寫法' },
   // A leading blank, like every other select in this schema. Without it the browser
   // auto-selected 施工前 for a project that had never set the field, so the screen
   // showed 施工前 while the export wrote an empty cell.
-  { key: '執行現況', label: '執行現況', type: 'select',
+  { key: '執行現況', label: '執行現況', type: 'select', required: true,
     options: ['', '施工前', '施工中', '施工兼營運', '營運中'] },
-  { key: '施工日期', label: '施工日期', type: 'date', help: '執行現況為施工中/施工兼營運時請務必填寫' },
-  { key: '竣工日期', label: '竣工日期', type: 'date', help: '執行現況為施工兼營運/營運中時請填寫' },
-  { key: '營運日期', label: '營運日期', type: 'date', help: '執行現況為施工兼營運/營運中時請務必填寫' },
+  /*
+   * 這三個是**條件式必填**——必不必填要看「執行現況」選了什麼。
+   * 官方在這幾條旁邊標了「變更」，代表 115 年才加嚴的。辭典原文：
+   *   施工日期（5）：「若執行現況為施工中或施工兼營運，請務必填寫」
+   *   竣工日期（6）：「若執行現況為施工兼營運或營運中，需填此欄」
+   *   營運日期（7）：「若執行現況為施工兼營運或營運中，此欄必填」
+   * 所以不能寫 required: true（那會變成永遠必填），改用 requiredWhenStatus。
+   */
+  { key: '施工日期', label: '施工日期', type: 'date',
+    requiredWhenStatus: ['施工中', '施工兼營運'],
+    help: '執行現況為施工中/施工兼營運時請務必填寫' },
+  { key: '竣工日期', label: '竣工日期', type: 'date',
+    requiredWhenStatus: ['施工兼營運', '營運中'],
+    help: '執行現況為施工兼營運/營運中時請填寫' },
+  { key: '營運日期', label: '營運日期', type: 'date',
+    requiredWhenStatus: ['施工兼營運', '營運中'],
+    help: '執行現況為施工兼營運/營運中時請務必填寫' },
   { key: '備註', label: '備註', type: 'textarea', help: '100字以內' },
 ];
 
@@ -93,7 +109,12 @@ const ECO_SURVEY_ITEMS = [
 // 比較關係 is documented as ">, <, ND" only, but real completed filings also use
 // free-text markers like "未檢測" (equipment failure) etc., so this is a text field
 // with suggestions rather than a strict enum.
-const COMPARE_SUGGESTIONS = ['>', '<', 'ND', '未檢測'];
+// 辭典（水質 24／空品 26／地質 23）原文：「比較關係：含 ＞、＜、ND，共3種」。
+// ⚠️「未檢測」以前也列在建議裡，但官方根本沒有這個值——手動編輯時挑到它，
+// 就把一個官方不存在的值寫進申報欄位。正確做法是**數值與比較關係都留空、
+// 把「未檢測」寫進備註**（辭典 30），匯入那條路徑本來就是這樣做的
+// （見 parseValueCell），只有這個下拉建議跟它不一致。
+const COMPARE_SUGGESTIONS = ['>', '<', 'ND'];
 
 const CATEGORIES = {
   air: {
@@ -568,16 +589,250 @@ function noiseVibRuleViolations(row, cat) {
   return out;
 }
 
+/*
+ * ─────────────────────────────────────────────────────────────
+ * 官方辭典寫得出來、而且驗得了的「格式」規則（v4.43）
+ * ─────────────────────────────────────────────────────────────
+ *
+ * 為什麼要有這一組：生態那一類的資料常常是別家公司做完交過來的，
+ * 匯入的時候**照樣讓它進來**（擋在門口只會逼人去改原始檔），
+ * 但進來之後要有人指著說「這幾格不符合官方要求」。
+ *
+ * 回傳的形狀和 noiseVibRuleViolations 一樣：[{key,label,value,why}]，
+ * 所以表格紅框、滑鼠提示、匯出前清點三條路都直接沿用，不必另外接。
+ *
+ * ⚠️ 只驗官方白紙黑字寫的，沒寫的不猜。每一條下面都附辭典原文。
+ * ⚠️ 而且每一條都拿使用者**已經送出去、環境部收下的**六份完成版實測過，
+ *    零誤報才留下來——會對正確資料亂叫的檢查，比沒有檢查更糟。
+ */
+
+/** 算字數要用碼點，不是 length——一個中文字在 JS 裡本來就是 1，但 emoji 之類是 2。 */
+function charLen(v) { return [...String(v ?? '').trim()].length; }
+
+/**
+ * 官方辭典寫明的字數上限，逐類逐欄。數字全部照抄辭典原文，沒寫的不猜。
+ *
+ * 「備註」五類都是 100 字（各辭典第 8 列，監測點基本資料那一段），
+ * 檢測項目那一段的備註沒有另外寫上限，沿用同一個數字。
+ */
+const MAX_CHARS = {
+  air: {
+    '備註': 100,       // 辭典 8：「100字以內」
+    '檢測項目': 100,   // 辭典 23：「100字以內」
+    '煙道編號': 20,    // 辭典 21：「20字以內」
+    '檢測方法': 50,    // 辭典 29：「50字以內」
+  },
+  water: {
+    '備註': 100,       // 辭典 8
+    '檢測項目': 100,   // 辭典 21
+    '檢測方法': 50,    // 辭典 27
+  },
+  geo: {
+    '備註': 100,       // 辭典 8
+    '檢測項目': 100,   // 辭典 20
+    '檢測方法': 50,    // 辭典 26
+  },
+  noise: {
+    '備註': 100,       // 辭典 8
+    '監測方法': 100,   // 辭典 27：「100字以內」
+  },
+  eco: {
+    '備註': 100,          // 辭典 8
+    '調查項目': 30,       // 辭典 17：「請輸入文字30字以內」
+    '環境現況描述': 200,  // 辭典 19：「輸入文字限200字以內」
+    '調查方法描述': 100,  // 辭典 26：「請輸入文字100字以內」
+  },
+};
+
+/**
+ * 座標。五份辭典的文字一字不差，所以五個類別共用一條。
+ *
+ * 辭典原文（採樣座標-經度 X）：
+ *   「請勿輸入度分秒(121°33′50.8″)
+ *     若前方（座標系統）欄位填代碼2，座標應為116~125之間的數值
+ *     若前方（座標系統）欄位填代碼3，座標應為6位數字」
+ *   （緯度 Y 對應 20~26 與 7 位數字）
+ *
+ * ⚠️ 「6位數字」就照字面驗：**純整數、正好 6 位**，不接受小數。
+ * 辭典自己給的範例也是 179159 / 2543818，都沒有小數點。
+ *
+ * v4.43 我一度放寬成「只看整數部分」，理由是使用者送出去而且被收下的
+ * 完成版_水質_115Q2 有 28 筆寫 176031.1 / 2593075.81。
+ * v4.44 改回照字面——**「以前被收下」不等於「以後會被收下」**，
+ * 官方系統最近才更新過。以官方寫的為準，這是使用者的裁示。
+ *
+ * 座標系統填 2（WGS84）則**沒有**位數規定，官方只寫了範圍（116~125／20~26），
+ * 範例本身就帶小數（120.309），所以那一邊不驗位數。
+ */
+function coordViolations(row, cat) {
+  const has = (k) => cat.fields.some((f) => f.key === k);
+  if (!has('座標系統') || !has('採樣座標-經度 X')) return [];
+  const sys = String(row['座標系統'] ?? '').trim();
+  const out = [];
+  const check = (key, label) => {
+    const raw = String(row[key] ?? '').trim();
+    if (raw === '') return; // 空白歸「必填欄位提醒」管，這裡不重複講
+    if (!/^-?\d+(\.\d+)?$/.test(raw)) {
+      // 實例：使用者的完成版_生態_115Q2 有 10 筆緯度寫成「22.653886,」——
+      // 尾巴多一個逗號。整份檔案送出去了都沒人發現。
+      out.push({ key, label, value: raw,
+        why: `「${label}」只能填數字（官方明文「請勿輸入度分秒」）。目前是「${raw}」——請檢查是不是多了逗號、單位或其他符號` });
+      return;
+    }
+    const n = parseFloat(raw);
+    const intDigits = raw.replace(/^-/, '').split('.')[0].length;
+    if (sys === '2') {
+      const [lo, hi] = key === '採樣座標-緯度 Y' ? [20, 26] : [116, 125];
+      if (!(n >= lo && n <= hi)) {
+        out.push({ key, label, value: raw,
+          why: `座標系統填 2（WGS84）時，「${label}」應為 ${lo}~${hi} 之間的數值（目前是 ${raw}）` });
+      }
+    } else if (sys === '3') {
+      const want = key === '採樣座標-緯度 Y' ? 7 : 6;
+      const example = key === '採樣座標-緯度 Y' ? '2543818' : '179159';
+      if (new RegExp(`^\\d{${want}}$`).test(raw)) return; // 正好 want 位純整數，過
+      if (raw.includes('.')) {
+        // 最常見的一種：位數對，但後面多了小數。講清楚要怎麼改，不要只說「不合規」。
+        out.push({ key, label, value: raw,
+          why: `座標系統填 3（TWD97-TM2）時，官方規定「${label}」為 ${want} 位數字（辭典範例 ${example}），`
+            + `不含小數。目前是「${raw}」——請把小數點以下四捨五入`
+            + `${intDigits !== want ? `，而且整數部分只有 ${intDigits} 位、應為 ${want} 位` : `（改成 ${Math.round(n)}）`}` });
+      } else {
+        out.push({ key, label, value: raw,
+          why: `座標系統填 3（TWD97-TM2）時，官方規定「${label}」為 ${want} 位數字（辭典範例 ${example}）。`
+            + `目前是「${raw}」，共 ${intDigits} 位` });
+      }
+    }
+  };
+  check('採樣座標-經度 X', '採樣座標-經度 X');
+  check('採樣座標-緯度 Y', '採樣座標-緯度 Y');
+  return out;
+}
+
+/** 字數上限。五個類別共用一支，欄位與數字從 MAX_CHARS 查。 */
+function charLimitViolations(row, cat) {
+  const limits = MAX_CHARS[cat.key] || {};
+  const out = [];
+  Object.entries(limits).forEach(([key, max]) => {
+    if (!cat.fields.some((f) => f.key === key)) return; // 這一類沒有這個欄位就跳過
+    const v = String(row[key] ?? '').trim();
+    if (v !== '' && charLen(v) > max) {
+      out.push({ key, label: key, value: v,
+        why: `官方規定「${key}」限 ${max} 字以內，目前 ${charLen(v)} 字` });
+    }
+  });
+  return out;
+}
+
+/** 生態專屬的格式規則（辭典 20～22）。字數上限已移到 charLimitViolations。 */
+function ecoFormatViolations(row) {
+  const out = [];
+  // 辭典 20 學名：「請填寫生物學名。若出現中文，要擋住」
+  const sci = String(row['學名'] ?? '').trim();
+  if (sci !== '' && /[㐀-䶿一-鿿]/.test(sci)) {
+    out.push({ key: '學名', label: '學名', value: sci,
+      why: `官方規定「學名」不可出現中文（目前是「${sci}」）。中文名稱請填在「中文名」欄` });
+  }
+  // 辭典 21 中文名：「請填寫生物俗名。若出現英文，要擋住」
+  const cn = String(row['中文名'] ?? '').trim();
+  if (cn !== '' && /[A-Za-z]/.test(cn)) {
+    out.push({ key: '中文名', label: '中文名', value: cn,
+      why: `官方規定「中文名」不可出現英文（目前是「${cn}」）。學名請填在「學名」欄` });
+  }
+  // 辭典 22 數量：「請填寫數字或"-"　請勿填寫級別或奇怪的符號，例如：@、#...」
+  const qty = String(row['數量'] ?? '').trim();
+  if (qty !== '' && qty !== '-' && !/^\d+(\.\d+)?$/.test(qty)) {
+    out.push({ key: '數量', label: '數量', value: qty,
+      why: `官方規定「數量」只能填數字或「-」，不可以填級別或符號（目前是「${qty}」）` });
+  }
+  return out;
+}
+
+/**
+ * 這一列有哪些格子不符合官方格式規定。
+ * 給表格紅框、滑鼠提示、匯出前清點共用。
+ */
+function fieldFormatViolations(row, cat) {
+  if (!cat) return [];
+  const out = coordViolations(row, cat);
+  out.push(...charLimitViolations(row, cat));
+  if (cat.key === 'eco') out.push(...ecoFormatViolations(row));
+  return out;
+}
+
+/** 一列裡所有「值填了但不對」的格子——格式規則 ＋ 噪音振動連動規則。 */
+function allRuleViolations(row, cat) {
+  return [...noiseVibRuleViolations(row, cat), ...fieldFormatViolations(row, cat)];
+}
+
+/** 這一列有沒有任何需要修正的地方（含必填未填）——給「只看需要修正的」篩選用。 */
+function rowNeedsFix(row, cat) {
+  return missingRequiredFields(row, cat).length > 0 || allRuleViolations(row, cat).length > 0;
+}
+
+/**
+ * 「監測點基本資料」頁缺了哪些官方必填欄位。
+ *
+ * 兩種必填：
+ *   ・永遠必填（required）：計畫代碼、書件名稱、執行現況
+ *   ・條件式必填（requiredWhenStatus）：施工／竣工／營運日期，看執行現況選了什麼
+ *
+ * 給基本資料頁的橘框與匯出前的提醒共用——同一份判斷，不寫兩遍。
+ */
+function missingBasicInfoFields(info) {
+  const status = String((info || {})['執行現況'] ?? '').trim();
+  const blank = (k) => String((info || {})[k] ?? '').trim() === '';
+  const out = [];
+  BASIC_INFO_FIELDS.forEach((f) => {
+    if (!blank(f.key)) return;
+    if (f.required) { out.push({ key: f.key, label: f.label, why: '官方必填' }); return; }
+    if (Array.isArray(f.requiredWhenStatus) && status !== '' && f.requiredWhenStatus.includes(status)) {
+      out.push({ key: f.key, label: f.label, why: `執行現況是「${status}」時必填` });
+    }
+  });
+  return out;
+}
+
 function missingRequiredFields(row, cat) {
   const blank = (k) => String(row[k] ?? '').trim() === '';
   const out = [];
   const noteFilled = !blank('備註');
+  /*
+   * ⚠️ 比較關係填 ND 的時候，檢測數值本來就不用填。
+   *
+   * 辭典（水質 25／空品 27／地質 24）原文：
+   *   「請填入數字…（**如果比較關係填ND，無需填寫數值**）」
+   *
+   * 舊版沒有這個例外，於是每一列 ND 都被標成「檢測數值必填」。
+   * 實測使用者送出去、而且被收下的 完成版_水質_115Q2：239 列裡
+   * **58 列 ND 全部被誤報**——一個每季固定跳 58 次的假警報，
+   * 真正該修的東西就淹沒在裡面。
+   */
+  const isND = String(row['比較關係'] ?? '').trim().toUpperCase() === 'ND';
+  const valueField = cat.fields.find((f) => f.key === '檢測數值' || f.key === '監測數值');
   cat.fields.forEach((f) => {
     if (!blank(f.key)) return;
     if (f.required) out.push({ key: f.key, label: f.label, why: '必填' });
-    else if (f.requiredUnlessNote && !noteFilled)
+    else if (f.requiredUnlessNote && !noteFilled) {
+      if (isND && valueField && f.key === valueField.key) return; // ND 不用填數值
       out.push({ key: f.key, label: f.label, why: '必填（若確實無法檢測，請在備註說明原因）' });
+    }
   });
+  /*
+   * 「未檢測」一定要寫進備註。
+   *
+   * 辭典（空品 32／水質 30／地質 29／噪音 30／生態 29）原文一字不差：
+   *   「若檢測數值輸入未輸入數值，則該欄位為必填，需填寫檢測數值未填的原因」
+   *
+   * 所以：數值空白、而且不是 ND（ND 是「測了，低於偵測極限」，不是沒測）
+   * → 備註變成必填。使用者自己的完成版就是這樣寫的（唯一一筆沒有數值的列，
+   * 備註寫著「未檢測」），官方範例則寫「無水可採」「因設備故障，未有數值」。
+   */
+  if (valueField && blank(valueField.key) && !isND && blank('備註')
+      && cat.fields.some((f) => f.key === '備註')) {
+    out.push({ key: '備註', label: '備註',
+      why: `必填（「${valueField.label}」沒有數值時，官方規定要在備註寫出原因，例如「未檢測」「無水可採」「因設備故障，未有數值」）` });
+  }
   // 條件式必填
   const unitField = cat.unitField;
   if (unitField && String(row[unitField] ?? '').trim() === '160') {
@@ -588,6 +843,14 @@ function missingRequiredFields(row, cat) {
   if (String(row['檢測機構許可證號'] ?? '').trim().split(';').some((x) => x.trim() === 'AA')
       && blank('其他檢測機構名稱')) {
     out.push({ key: '其他檢測機構名稱', label: '其他檢測機構名稱', why: '許可證號填 AA 時必填' });
+  }
+  /*
+   * 生態辭典 29（備註）：「若檢測數值輸入未輸入數值，則該欄位為必填，
+   * 需填寫檢測數值未填的原因」。生態的「檢測數值」就是「數量」，
+   * 而辭典 22 說沒有數字的時候填「-」——所以填了「-」＝沒有數值，備註就必填。
+   */
+  if (cat.key === 'eco' && String(row['數量'] ?? '').trim() === '-' && blank('備註')) {
+    out.push({ key: '備註', label: '備註', why: '「數量」填「-」時必填，請說明沒有數值的原因' });
   }
   return out;
 }

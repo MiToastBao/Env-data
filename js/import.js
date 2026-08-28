@@ -28,8 +28,11 @@ const ImportEngine = {
     '檢測濃度/質量單位': ['單位', '濃度單位', '檢測單位', '單位代碼'],
     '監測單位': ['單位', '檢測單位', '單位代碼'],
     '比較關係': ['比較符號', '符號'],
-    '檢測數值': ['監測數值', '數值', '結果', '檢測結果', '分析結果', '測值', '檢測值', '量測值', '監測值'],
-    '監測數值': ['檢測數值', '數值', '結果', '測值', '檢測值', '量測值', '監測值'],
+    // 「濃度」要明確列成 檢測數值 的別名。少了它的話，這個表頭會被下面的
+    // 寬鬆比對配到「檢測濃度/質量單位」（因為那個欄位名稱裡也有「濃度」兩個字），
+    // 於是濃度**數值**被塞進單位代碼欄——欄位有值、畫面不報錯，但整欄是錯的。
+    '檢測數值': ['監測數值', '數值', '結果', '檢測結果', '分析結果', '測值', '檢測值', '量測值', '監測值', '濃度', '檢測濃度', '測定值'],
+    '監測數值': ['檢測數值', '數值', '結果', '測值', '檢測值', '量測值', '監測值', '濃度'],
     '檢測極限': ['偵測極限', 'MDL', '定量極限', 'RL'],
     '檢測方法': ['分析方法', '方法', '檢驗方法'],
     '檢測機構許可證號': ['檢測機構', '機構代碼', '檢驗機構', '委託檢測機構', '機構許可證號'],
@@ -460,10 +463,29 @@ const ImportEngine = {
         }
       }
       if (!match) {
-        // loose contains-match as last resort
-        match = sourceHeaders.find(h => !usedHeaders.has(h) &&
-          (this.normalize(h).includes(this.normalize(f.key)) || this.normalize(f.key).includes(this.normalize(h))) &&
-          this.normalize(h).length > 1);
+        /*
+         * 最後才用的寬鬆比對：兩邊只要有一邊「包含」另一邊就算數。
+         *
+         * ⚠️ 只要求「長度大於 1」實在太鬆，會把短表頭配到只是碰巧含有那兩個字的
+         * 長欄位上。實例：表頭寫「濃度」而沒有「檢測數值」時，它會被配到
+         * 「檢測濃度/質量單位」，濃度數值就這樣進了單位代碼欄——每一格都有值、
+         * 完全不報錯，但整欄是錯的，而且要匯出之後才看得出來。
+         *
+         * 加兩個條件：短的那一邊至少 3 個字，而且要占長的那一邊一半以上。
+         * 「濃度」(2) 對「檢測濃度質量單位」(8)：兩個都不過，不配 → 交給上面
+         * 新增的別名去接。「監測數值dB」對「監測數值」：4/8，過。
+         * 配不到的欄位在對應畫面上是空的，看得見也改得掉；配錯的看不見。
+         */
+        match = sourceHeaders.find((h) => {
+          if (usedHeaders.has(h)) return false;
+          const a = this.normalize(h);
+          const b = this.normalize(f.key);
+          if (!a || !b) return false;
+          if (!a.includes(b) && !b.includes(a)) return false;
+          const short = Math.min(a.length, b.length);
+          const long = Math.max(a.length, b.length);
+          return short >= 3 && short * 2 >= long;
+        });
       }
       mapping[f.key] = match || null;
       if (match) usedHeaders.add(match);

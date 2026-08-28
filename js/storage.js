@@ -6,6 +6,28 @@
 const DataStore = {
   PROJECTS_KEY: 'envapp_projects_v1',
 
+  /*
+   * 每一次寫入都要走這裡。
+   *
+   * localStorage 滿了會丟 QuotaExceededError，而 setItem 是原子的——舊值原封不動
+   * 留著。以前只有 saveData 接住並通知，其他七個 save* 都是裸的 setItem：例外
+   * 一路丟進 focusout／click 處理常式被瀏覽器默默吃掉，畫面顯示新值、存下去的
+   * 還是舊值，使用者以為改好了。專案名稱、基本資料、地點別名、匯入紀錄、
+   * 檢測方法記憶全都在這條路上。
+   *
+   * 先通知（由 app.js 掛上 onStorageError 顯示訊息），再照樣往上丟，
+   * 原本已經有 try/catch 的呼叫端行為完全不變。
+   */
+  onStorageError: null,
+  _setItem(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (err) {
+      if (typeof this.onStorageError === 'function') this.onStorageError(err);
+      throw err;
+    }
+  },
+
   getProjects() {
     // Guard the SHAPE, not just the parse. A malformed value here used to throw out
     // of renderProjectList during init(), which aborted init before any event
@@ -20,7 +42,7 @@ const DataStore = {
   },
 
   saveProjects(projects) {
-    localStorage.setItem(this.PROJECTS_KEY, JSON.stringify(projects));
+    this._setItem(this.PROJECTS_KEY, JSON.stringify(projects));
   },
 
   createProject(code, name) {
@@ -80,7 +102,7 @@ const DataStore = {
     }
   },
   saveSiteItemHistory(projectId, category, history) {
-    localStorage.setItem(this._siteItemHistoryKey(projectId, category), JSON.stringify(history));
+    this._setItem(this._siteItemHistoryKey(projectId, category), JSON.stringify(history));
   },
   /** Adds (location, item) pairs to the history — additive/idempotent, never removes.
    *  Also remembers which 檢測類別 each item was last seen with, per location — e.g.
@@ -164,7 +186,7 @@ const DataStore = {
     }
   },
   saveItemMemory(projectId, category, memory) {
-    localStorage.setItem(this._methodMemoryKey(projectId, category), JSON.stringify(memory));
+    this._setItem(this._methodMemoryKey(projectId, category), JSON.stringify(memory));
   },
   /** Merge in newly-confirmed per-item values (only overwrites a field if the new value is non-empty). */
   updateItemMemory(projectId, category, itemUpdates) {
@@ -191,7 +213,7 @@ const DataStore = {
     }
   },
   saveImportBatches(projectId, category, batches) {
-    localStorage.setItem(this._batchKey(projectId, category), JSON.stringify(batches));
+    this._setItem(this._batchKey(projectId, category), JSON.stringify(batches));
   },
   addImportBatch(projectId, category, batchMeta) {
     const batches = this.getImportBatches(projectId, category);
@@ -214,7 +236,7 @@ const DataStore = {
     }
   },
   saveSiteAliases(projectId, category, aliases) {
-    localStorage.setItem(this._siteAliasKey(projectId, category), JSON.stringify(aliases));
+    this._setItem(this._siteAliasKey(projectId, category), JSON.stringify(aliases));
   },
 
   getBasicInfo(projectId) {
@@ -225,7 +247,7 @@ const DataStore = {
     }
   },
   saveBasicInfo(projectId, info) {
-    localStorage.setItem(this._basicKey(projectId), JSON.stringify(info));
+    this._setItem(this._basicKey(projectId), JSON.stringify(info));
   },
 
   getData(projectId, category) {
@@ -235,35 +257,37 @@ const DataStore = {
       return [];
     }
   },
-  /*
-   * ⚠️ 存不進去一定要讓人知道。
-   *
-   * localStorage 滿了會丟 QuotaExceededError，而 setItem 是原子的——舊值原封不動
-   * 留著。匯入那條路徑（runImportCommit）有接住並提示，但手動改格子、座標管理、
-   * 檢測方法管理、批次修改、刪除列全都沒有：例外一路丟進 focusout 處理常式，
-   * 被瀏覽器默默吃掉，畫面顯示新值、存下去的還是舊值，使用者以為改好了。
-   *
-   * 這裡集中處理：先通知（由 app.js 掛上 onStorageError 顯示訊息），再照樣往上丟，
-   * 原本已經有 try/catch 的呼叫端行為完全不變。
-   */
-  onStorageError: null,
+  /** ⚠️ 存不進去一定要讓人知道——見檔案最上面 _setItem 的說明。 */
   saveData(projectId, category, rows) {
-    try {
-      localStorage.setItem(this._dataKey(projectId, category), JSON.stringify(rows));
-    } catch (err) {
-      if (typeof this.onStorageError === 'function') this.onStorageError(err);
-      throw err;
-    }
+    this._setItem(this._dataKey(projectId, category), JSON.stringify(rows));
   },
   clearData(projectId, category) {
     this.saveData(projectId, category, []);
     this.saveImportBatches(projectId, category, []);
   },
 
+  /*
+   * 不屬於任何一個專案、而是整個瀏覽器共用的設定。
+   *
+   * 這兩樣以前**沒有進備份檔**：換一台電腦、還原備份之後，小數位數設定會退回
+   * 出廠預設（只有噪音監測數值補兩位），檢測項目的「最近使用的組合」整個消失。
+   * 專案、資料、別名、匯入紀錄都搬過去了，只有這兩個沒有，而且畫面上不會報錯——
+   * 使用者要等到匯出的檔案位數不對才發現。
+   *
+   * 鍵名要和 schema.js 的 DECIMAL_SETTINGS_KEY、app.js 的 presetStorageKey 一致。
+   */
+  _browserSettingKeys() {
+    return [DECIMAL_SETTINGS_KEY, ...CATEGORY_ORDER.map(c => `envapp_itemPresets_${c}`)];
+  },
+
   // Full export/import for backup/transfer between browsers
   exportAll() {
     const projects = this.getProjects();
-    const out = { projects: [] };
+    const out = { projects: [], browserSettings: {} };
+    this._browserSettingKeys().forEach((k) => {
+      const v = localStorage.getItem(k);
+      if (v !== null) out.browserSettings[k] = v;
+    });
     projects.forEach(p => {
       const entry = { ...p, basicInfo: this.getBasicInfo(p.id), data: {}, itemMemory: {}, siteItemHistory: {}, siteAliases: {}, importBatches: {} };
       CATEGORY_ORDER.forEach(cat => {
@@ -312,6 +336,26 @@ const DataStore = {
         newProjects.push({ id: newId, code: entry.code, name: entry.name, createdAt: entry.createdAt || new Date().toISOString() });
       });
       this.saveProjects(newProjects);
+      /*
+       * 瀏覽器共用設定。
+       *
+       * 「取代」＝這台電腦要變成備份那台的樣子，所以照抄。
+       * 「合併」＝這台電腦本來就有自己的專案在用，**只補上這裡還沒有的**，
+       *   不去動已經存在的設定——否則把同事的備份併進來，會順手改掉自己
+       *   原有專案的小數位數，而那會直接改變匯出的檔案內容。
+       * 舊版備份檔沒有這一段，跳過就是了。
+       */
+      const bs = payload.browserSettings;
+      if (bs && typeof bs === 'object') {
+        this._browserSettingKeys().forEach((k) => {
+          if (typeof bs[k] !== 'string') return;
+          if (mode !== 'replace' && localStorage.getItem(k) !== null) return;
+          // 盡力就好。設定寫不進去（例如容量滿了）會由 _setItem 通知使用者，
+          // 但**不能因此把已經還原好的專案資料整批退掉**——資料是本體，
+          // 設定是附帶的。
+          try { this._setItem(k, bs[k]); } catch (e) { /* 已通知，繼續 */ }
+        });
+      }
     } catch (err) {
       // roll back everything this call wrote, leave the old projects untouched
       written.forEach(id => { try { this._removeProjectKeys(id); } catch (e) { /* best effort */ } });

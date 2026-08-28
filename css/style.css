@@ -111,6 +111,7 @@ body {
   font-family: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-weight: 400;
 }
 .field-help { font-size: 11.5px; color: var(--text-muted); font-weight: 400; }
+.basic-label { display: inline-flex; align-items: baseline; gap: 2px; }
 
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
 .toolbar-left { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -249,6 +250,13 @@ table.data-grid td.col-actions { text-align: center; }
 .btn-ghost:hover { filter: brightness(0.95); }
 .btn-danger { background: #fdecea; color: var(--danger); }
 .btn-sm { padding: 6px 10px; font-size: 12px; }
+/* 「⚠️ 只看需要修正的」按下去之後要看得出來是開著的（v4.43）。
+   用實心底色而不是只換邊框——工具列上一排按鈕，只差一條邊框根本看不出來。 */
+.btn.btn-active,
+.content .btn-ghost.btn-active { background: var(--danger); color: #fff; }
+.btn.btn-active:hover { filter: brightness(1.08); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+.btn:disabled:hover { filter: none; }
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 50;
@@ -299,7 +307,8 @@ table.data-grid td.col-actions { text-align: center; }
    class 有加、畫面上一片正常。旁邊的 cell-required-missing 一直都有寫 select，
    就是漏了這一條。標示不可見等於沒有標示。 */
 input.cell-invalid,
-select.cell-invalid { border: 2px solid var(--danger) !important; background: #fdecea; }
+select.cell-invalid,
+textarea.cell-invalid { border: 2px solid var(--danger) !important; background: #fdecea; }
 .shortfall-note { color: var(--text-muted); font-size: 12px; display: block; margin: 2px 0 6px 22px; line-height: 1.6; }
 .notice-info { background: #e8f0fe; border: 1px solid #a8c7fa; padding: 9px 12px; border-radius: 6px; font-size: 12.5px; margin: 0 0 10px 0; line-height: 1.65; }
 .period-picker {
@@ -432,8 +441,12 @@ table.conflict-diff-table td.diff-new { color: var(--primary-dark); font-weight:
 
 /* 必填欄位還沒填：用虛線橘框標示，和「值有錯」的 cell-invalid 實線紅框區分開。
    「沒填」和「填錯」是兩件事，混成同一種顏色的話使用者分不出要補什麼。 */
+/* ⚠️ textarea 也要寫。v4.43 加的官方格式檢查會標「環境現況描述」「調查方法描述」，
+   那兩個是 textarea——漏掉的話又是一次「class 有加、畫面上一片正常」，
+   和 v4.42 修掉的 select 完全同一種錯。 */
 input.cell-required-missing,
-select.cell-required-missing {
+select.cell-required-missing,
+textarea.cell-required-missing {
   border: 1.5px dashed #d97706 !important;
   background: #fffbeb !important;
 }
