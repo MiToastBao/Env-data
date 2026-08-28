@@ -3,9 +3,21 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.34';
+const APP_VERSION = 'v4.35';
 
 const CHANGELOG = [
+  {
+    version: 'v4.35',
+    date: '2026-08-28',
+    notes: [
+      '【修正】<strong>營建噪音的振動報告，Lv10 那一欄原本完全沒有被讀進來。</strong>營建振動需要 Lv<sub>eq</sub>、Lv<sub>max</sub>、Lv10 三個值，舊版只讀了前兩個。程式碼裡的註解寫「只有兩個指標有官方代碼」——那是錯的，Lv10 有代碼，而且分日夜兩個：<strong>日間 Lvd(10)、夜間 Lvn(10)</strong>。',
+      '時段由報告上的「測定時間」判定，和噪音那半用同一個時段，所以噪音與振動一定落在同一個時段。營建工程多半白天施作，幾乎都是 Lvd(10)；<strong>夜間施工的場次（例如 00:20~00:22）會正確帶出 Lvn(10)</strong>。',
+      '以您提供的 06538BNV206 實檔驗證：夜間 00:20 那筆讀出 Lvn(10)=30.0、Lv<sub>max</sub>=43.4、Lv<sub>eq</sub>=30.9；日間 15:44 那筆讀出 Lvd(10)=31.9、Lv<sub>max</sub>=48.7、Lv<sub>eq</sub>=32.8，與報告逐格相符。共補回 11 筆 Lv10。',
+      'Lv5／Lv50／Lv90／Lv95 仍然<strong>刻意不帶</strong>——那四個沒有官方音源發聲特性代碼，帶進去申報系統不會收。',
+      '<strong>沒有變更任何既有的判讀規則，也沒有變更同步規則</strong>（座標仍是噪音與振動共同同步，其餘欄位噪音與振動各自獨立）。用您先前提供的 10 份報告實測，匯出的檔案逐格與前一版完全相同（14,975 格）。',
+      '新增守門測試 9 項，其中 <strong>4 項已實測會在 v4.34 下紅字</strong>。',
+    ],
+  },
   {
     version: 'v4.34',
     date: '2026-08-27',

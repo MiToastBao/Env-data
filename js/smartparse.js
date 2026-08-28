@@ -467,10 +467,18 @@ const SmartParse = {
       if (leq) rows.push({ ...common, '音源發聲特性': '均能音量(Leq)', '監測數值': this.formatNumber(leq) });
       if (lmax) rows.push({ ...common, '音源發聲特性': '最大音量(Lmax)', '監測數值': this.formatNumber(lmax) });
     } else if (isBV) {
-      // 振動測值 header row: Lveq | Lvmax | Lv5 | Lv10 | ... with the numbers directly
-      // underneath. Only the two metrics that have an official 音源發聲特性 code are
-      // emitted — Lv5/Lv50/Lv90 have no valid code, so importing them would produce a
-      // row the filing system can't accept.
+      /*
+       * 振動測值表頭：Lveq | Lvmax | Lv5 | Lv10 | Lv50 | Lv90 | Lv95，數值就在正下方。
+       *
+       * 只取**有官方音源發聲特性代碼**的三個：Lveq、Lvmax、Lv10。
+       * Lv5／Lv50／Lv90／Lv95 沒有代碼，硬帶進來申報系統不會收。
+       *
+       * ⚠️ Lv10 原本被漏掉了。當初這段註解寫「只有兩個指標有官方代碼」，
+       * 那是錯的——Lv10 有，而且**分日夜兩個代碼**：日間 Lvd(10)、夜間 Lvn(10)。
+       * 營建工程多半白天施作，所以幾乎都是 Lvd(10)；但夜間施工（例如 00:20 那筆）
+       * 就必須是 Lvn(10)。時段由報告上的「測定時間」判定，和噪音那半用的是同一個
+       * tod，所以噪音與振動一定會落在同一個時段，不會一邊日間一邊夜間。
+       */
       const methodRawV = this.labelValue(grid, /量測方法依據[:：]?/) || this.labelValue(grid, /採樣方法[:：]/);
       const methodV = this.extractMethodCode(methodRawV) || 'NIEA P204';
       const headerR = vibHit ? vibHit.r : -1;
@@ -481,9 +489,11 @@ const SmartParse = {
         const metrics = [
           { col: colOf(/^Lveq$/i), item: '事件振動位準(Lveq)' },
           { col: colOf(/^Lvmax$/i), item: '最大振動位準(Lvmax)' },
+          // 日間→Lvd(10)、夜間→Lvn(10)；判不出時段就整筆不帶（見下方 return）
+          { col: colOf(/^Lv\s*10$/i), item: vibLv10ItemFor(tod) },
         ];
         metrics.forEach(m => {
-          if (m.col < 0) return;
+          if (m.col < 0 || !m.item) return;
           const v = this.cellStr(valueRow[m.col]);
           if (v === '' || isNaN(parseFloat(v))) return;
           rows.push({
