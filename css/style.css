@@ -292,8 +292,14 @@ table.data-grid td.col-actions { text-align: center; }
 .limit-fix-option input { margin-top: 4px; flex-shrink: 0; }
 .limit-fix-option .hint { font-size: 12px; }
 /* A stored 檢測極限 that still isn't a bare number — flagged in the grid so it can't
-   be filed by accident. */
-input.cell-invalid { border: 2px solid var(--danger) !important; background: #fdecea; }
+   be filed by accident.
+
+   ⚠️ 這條以前只寫 `input.cell-invalid`，於是**下拉欄位標了紅框也看不見**——
+   「清單以外的值」（v4.31）和「噪音／振動連動規則」（v4.42）標的都是 <select>，
+   class 有加、畫面上一片正常。旁邊的 cell-required-missing 一直都有寫 select，
+   就是漏了這一條。標示不可見等於沒有標示。 */
+input.cell-invalid,
+select.cell-invalid { border: 2px solid var(--danger) !important; background: #fdecea; }
 .shortfall-note { color: var(--text-muted); font-size: 12px; display: block; margin: 2px 0 6px 22px; line-height: 1.6; }
 .notice-info { background: #e8f0fe; border: 1px solid #a8c7fa; padding: 9px 12px; border-radius: 6px; font-size: 12.5px; margin: 0 0 10px 0; line-height: 1.65; }
 .period-picker {

@@ -927,6 +927,7 @@ function renderCategoryTab(project, catKey) {
       return r._period === activePeriod;
     });
     if (freshRows.length === 0) { alert('目前篩選範圍內沒有資料可匯出。'); return; }
+    if (!confirmNoiseVibRuleBeforeExport(freshRows, cat)) return;
     if (!confirmTimeRangeBeforeExport(freshRows, cat)) return;
     if (!confirmLimitBeforeExport(freshRows, cat)) return;
     if (!confirmRequiredBeforeExport(freshRows, cat)) return;
@@ -957,7 +958,7 @@ function renderCategoryTab(project, catKey) {
       if (!snapshot) return;
       if (!confirm(`確定要復原「${snapshot.description}」嗎？`)) return;
       popUndoAndRestore(project.id, catKey);
-      renderContent();
+      renderContentPreservingScroll();
     });
   }
   const btnRedo = document.getElementById('btnRedo');
@@ -967,7 +968,7 @@ function renderCategoryTab(project, catKey) {
       if (!snapshot) return;
       if (!confirm(`確定要重做「${snapshot.description}」嗎？`)) return;
       popRedoAndRestore(project.id, catKey);
-      renderContent();
+      renderContentPreservingScroll();
     });
   }
 
@@ -1194,7 +1195,7 @@ function wireBulkSelection(project, catKey, cat) {
       pushUndoSnapshot(project.id, catKey, `刪除已選取（${indices.size}筆）`);
       const rows = DataStore.getData(project.id, catKey).filter((_, i) => !indices.has(i));
       DataStore.saveData(project.id, catKey, rows);
-      renderContent();
+      renderContentPreservingScroll();
     });
   }
   const bulkClearBtn = document.getElementById('btnBulkClear');
@@ -1233,9 +1234,53 @@ function openBatchEditModal(project, catKey, cat, indices) {
   const fieldSelect = document.getElementById('batchEditFieldSelect');
   fieldSelect.innerHTML = editableFields.map(f => `<option value="${escapeAttr(f.key)}">${escapeHtml(f.label)}</option>`).join('');
 
+  /*
+   * 批次修改也要守噪音／振動的規矩（v4.41）
+   * ────────────────────────────────────────
+   * 表格裡改一格會問「要不要同步給振動」，而且管制標準、管制區這些
+   * 官方規定必須不同的欄位連問都不問。但**批次修改是另一條路徑**，
+   * 它完全繞過那套規則——使用者同時勾了噪音和振動、把「管制區」統一改成
+   * 「第3類」，振動那幾筆就這樣變成不合規，而且沒有任何提示。
+   *
+   * 這裡不擋。使用者是自己一列一列勾的，他可能真的知道自己在做什麼
+   * （例如只勾振動、統一改成「無」，那完全正確）。
+   * 要擋的是「勾的範圍橫跨兩邊」這件事——那多半是誤選。
+   */
+  const selectedRows = DataStore.getData(project.id, catKey)
+    .filter((_, i) => indices.includes(i));
+  const noiseCount = catKey === 'noise' ? selectedRows.filter(r => noiseHalfOf(r) === 'noise').length : 0;
+  const vibCount = catKey === 'noise' ? selectedRows.filter(r => noiseHalfOf(r) === 'vib').length : 0;
+  const spansBothHalves = noiseCount > 0 && vibCount > 0;
+  const OFFICIAL_REASON = {
+    '管制標準': '官方規定振動必須填「無」、噪音不能填「無」（115 年 7 月起加強檢核）',
+    '管制區': '官方規定振動必須填「無」、噪音不能填「無」（115 年 7 月起加強檢核）',
+    '監測單位': '噪音是 dB(A)（代碼 16）、振動是 dB（代碼 159）',
+    '監測方法': '噪音是 NIEA P201／P205、振動是 NIEA P204',
+    '音源發聲特性': '噪音是 Leq／Lmax／Leq,LF、振動是 Lveq／Lvmax／Lvd(10)／Lvn(10)',
+    '頻率範圍': '這是噪音的欄位，振動留空白',
+    '環境音量標準': '這是道路交通噪音專用的欄位，振動不適用',
+    '監測時段': '噪音分日／晚／夜三段，振動只有日／夜',
+    '檢測類別': '這正是用來分辨噪音與振動的欄位',
+  };
+  const conflictReason = (fieldKey) =>
+    (spansBothHalves && NOISE_VIB_DISTINCT_FIELDS.includes(fieldKey))
+      ? (OFFICIAL_REASON[fieldKey] || '這個欄位在噪音與振動之間本來就不一樣')
+      : '';
+
   const renderValueInput = () => {
     const field = editableFields.find(f => f.key === fieldSelect.value);
     document.getElementById('batchEditValueWrap').innerHTML = fieldControlHTML(field, '', '', undefined, catKey);
+    const warnEl = document.getElementById('batchEditWarning');
+    const reason = conflictReason(field.key);
+    warnEl.innerHTML = reason
+      ? `<div class="warning" style="margin:10px 0 0">⚠️ 您選取的資料<strong>同時包含噪音 ${noiseCount} 筆與振動 ${vibCount} 筆</strong>，`
+        + `而<strong>「${escapeHtml(field.label)}」在噪音與振動之間本來就不一樣</strong>——${escapeHtml(reason)}。<br>`
+        + `統一改成同一個值，其中一邊會變成不合規。<br>`
+        + `<span class="hint">建議取消，改成分兩次做：先只勾噪音那 ${noiseCount} 筆改一次，再只勾振動那 ${vibCount} 筆改一次。</span></div>`
+      : (spansBothHalves
+        ? `<div class="warning" style="margin:10px 0 0;background:#e8f0fe;border-color:#a8c7fa">`
+          + `ℹ️ 您選取的資料同時包含<strong>噪音 ${noiseCount} 筆</strong>與<strong>振動 ${vibCount} 筆</strong>，兩邊都會被改成同一個值。</div>`
+        : '');
   };
   renderValueInput();
   fieldSelect.onchange = renderValueInput;
@@ -1251,7 +1296,23 @@ function openBatchEditModal(project, catKey, cat, indices) {
     if (field.type === 'date') newValue = normalizeDateString(newValue);
     if (field.type === 'time') newValue = normalizeTimeString(newValue);
 
-    if (!confirm(`確定要把已選取的 ${indices.length} 筆資料的「${field.label}」統一改成「${newValue || '（空白）'}」嗎？（可用「↩️ 復原上一步」救回）`)) return;
+    const reason = conflictReason(field.key);
+    if (reason) {
+      // 已經在視窗上用紅框講過一次了，這裡是最後一道——要按兩次才過得去是刻意的
+      if (!confirm(
+        `⚠️ 您選取的資料同時包含噪音 ${noiseCount} 筆與振動 ${vibCount} 筆。\n\n`
+        + `「${field.label}」在噪音與振動之間本來就不一樣——${reason}。\n`
+        + `統一改成「${newValue || '（空白）'}」，其中一邊會變成不合規、上傳可能被退件。\n\n`
+        + `建議按「取消」，改成分兩次做：先只勾噪音那 ${noiseCount} 筆，再只勾振動那 ${vibCount} 筆。\n\n`
+        + `仍要兩邊一起改嗎？`
+      )) return;
+    } else if (spansBothHalves) {
+      if (!confirm(
+        `您選取的資料同時包含噪音 ${noiseCount} 筆與振動 ${vibCount} 筆，`
+        + `兩邊的「${field.label}」都會被改成「${newValue || '（空白）'}」。\n\n`
+        + `確定要這樣修改嗎？（可用「↩️ 復原上一步」救回）`
+      )) return;
+    } else if (!confirm(`確定要把已選取的 ${indices.length} 筆資料的「${field.label}」統一改成「${newValue || '（空白）'}」嗎？（可用「↩️ 復原上一步」救回）`)) return;
 
     pushUndoSnapshot(project.id, catKey, `批次修改「${field.label}」（${indices.length}筆）`);
     const rows = DataStore.getData(project.id, catKey);
@@ -1262,7 +1323,7 @@ function openBatchEditModal(project, catKey, cat, indices) {
     DataStore.saveData(project.id, catKey, rows);
     if (touchedRows.length > 0) learnSiteItemHistory(project.id, catKey, cat, touchedRows);
     modal.classList.add('hidden');
-    renderContent();
+    renderContentPreservingScroll();
   };
 }
 
@@ -1390,7 +1451,7 @@ function openBatchHistoryModal(project, catKey) {
         pushUndoSnapshot(project.id, catKey, `刪除匯入批次「${row.sourceLabel}」（${row.rowCount}筆）`);
         DataStore.deleteImportBatch(project.id, catKey, batchId);
         openBatchHistoryModal(project, catKey); // refresh list in place
-        renderContent();
+        renderContentPreservingScroll();
       });
     });
   }
@@ -1443,7 +1504,13 @@ function rowHtml(cat, row, idx) {
    * 一列二十幾欄乘上幾百列會很慢。
    */
   const missingHere = new Map(missingRequiredFields(row, cat).map(m => [m.key, m.why]));
-  const ctl = (f) => fieldControlHTML(f, row[f.key], `data-row="${idx}"`, missingHere.get(f.key), cat.key);
+  /*
+   * 噪音／振動的連動規則同樣一列算一次（v4.42）。
+   * 這是「已經填錯」的檢查——資料可能是別家公司交來的、或上一季匯入的，
+   * 不見得經過這個程式的任何一條編輯路徑，所以只能在畫出來的時候看。
+   */
+  const ruleHere = new Map(noiseVibRuleViolations(row, cat).map(v => [v.key, v.why]));
+  const ctl = (f) => fieldControlHTML(f, row[f.key], `data-row="${idx}"`, missingHere.get(f.key), cat.key, ruleHere.get(f.key));
   const pinnedCells = displayFieldOrder(cat).slice(0, 2).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${ctl(f)}</td>`).join('');
   const restCells = displayFieldOrder(cat).slice(2).map(f => `<td>${ctl(f)}</td>`).join('');
   // 操作 (delete button) and # (row number) sit right after 地點/測項 (the pinned
@@ -1463,7 +1530,7 @@ function rowHtml(cat, row, idx) {
  *   有值時整格畫紅框並附說明，讓使用者看得到要補哪裡——以前完全沒有提示，
  *   而「補回缺少測項」產生的空白列是預設打勾的，很容易就這樣送出去。
  */
-function fieldControlHTML(field, value, rowAttr, missingWhy, catKey) {
+function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
   value = value ?? '';
   const base = `${rowAttr} data-field="${field.key}"`;
   const missTip = missingWhy
@@ -1497,10 +1564,18 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey) {
       const extra = known || value_ === ''
         ? ''
         : `<option value="${escapeAttr(value_)}" selected>${escapeHtml(value_)}（非標準值）</option>`;
-      const cls = extra || missCls ? ` class="${extra ? 'cell-invalid' : ''}${missCls}"` : '';
-      const tip = extra
-        ? ` title="「${escapeAttr(value_)}」不在官方允許的選項裡（${escapeAttr(field.options.filter(Boolean).join('、'))}），申報時可能被退件。請從清單中改選正確的值。"`
-        : (missTip || (field.help ? ` title="${escapeAttr(field.help)}"` : ''));
+      /*
+       * 兩種紅框都可能出現在同一格：值不在官方清單裡（extra），
+       * 以及值合法但**和檢測類別對不起來**（ruleWhy，例如振動填了「第2類」）。
+       * 後者比較常見也比較難發現，所以說明文字優先講它。
+       */
+      const badValue = Boolean(extra) || Boolean(ruleWhy);
+      const cls = badValue || missCls ? ` class="${badValue ? 'cell-invalid' : ''}${missCls}"` : '';
+      const tip = ruleWhy
+        ? ` title="${escapeAttr(`${ruleWhy}。這是官方明文規定的連動規則（115 年 7 月起加強檢核），不改申報會被退件。`)}"`
+        : extra
+          ? ` title="「${escapeAttr(value_)}」不在官方允許的選項裡（${escapeAttr(field.options.filter(Boolean).join('、'))}），申報時可能被退件。請從清單中改選正確的值。"`
+          : (missTip || (field.help ? ` title="${escapeAttr(field.help)}"` : ''));
       return `<select ${base}${cls}${tip}>${opts}${extra}</select>`;
     }
     case 'date':
@@ -2291,7 +2366,7 @@ function wireGridEvents(project, catKey, cat) {
     const rows = DataStore.getData(project.id, catKey);
     rows.splice(Number(btn.dataset.row), 1);
     DataStore.saveData(project.id, catKey, rows);
-    renderContent();
+    renderContentPreservingScroll();
   });
   // Pressing Enter should confirm the edit immediately (normalize, commit, and offer
   // any sync) rather than requiring the person to click elsewhere first — blur()
@@ -2890,7 +2965,7 @@ function saveCoordModal() {
   // filled in — re-learning on every save keeps the remembered snapshot current.
   if (touchedRows.length > 0) learnSiteItemHistory(projectId, catKey, cat, touchedRows);
   closeCoordModal();
-  renderContent();
+  renderContentPreservingScroll();
   alert('已套用座標到符合的資料列（僅限相同測站＋相同採樣日期的資料）。');
 }
 
@@ -3024,7 +3099,7 @@ function saveMethodModal() {
   // resurrecting the pre-correction method/unit indefinitely.
   if (touchedRows.length > 0) learnSiteItemHistory(projectId, catKey, cat, touchedRows);
   closeMethodModal();
-  renderContent();
+  renderContentPreservingScroll();
   alert('已套用檢測方法／單位代碼到符合的資料列，並記住這些設定供下次（含下一季）匯入同一測項時自動帶入。');
 }
 
@@ -3326,6 +3401,7 @@ function confirmExportSelect() {
     jobs.push({ catKey, rows });
   });
   for (const job of jobs) {
+    if (!confirmNoiseVibRuleBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
     if (!confirmTimeRangeBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
     if (!confirmLimitBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
     if (!confirmRequiredBeforeExport(job.rows, CATEGORIES[job.catKey])) return;
@@ -3556,6 +3632,43 @@ function confirmTimeRangeBeforeExport(rows, cat) {
     + `（在表格中這些格子會用紅框標示，滑鼠移上去有說明）\n`
     + `按「確定」仍要照原樣匯出——這些格子會以文字寫入，不會被改成 00:00；\n`
     + `按「取消」回去修正。`
+  );
+}
+
+/*
+ * 匯出前清點「噪音／振動連動規則」填錯的資料（v4.42）
+ * ────────────────────────────────────────────────────
+ * 表格上的紅框只有捲到那一格才看得到，而一份季報有上百列。
+ * 這是最後一道——尤其是別家公司交來、或上一季匯入的資料，
+ * 它們從來沒有經過這個程式的任何一條編輯路徑，紅框可能一次都沒被看到過。
+ */
+function findNoiseVibRuleViolations(rows, cat) {
+  const counts = new Map(); // 「檢測類別｜欄位｜值」 → 筆數
+  rows.forEach((r) => {
+    noiseVibRuleViolations(r, cat).forEach((v) => {
+      const key = `${String(r['檢測類別'] ?? '').trim()}｜${v.key}｜${v.value}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+  });
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function confirmNoiseVibRuleBeforeExport(rows, cat) {
+  const bad = findNoiseVibRuleViolations(rows, cat);
+  if (bad.length === 0) return true;
+  const total = bad.reduce((n, [, c]) => n + c, 0);
+  const list = bad.slice(0, 8).map(([k, n]) => {
+    const [category, field, value] = k.split('｜');
+    return `　・檢測類別「${category}」的「${field}」＝「${value}」：${n} 筆`
+      + `（${category === '振動' ? '振動必須填「無」' : '噪音不能填「無」'}）`;
+  }).join('\n');
+  return confirm(
+    `「${cat.label}」有 ${total} 筆資料的管制標準／管制區和檢測類別對不起來：\n${list}`
+    + `${bad.length > 8 ? `\n　…另有 ${bad.length - 8} 種` : ''}\n\n`
+    + `官方規定：檢測類別是「振動」時，管制標準與管制區必須填「無」；\n`
+    + `是噪音時則不能填「無」。115 年 7 月起加強檢核這個組合。\n\n`
+    + `（在表格中這些格子會用紅框標示，可用欄位篩選 ▾ 快速找到）\n`
+    + `按「確定」仍要照原樣匯出，按「取消」回去修正。`
   );
 }
 
@@ -4549,6 +4662,30 @@ function renderSmartImportPreview() {
       + `<strong>從噪音那一半帶入 ${filled.rows} 筆振動資料</strong>（${escapeHtml(detail)}）。`
       + `<br><span class="hint">只填原本空白的格子，不會覆蓋報告本身已經有的值。請在下方詳細資料列表核對一下。</span>`;
     document.getElementById('smartImportItemsWrap').after(note);
+  }
+
+  /*
+   * 匯入進來就已經違反連動規則的資料，在預覽畫面就講（v4.42）。
+   * 別家公司交來的檔案、報告本身填錯的，最好在按下「確認匯入」之前就知道，
+   * 而不是等一季之後匯出被退件才回頭找。
+   */
+  const existingRuleWarning = document.getElementById('smartImportRuleWarning');
+  if (existingRuleWarning) existingRuleWarning.remove();
+  const ruleBad = findNoiseVibRuleViolations(result.rows, cat);
+  if (ruleBad.length > 0) {
+    const total = ruleBad.reduce((n, [, c]) => n + c, 0);
+    const warn = document.createElement('div');
+    warn.id = 'smartImportRuleWarning';
+    warn.className = 'warning';
+    warn.innerHTML = `⚠️ 這份資料有 <strong>${total} 筆</strong>的管制標準／管制區和檢測類別對不起來：<br>`
+      + ruleBad.slice(0, 6).map(([k, n]) => {
+        const [category, field, value] = k.split('｜');
+        return `　・檢測類別「${escapeHtml(category)}」的「${escapeHtml(field)}」＝「${escapeHtml(value)}」：${n} 筆`;
+      }).join('<br>')
+      + `${ruleBad.length > 6 ? `<br>　…另有 ${ruleBad.length - 6} 種` : ''}`
+      + `<br><span class="hint">官方規定：檢測類別是「振動」時管制標準與管制區必須填「無」，是噪音時不能填「無」`
+      + `（115 年 7 月起加強檢核）。匯入後在表格中會用紅框標示，可用欄位篩選 ▾ 快速找到並修正。</span>`;
+    document.getElementById('smartImportItemsWrap').after(warn);
   }
 
   const existingMethodWarning = document.getElementById('smartImportMethodWarning');

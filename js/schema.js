@@ -529,6 +529,45 @@ function normalizeVibRawLabel(rawItemName) {
 //    但只是「提醒」，不會擋住匯入，也不會擋住匯出——使用者可以自己判斷。
 
 /** 這一列少了哪些必填欄位？回傳 [{ key, label, why }]，沒有就是空陣列。 */
+/*
+ * 噪音／振動的連動規則檢查（v4.42）
+ * ──────────────────────────────────
+ * 官方規定（115 年操作說明 p.19，並自 115 年 7 月起加強檢核）：
+ *   ・檢測類別＝振動 → 管制標準、管制區**必須**填「無」
+ *   ・檢測類別＝噪音 → 管制標準、管制區**不能**填「無」
+ *
+ * 到 v4.41 為止，程式只做到「改的時候不讓你弄錯」——表格編輯、同步、批次修改
+ * 三條路徑都擋住了。但**已經填錯的資料仍然沒有人告訴你**：
+ * 別家公司交來的檔案、上一季匯入的舊資料、報告本身就填錯的，
+ * 全部安安靜靜地躺在表格裡，一路送到環境部才被退件。
+ * 這個函式補的就是「事後也看得出來」。
+ *
+ * ⚠️ 空白不在這裡處理。「管制標準」「管制區」本來就是必填欄位，
+ * 空白由 missingRequiredFields() 負責——同一件事不要兩個地方各講一次，
+ * 那只會讓真正該修的被淹沒。
+ * ⚠️ 檢測類別本身空白時不判斷：連是噪音還是振動都不知道，猜就是亂報。
+ */
+const NOISE_VIB_LINKED_FIELDS = ['管制標準', '管制區'];
+function noiseVibRuleViolations(row, cat) {
+  if (!cat || cat.key !== 'noise') return [];
+  const category = String(row['檢測類別'] ?? '').trim();
+  if (category === '') return [];
+  const isVib = category === '振動';
+  const out = [];
+  NOISE_VIB_LINKED_FIELDS.forEach((key) => {
+    const v = String(row[key] ?? '').trim();
+    if (v === '') return;
+    if (isVib && v !== '無') {
+      out.push({ key, label: key, value: v,
+        why: `檢測類別是「振動」時，「${key}」必須填「無」（目前是「${v}」）` });
+    } else if (!isVib && v === '無') {
+      out.push({ key, label: key, value: v,
+        why: `檢測類別是「${category}」時，「${key}」不能填「無」` });
+    }
+  });
+  return out;
+}
+
 function missingRequiredFields(row, cat) {
   const blank = (k) => String(row[k] ?? '').trim() === '';
   const out = [];

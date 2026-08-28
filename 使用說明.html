@@ -504,6 +504,31 @@
 <b>按 Esc 或點視窗外面，等同「取消修改」</b>——那一格會還原回原本的值。
 </div>
 
+<div class="warn">
+<b>批次修改也會擋住噪音／振動的誤選。</b>（v4.41 起）<br>
+如果您在「✏️ 批次修改欄位」裡<strong>同時勾了噪音和振動</strong>，
+而要改的又是 <code>管制標準</code>、<code>管制區</code>、<code>監測單位</code>、<code>監測方法</code>、
+<code>音源發聲特性</code>、<code>頻率範圍</code>、<code>環境音量標準</code>、<code>監測時段</code>
+這幾個<strong>兩邊本來就不一樣</strong>的欄位，視窗上會直接跳紅框告訴您各有幾筆、以及官方的理由，
+並建議<strong>分兩次做</strong>（先只勾噪音改一次，再只勾振動改一次）。<br>
+<strong>只勾單一邊完全不會跳警告</strong>——例如只勾振動、統一改成「無」，那本來就是正確用法。<br>
+系統<strong>不會擋</strong>您：確定要兩邊一起改，按過提示仍然改得成。
+</div>
+
+<div class="warn">
+<b>已經填錯的資料，v4.42 起也看得出來了。</b><br>
+官方規定：檢測類別是<strong>振動</strong>時，<code>管制標準</code>與<code>管制區</code><strong>必須</strong>填「無」；
+是<strong>噪音</strong>時<strong>不能</strong>填「無」（115 年 7 月起加強檢核這個組合）。<br>
+以前系統只在「您動手改」的時候擋，但<strong>別家公司交來的檔案、上一季匯入的舊資料、
+報告本身就填錯的</strong>從來沒經過那些路徑。現在三個地方都會告訴您：<br>
+　① 表格上該格<strong>紅框</strong>，滑鼠移上去說明原因<br>
+　② <strong>匯入預覽</strong>就先講「有 N 筆對不起來」<br>
+　③ <strong>匯出前</strong>清點出哪個檢測類別、哪個欄位、什麼值、幾筆<br>
+<strong>只提醒不阻擋</strong>；全部正確時完全不會跳。<br>
+<span class="hint">欄位空白不會在這裡重複提醒（那是「必填欄位」的事）；檢測類別本身空白時不判斷。</span><br>
+<span class="hint">（v4.42 一併修正：下拉欄位的紅框以前標了看不見，所以「清單以外的值」那個提醒從 v4.31 起一直是隱形的，現在看得到了。）</span>
+</div>
+
 <div class="note">
 <b>改錯了、而且視窗已經關掉了？用「↩️ 復原上一步」。</b><br>
 分類頁面上方有 <span class="ui">↩️ 復原上一步</span> 與 <span class="ui">↪️ 返回下一步</span>
