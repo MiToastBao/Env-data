@@ -1257,3 +1257,81 @@ const SmartParse = {
     return { rows, matchedSheets, skippedSheets, sites };
   },
 };
+
+/*
+ * 匯入時把噪音的座標帶進同一次採樣的振動列（v4.37）
+ * ────────────────────────────────────────────────
+ * 噪音振動報告的座標通常**只寫在噪音那一半**，振動那一半整欄留白。
+ * 這不是偶爾，是常態——使用者的兩份實檔都是如此：
+ *
+ *   報告_06538BNV206：11 個測站，營建工程噪音每站都有座標，
+ *                     同一個測站的振動列 33 筆**一筆都沒有**
+ *   報告_11017NV15：  5 個測站，噪音有座標，振動 40 筆一筆都沒有
+ *
+ * 而且兩份檔案裡，振動列的「監測地點 ＋ 日期(起) ＋ 日期(迄)」都和噪音列
+ * 一模一樣，所以配對得起來。舊版匯入之後振動的座標是空的，使用者得在
+ * 測站設定裡把同一組座標再打一次（測站代碼還是分開的：BN206-01 / BV206-01，
+ * 所以它們在畫面上是兩個測站，不會自動共用）。
+ *
+ * 配對條件刻意和「手動改座標時的同步」完全一樣：
+ *   同一個監測地點 ＋ 同樣的 日期(起) 與 日期(迄)
+ * 時間不列入條件——振動的量測時段可能和噪音不同（例如噪音 24 小時、
+ * 振動只量日夜兩個時段），但它們仍然是同一次到場、同一個位置。
+ *
+ * ⚠️ 只填**空白**的格子，已經有值的座標絕對不覆蓋。
+ * ⚠️ 只有噪音類別。其他類別同一地點同一天的兩個檢測類別（例如水質的
+ *    「河川」與「地下水」）是兩次不同的採樣，位置本來就可能不同。
+ * ⚠️ 單向：非振動 → 振動。反過來把振動的座標帶給噪音沒有意義，
+ *    而且會讓「哪一邊才是原始資料」說不清楚。
+ * ⚠️ 三欄一起帶（含座標系統）。只帶經緯度不帶座標系統的話，
+ *    畫面上座標有了、座標系統空白，要到上傳被退件才會發現。
+ *
+ * 回傳補上座標的**列數**，讓匯入畫面可以明講補了幾筆——
+ * 沒有講出來的自動填值，和悄悄改掉使用者的資料只差一線。
+ */
+function fillVibrationSharedFromNoise(rows, catKey) {
+  const empty = { rows: 0, byField: {} };
+  if (catKey !== 'noise' || !Array.isArray(rows) || rows.length === 0) return empty;
+  const LOC = CATEGORIES.noise.locationField; // 監測地點
+  const keyOf = (r) => [r[LOC] || '', r['日期(起)'] || '', r['日期(迄)'] || ''].join('␟');
+  const val = (r, f) => String(r[f] ?? '').trim();
+
+  /*
+   * 每個欄位各自收集、各自判斷衝突。
+   * 舊寫法把三個座標欄綁成一組，加進「檢測機構許可證號」之後就會變成：
+   * 機構代碼對不起來，連座標一起不帶。兩件事不該互相拖累。
+   *
+   * 同一組出現兩種不同的值時**不猜**，那個欄位整組放棄——
+   * 寧可讓使用者自己填，也不要挑一個看起來像的填進去。
+   */
+  const donors = new Map(); // field -> Map(key -> value | null（null ＝ 有衝突）)
+  NOISE_VIB_IMPORT_FILL_FIELDS.forEach(f => donors.set(f, new Map()));
+  rows.forEach((r) => {
+    if (r['檢測類別'] === '振動') return;
+    const k = keyOf(r);
+    NOISE_VIB_IMPORT_FILL_FIELDS.forEach((f) => {
+      const v = val(r, f);
+      if (v === '') return;
+      const m = donors.get(f);
+      if (!m.has(k)) { m.set(k, v); return; }
+      if (m.get(k) !== null && m.get(k) !== v) m.set(k, null);
+    });
+  });
+
+  const byField = {};
+  const touched = new Set();
+  rows.forEach((r, i) => {
+    if (r['檢測類別'] !== '振動') return;
+    const k = keyOf(r);
+    NOISE_VIB_IMPORT_FILL_FIELDS.forEach((f) => {
+      if (val(r, f) !== '') return;            // 已經有值就不動，永遠不覆蓋
+      const v = donors.get(f).get(k);
+      if (!v) return;                           // 沒有來源，或來源有衝突
+      r[f] = v;
+      byField[f] = (byField[f] || 0) + 1;
+      touched.add(i);
+    });
+    if (touched.has(i)) r._filledFromNoise = true; // 匯入預覽可以標出「這是帶過來的」
+  });
+  return { rows: touched.size, byField };
+}

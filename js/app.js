@@ -178,7 +178,49 @@ function renderContentPreservingScroll() {
   window.scrollTo(0, pageScrollY);
 }
 
-function renderPeriodPicker(containerId, rows) {
+/*
+ * 採樣日期不屬於本次期別的資料列，預設不勾選（v4.39）
+ * ──────────────────────────────────────────────────
+ * 為什麼要這一條：選期別**不會**排除異常日期的資料，它只是把整批資料標上同一個
+ * 期別標籤。實測使用者的 13545NV7：128 列裡有 6 列是 113年第4季（2024 年）的
+ * 舊資料——審查報告的人沒有刪掉的舊工作表——選了「115年第1季」之後，
+ * 那 6 列的 _period 也一起變成「115年第1季」，就這樣跟著送出去。
+ *
+ * 舊版只有一句提醒，要使用者自己到「詳細資料列表」把它們取消勾選。
+ * 現在改成**預設就不勾**：資料還在、列表上看得到、隨時可以勾回來，
+ * 但不會因為沒看到那句提醒就默默送出去。和「沒有日期的列預設不勾」同一個原則。
+ *
+ * ⚠️ 只動「這一輪自動排除的」那些 uid（記在 autoExcludedByPeriod）。
+ * 使用者自己動過的勾選永遠優先——他把某一列勾回來之後，
+ * 就算之後又改了期別，也不會再被自動取消勾選。
+ */
+function applyPeriodExclusions(rows) {
+  if (!state.excludedRowIndices) state.excludedRowIndices = new Set();
+  if (!state.autoExcludedByPeriod) state.autoExcludedByPeriod = new Set();
+  if (!state.manualRowChoices) state.manualRowChoices = new Set();
+  // 先把上一輪自動排除的還原，否則改期別之後舊的排除會留著
+  state.autoExcludedByPeriod.forEach(uid => state.excludedRowIndices.delete(uid));
+  state.autoExcludedByPeriod.clear();
+
+  const target = normalizePeriodShorthand(state.importPeriod || '').trim();
+  if (!target) return 0;
+  rows.forEach((r) => {
+    if (r._rowUid === undefined) return;
+    /*
+     * 使用者自己勾過的那幾列，這裡一律不碰。
+     * 只從 autoExcludedByPeriod 移除是不夠的——下面重算時它照樣符合
+     * 「期別不同」的條件，又會被排除一次，等於使用者的決定被無聲推翻。
+     */
+    if (state.manualRowChoices.has(r._rowUid)) return;
+    const own = guessPeriodFromRows([r]);
+    if (!own || own === target) return;   // 猜不出期別的不動（沒有日期的另有規則）
+    state.excludedRowIndices.add(r._rowUid);
+    state.autoExcludedByPeriod.add(r._rowUid);
+  });
+  return state.autoExcludedByPeriod.size;
+}
+
+function renderPeriodPicker(containerId, rows, onPeriodChange) {
   const guess = guessPeriodFromRows(rows);
   if (!state.importPeriod) state.importPeriod = guess;
   const container = document.getElementById(containerId);
@@ -196,8 +238,13 @@ function renderPeriodPicker(containerId, rows) {
     if (p) periodCounts[p] = (periodCounts[p] || 0) + 1;
   });
   const periodEntries = Object.entries(periodCounts).sort((a, b) => b[1] - a[1]);
+  const target = normalizePeriodShorthand(state.importPeriod || '').trim();
+  const offCount = periodEntries.filter(([p]) => p !== target).reduce((n, [, c]) => n + c, 0);
   const outlierWarning = periodEntries.length > 1
-    ? `⚠️ 偵測到本次資料的採樣日期橫跨不同期別：${periodEntries.map(([p, c]) => `${escapeHtml(p)}（${c}筆）`).join('、')}。如果其中有不屬於本次要送件季度的資料（例如報告裡夾帶的舊資料或參考值），建議到下方「詳細資料列表」展開後取消勾選排除，避免誤送。`
+    ? `⚠️ 偵測到本次資料的採樣日期橫跨不同期別：${periodEntries.map(([p, c]) => `${escapeHtml(p)}（${c}筆）`).join('、')}。`
+      + (offCount > 0
+        ? `<br><strong>不屬於「${escapeHtml(target)}」的 ${offCount} 筆已經預設取消勾選、不會匯入</strong>（常見原因是報告裡夾帶了沒刪乾淨的舊工作表或參考值）。資料仍然列在下方「詳細資料列表」，確定要送的話展開勾回來即可。`
+        : `如果其中有不屬於本次要送件季度的資料（例如報告裡夾帶的舊資料或參考值），建議到下方「詳細資料列表」展開後取消勾選排除，避免誤送。`)
     : '';
 
   // Warn (not block) when the entered/guessed period already has data in this
@@ -238,10 +285,14 @@ function renderPeriodPicker(containerId, rows) {
   const quarterInput = document.getElementById('periodQuarterInput');
   const textInput = document.getElementById('importPeriodInput');
 
+  // 改了期別就要重算「哪些列不屬於這一期」，否則畫面上的排除是照舊期別算的。
+  const notifyPeriodChanged = () => { if (onPeriodChange) onPeriodChange(); };
+
   const applyFromDropdown = () => {
     if (yearInput.value && quarterInput.value) {
       state.importPeriod = `${yearInput.value}年第${quarterInput.value}季`;
       textInput.value = state.importPeriod;
+      notifyPeriodChanged();
     }
   };
   yearInput.addEventListener('input', applyFromDropdown);
@@ -254,6 +305,7 @@ function renderPeriodPicker(containerId, rows) {
     e.target.value = normalized;
     const p = parsePeriodString(normalized);
     if (p) { yearInput.value = p.rocYear; quarterInput.value = p.quarter; }
+    notifyPeriodChanged();
   });
 }
 
@@ -1510,9 +1562,59 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey) {
   }
 }
 
+/*
+ * 同步選擇視窗（v4.37）
+ * ─────────────────────
+ * 以前所有的同步都是 confirm()——只有「確定／取消」兩個答案。
+ * 噪音與振動要能分開選（只改這一筆／只同步給噪音／只同步給振動／兩邊都要），
+ * 兩個答案表達不了，所以改用一個小視窗。
+ *
+ * 只有「真的有兩邊可選」的時候才會用它；其餘情況仍然走原本的 confirm()，
+ * 免得單純的是非題也要多開一個視窗。
+ *
+ * 回傳被按下的那個選項的 key，關掉或按 Esc 回傳 null。
+ */
+function askSyncChoice({ title, body, options, wide = false }) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('syncChoiceModal');
+    const actions = document.getElementById('syncChoiceActions');
+    // 有列表的時候放寬視窗，免得「會怎麼改」那一欄擠成一直條
+    modal.querySelector('.modal').classList.toggle('modal-wide', Boolean(wide));
+    document.getElementById('syncChoiceTitle').textContent = title;
+    document.getElementById('syncChoiceBody').innerHTML = body;
+    actions.innerHTML = '';
+    let done = false;
+    const finish = (key) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener('keydown', onKey);
+      modal.classList.add('hidden');
+      actions.innerHTML = '';
+      resolve(key);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') finish(null); };
+    options.forEach((opt) => {
+      const btn = document.createElement('button');
+      btn.className = `btn ${opt.primary ? 'btn-primary' : 'btn-ghost'} btn-sm`;
+      btn.textContent = opt.label;
+      btn.addEventListener('click', () => finish(opt.key));
+      actions.appendChild(btn);
+    });
+    document.addEventListener('keydown', onKey);
+    modal.classList.remove('hidden');
+    const first = actions.querySelector('button');
+    if (first) first.focus();
+  });
+}
+
+/** 噪音類別裡，一列屬於「噪音」還是「振動」那一半。 */
+function noiseHalfOf(row) {
+  return (row && row['檢測類別'] === '振動') ? 'vib' : 'noise';
+}
+
 function wireGridEvents(project, catKey, cat) {
   const tbody = document.getElementById('gridBody');
-  const COORD_FIELDS = ['座標系統', '採樣座標-經度 X', '採樣座標-緯度 Y'];
+  // COORD_FIELDS 現在定義在 schema.js（v4.37）——匯入那一側也要用同一份清單。
 
   const commit = (rowIdx, fieldKey, value, { learn = true } = {}) => {
     const rows = DataStore.getData(project.id, catKey);
@@ -1654,11 +1756,139 @@ function wireGridEvents(project, catKey, cat) {
     return [...counts.entries()].map(([c, n]) => `${c} ${n} 筆`).join('、');
   };
 
+  /*
+   * 把「會被改到的是哪幾筆」逐列列出來。
+   * ────────────────────────────────────
+   * 只講「同步 X 筆噪音、Y 筆振動」，使用者仍然不知道那幾筆是誰——
+   * 按確定之前有權知道自己按下去會動到什麼。所以列出每一列的身分
+   * （檢測類別／時段／測項／時間）以及**這一格會從什麼變成什麼**。
+   *
+   * 身分欄位刻意用該類別自己的 itemField（噪音是音源發聲特性、
+   * 水質空品地質是檢測項目、生態是調查項目），不寫死欄位名稱。
+   */
+  const MAX_LISTED_ROWS = 12;
+  const affectedRowsTable = (list, fields, source) => {
+    const idParts = (r) => [
+      r['檢測類別'], r['監測時段'], r[cat.itemField],
+      // 日期或時間跟來源不一樣時才顯示，否則整張表都是同一個值、只是佔位置
+      (r['日期(起)'] !== source['日期(起)']) ? toDateDisplayValue(r['日期(起)']) : '',
+      (r['時間(起)'] !== source['時間(起)']) ? toTimeDisplayValue(r['時間(起)']) : '',
+    ].filter(v => String(v ?? '').trim() !== '').join('　');
+    const changeText = (r) => fields
+      .filter(f => r[f] !== source[f])
+      .map((f) => {
+        const before = String(r[f] ?? '').trim();
+        const after = String(source[f] ?? '').trim();
+        const fmt = (v) => v === '' ? '（空白）' : v;
+        // 兩邊都要跳脫——欄位值是使用者打進來的，直接接進 HTML 會壞掉
+        return `${escapeHtml(f)}：${escapeHtml(fmt(before))} → <strong>${escapeHtml(fmt(after))}</strong>`;
+      })
+      .join('<br>');
+    const shown = list.slice(0, MAX_LISTED_ROWS);
+    const rowsHtml = shown.map(({ r }) => `<tr>`
+      + `<td style="padding:3px 8px;border-bottom:1px solid var(--border);white-space:nowrap">${escapeHtml(idParts(r) || '（未標示）')}</td>`
+      + `<td style="padding:3px 8px;border-bottom:1px solid var(--border)">${changeText(r)}</td>`
+      + `</tr>`).join('');
+    return `<div style="max-height:220px;overflow:auto;margin:8px 0;border:1px solid var(--border);border-radius:6px">`
+      + `<table style="width:100%;border-collapse:collapse;font-size:12.5px">`
+      + `<thead><tr style="background:#eef3f1">`
+      + `<th style="padding:4px 8px;text-align:left;white-space:nowrap">是哪一筆</th>`
+      + `<th style="padding:4px 8px;text-align:left">會怎麼改</th>`
+      + `</tr></thead><tbody>${rowsHtml}</tbody></table></div>`
+      + `${list.length > MAX_LISTED_ROWS ? `<div class="hint">…另有 ${list.length - MAX_LISTED_ROWS} 筆未列出（同樣會一併更新）。</div>` : ''}`;
+  };
+
+  /*
+   * 所有同步共用的最後一段：問使用者要套用到哪些，然後套用。
+   * ────────────────────────────────────────────────────
+   * 三種同步（座標／日期時間／其他欄位）以前各自寫一段 confirm 文字，
+   * 「符合的有幾筆、分別是哪個檢測類別」也各算一次。合成一處之後，
+   * 以後要多一種同步，呼叫端只要說「配對條件是什麼、要帶哪些欄位」。
+   *
+   * 噪音類別而且兩邊都有資料時，給的是**多選**（只改這一筆／只給噪音／
+   * 只給振動／兩邊都要）；其餘情況是單純的是非題，維持原本的 confirm()，
+   * 免得本來一句話就問完的事情也要多開一個視窗。
+   *
+   * 回傳 true 代表真的改了東西（呼叫端要重畫）。
+   */
+  const applySync = async ({ rows, rowIdx, matches, fields, what, note = '', when = '' }) => {
+    /*
+     * ⚠️ `rows` 一定要由呼叫端傳進來，不可以在這裡重新 DataStore.getData()。
+     * getData 每次都會從 localStorage 重新 JSON.parse，回來的是**全新的物件**——
+     * 在這裡重讀一次的話，matches 裡的列屬於呼叫端那一份陣列，改了它們卻存另一份，
+     * 結果就是視窗按了、畫面重畫了、資料一格都沒變，而且完全沒有錯誤訊息。
+     */
+    const source = rows[rowIdx];
+    if (!source) return false;
+    const differing = matches.filter(({ r }) => fields.some(f => r[f] !== source[f]));
+    if (differing.length === 0) return false;
+
+    const locField = cat.locationField;
+    const where = `同一個測站「${source[locField]}」${when ? `、${when}` : ''}`;
+    const myHalf = noiseHalfOf(source);
+    const same = differing.filter(({ r }) => noiseHalfOf(r) === myHalf);
+    const other = differing.filter(({ r }) => noiseHalfOf(r) !== myHalf);
+
+    let chosen = null;
+    if (catKey === 'noise' && same.length > 0 && other.length > 0) {
+      const myName = myHalf === 'vib' ? '振動' : '噪音';
+      const otherName = myHalf === 'vib' ? '噪音' : '振動';
+      const key = await askSyncChoice({
+        title: `要把「${what}」一起改到哪些資料？`,
+        body: `偵測到${escapeHtml(where)}還有 <strong>${differing.length}</strong> 筆會被改到`
+          + `（<strong>${escapeHtml(countByCategory(same))}</strong>與這一筆同為${myName}、`
+          + `<strong>${escapeHtml(countByCategory(other))}</strong>）：`
+          + affectedRowsTable(differing, fields, source)
+          + `${note ? `<div style="margin-top:10px">${note}</div>` : ''}`
+          + `<div style="margin-top:6px">不同採樣日期的資料（例如平日／假日）完全不受影響。</div>`,
+        wide: true,
+        options: [
+          { key: 'all', label: `兩邊都同步（${differing.length} 筆）`, primary: true },
+          { key: 'other', label: `只同步給${otherName} ${other.length} 筆` },
+          { key: 'same', label: `只同步給${myName} ${same.length} 筆` },
+          { key: null, label: '只改這一筆' },
+        ],
+      });
+      if (!key) return false;
+      chosen = key === 'all' ? differing : key === 'other' ? other : same;
+    } else {
+      /*
+       * 單邊的情況也要看得到「是哪幾筆」，不能只講一個數字——
+       * 使用者按確定之前有權知道自己按下去會動到什麼。
+       * 這裡一樣用視窗（只有兩個選項），不再用 confirm()。
+       */
+      const key = await askSyncChoice({
+        title: `要把「${what}」一起改到其他資料嗎？`,
+        body: `偵測到${escapeHtml(where)}還有 <strong>${differing.length}</strong> 筆會被改到`
+          + `（${escapeHtml(countByCategory(differing))}）：`
+          + affectedRowsTable(differing, fields, source)
+          + `${note ? `<div style="margin-top:10px">${note}</div>` : ''}`
+          + `<div style="margin-top:6px">不同採樣日期的資料（例如平日／假日）完全不受影響。</div>`,
+        wide: true,
+        options: [
+          { key: 'all', label: `一併同步（${differing.length} 筆）`, primary: true },
+          { key: null, label: '只改這一筆' },
+        ],
+      });
+      if (!key) return false;
+      chosen = differing;
+    }
+
+    chosen.forEach(({ r }) => { fields.forEach(f => { r[f] = source[f]; }); });
+    DataStore.saveData(project.id, catKey, rows);
+    learnSiteItemHistory(project.id, catKey, cat, chosen.map(m => m.r).concat([source]));
+    return true;
+  };
+
+  /** 這一次採樣的文字說明，用在提示裡（「同一次採樣（2026/05/10 ～ 2026/05/11）」）。 */
+  const visitLabel = (start, end) => `同一次採樣（${toDateDisplayValue(start)}`
+    + `${end && end !== start ? ` ～ ${toDateDisplayValue(end)}` : ''}）`;
+
   const offerCoordSync = (rowIdx) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
-    if (!source || !source[locField] || !source['日期(起)']) return false;
+    if (!source || !source[locField] || !source['日期(起)']) return Promise.resolve(false);
     // Coordinates are the ONE thing 噪音 and 振動 share: one visit, one tripod, one
     // position — so this sync deliberately ignores 檢測類別, and ignores the import
     // batch too, because the noise and vibration sub-reports often arrive as two
@@ -1668,23 +1898,11 @@ function wireGridEvents(project, catKey, cat) {
       .map((r, idx) => ({ r, idx }))
       .filter(({ r, idx }) => idx !== rowIdx
         && matchesSyncGroup(source, r, { requireBatch: false, requireCategory: false }));
-    if (matches.length === 0) return false;
-    const anyDiff = matches.some(({ r }) => COORD_FIELDS.some(f => r[f] !== source[f]));
-    if (!anyDiff) return false;
-    const ok = confirm(
-      `偵測到同一個測站「${source[locField]}」、同一次採樣（${toDateDisplayValue(source['日期(起)'])}`
-      + `${source['日期(迄)'] && source['日期(迄)'] !== source['日期(起)'] ? ` ～ ${toDateDisplayValue(source['日期(迄)'])}` : ''}）`
-      + `還有 ${matches.length} 筆其他資料（${countByCategory(matches)}）。\n`
-      + `是否要將這些資料的座標一併同步更新為與這一筆相同？\n\n`
-      + `（座標是同一次採樣共用的，所以噪音與振動會一起更新。`
-      + `其他欄位不會被動到，${'不同採樣日期的資料（例如平日／假日）也完全不受影響。'}`
-      + `選擇「取消」則只修改目前這一筆。）`
-    );
-    if (!ok) return false;
-    matches.forEach(({ r }) => { COORD_FIELDS.forEach(f => { r[f] = source[f]; }); });
-    DataStore.saveData(project.id, catKey, rows);
-    learnSiteItemHistory(project.id, catKey, cat, matches.map(m => m.r).concat([source]));
-    return true;
+    return applySync({
+      rows, rowIdx, matches, fields: COORD_FIELDS, what: '座標',
+      when: visitLabel(source['日期(起)'], source['日期(迄)']),
+      note: '座標是同一次採樣共用的——一次到場就架一次腳架、就一個位置。其他欄位不會被動到。',
+    });
   };
 
   /**
@@ -1721,11 +1939,11 @@ function wireGridEvents(project, catKey, cat) {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
-    if (!source || !source[locField]) return false;
-    if (!crossCategoryDateTime && !source._batchId) return false;
+    if (!source || !source[locField]) return Promise.resolve(false);
+    if (!crossCategoryDateTime && !source._batchId) return Promise.resolve(false);
     const prevStart = (fieldKey === '日期(起)' && prevValue !== undefined) ? prevValue : source['日期(起)'];
     const prevEnd = (fieldKey === '日期(迄)' && prevValue !== undefined) ? prevValue : source['日期(迄)'];
-    if (!prevStart) return false;
+    if (!prevStart) return Promise.resolve(false);
     const matches = rows
       .map((r, idx) => ({ r, idx }))
       .filter(({ r, idx }) => idx !== rowIdx
@@ -1735,31 +1953,14 @@ function wireGridEvents(project, catKey, cat) {
           requireBatch: !crossCategoryDateTime,
           requireCategory: !crossCategoryDateTime,
         }));
-    if (matches.length === 0) return false;
-    const anyDiff = matches.some(({ r }) => DATE_TIME_FIELDS.some(f => r[f] !== source[f]));
-    if (!anyDiff) return false;
-    const ok = confirm(
-      (crossCategoryDateTime
-        ? `偵測到同一個測站「${source[locField]}」`
-        : `偵測到同一份檔案、同一個測站「${source[locField]}」`
-          + `${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}`)
-      + `、原本同樣是 ${toDateDisplayValue(prevStart)}`
-      + `${prevEnd && prevEnd !== prevStart ? ` ～ ${toDateDisplayValue(prevEnd)}` : ''} 這一次採樣的，還有 ${matches.length} 筆資料`
-      + `${crossCategoryDateTime ? `（${countByCategory(matches)}）` : ''}。\n`
-      + `是否要將這些資料的採樣日期／時間一併同步更新為與這一筆相同？\n\n`
-      + (crossCategoryDateTime
-        ? `（同一地點的噪音與振動是同一次到場，座標與時間起迄共用，所以會一起更新。`
-          + `管制標準、管制區、監測數值等其他欄位不會被動到——那些是噪音同步給噪音、`
-          + `振動同步給振動。同測站不同次採樣（例如平日／假日）也完全不受影響。`
-        : `（只會套用到「原本跟這一筆同一次採樣」的資料——`
-          + `同測站不同次採樣（例如平日／假日）以及不同檢測類別的資料都不會被動到。`)
-      + `選擇「取消」則只修改目前這一筆。）`
-    );
-    if (!ok) return false;
-    matches.forEach(({ r }) => { DATE_TIME_FIELDS.forEach(f => { r[f] = source[f]; }); });
-    DataStore.saveData(project.id, catKey, rows);
-    learnSiteItemHistory(project.id, catKey, cat, matches.map(m => m.r).concat([source]));
-    return true;
+    return applySync({
+      rows, rowIdx, matches, fields: DATE_TIME_FIELDS, what: '採樣日期／時間',
+      when: `原本同樣是 ${toDateDisplayValue(prevStart)}`
+        + `${prevEnd && prevEnd !== prevStart ? ` ～ ${toDateDisplayValue(prevEnd)}` : ''} 這一次採樣的`,
+      note: crossCategoryDateTime
+        ? '同一地點的噪音與振動是同一次到場，座標與時間起迄共用。管制標準、管制區、監測數值等各自不同的欄位不會被動到。'
+        : '只會套用到「原本跟這一筆同一次採樣」的資料，不同檢測類別的資料不會被動到。',
+    });
   };
 
   // 檢測類別 sync follows the same rule as coordinates (per the person's own
@@ -1812,31 +2013,38 @@ function wireGridEvents(project, catKey, cat) {
     cat.itemField, cat.locationField, '檢測數值', '監測數值', '比較關係',
     ...COORD_FIELDS, ...DATE_TIME_FIELDS, '檢測類別',
   ]);
+  /*
+   * 噪音類別：這一格能不能同步給「另一半」？（v4.37）
+   * ────────────────────────────────────────────────
+   * 預設是**可以，而且會先問**——這樣以後多一個欄位不用再改一次程式。
+   * 例外寫在 schema.js 的 NOISE_VIB_DISTINCT_FIELDS，那些欄位在噪音與振動
+   * 之間本來就不一樣（管制標準、管制區、監測單位、監測方法…），
+   * 同步過去就是填錯，所以連問都不問。
+   */
+  const canCrossNoiseVib = (fieldKey) =>
+    catKey === 'noise' && !NOISE_VIB_DISTINCT_FIELDS.includes(fieldKey);
+
   const offerGenericFieldSync = (rowIdx, fieldKey) => {
     const rows = DataStore.getData(project.id, catKey);
     const source = rows[rowIdx];
     const locField = cat.locationField;
-    if (!source || !source._batchId || !source[locField] || !source['日期(起)']) return false;
+    if (!source || !source[locField] || !source['日期(起)']) return Promise.resolve(false);
+    const cross = canCrossNoiseVib(fieldKey);
+    // 跨噪音／振動時不要求同一份匯入檔案——兩者常常是分開的兩份報告。
+    if (!cross && !source._batchId) return Promise.resolve(false);
     const matches = rows
       .map((r, idx) => ({ r, idx }))
-      .filter(({ r, idx }) => idx !== rowIdx && matchesSyncGroup(source, r));
-    if (matches.length === 0) return false;
-    const anyDiff = matches.some(({ r }) => r[fieldKey] !== source[fieldKey]);
-    if (!anyDiff) return false;
+      .filter(({ r, idx }) => idx !== rowIdx
+        && matchesSyncGroup(source, r, { requireBatch: !cross, requireCategory: !cross }));
     const fieldLabel = (cat.fields.find(f => f.key === fieldKey) || {}).label || fieldKey;
-    const ok = confirm(
-      `偵測到同一份檔案、同一天（${toDateDisplayValue(source['日期(起)'])}）、同一個測站「${source[locField]}」`
-      + `${source['檢測類別'] ? `、同為「${source['檢測類別']}」` : ''}還有 ${matches.length} 筆其他資料。\n`
-      + `是否要將這些資料的「${fieldLabel}」一併同步更新為「${source[fieldKey] || '（空白）'}」？\n\n`
-      + `（只會套用到同一天、同一測站、同一個檢測類別的資料——`
-      + `${source['檢測類別'] === '振動' ? '同測站的噪音資料' : '同測站的振動資料'}以及不同採樣日期（例如平日／假日）都不會被動到。`
-      + `選擇「取消」則只修改目前這一筆。）`
-    );
-    if (!ok) return false;
-    matches.forEach(({ r }) => { r[fieldKey] = source[fieldKey]; });
-    DataStore.saveData(project.id, catKey, rows);
-    learnSiteItemHistory(project.id, catKey, cat, matches.map(m => m.r).concat([source]));
-    return true;
+    return applySync({
+      rows, rowIdx, matches, fields: [fieldKey],
+      what: `「${fieldLabel}」（${source[fieldKey] || '空白'}）`,
+      when: `同一天（${toDateDisplayValue(source['日期(起)'])}）`,
+      note: cross
+        ? '這個欄位噪音與振動可以共用，所以兩邊都能選。'
+        : `「${fieldLabel}」在噪音與振動之間本來就不一樣（官方規定或報告本身就不同），所以只會套用到同一個檢測類別。`,
+    });
   };
 
   // Remember what a control held when it gained focus, so the sync prompts can tell
@@ -1864,7 +2072,7 @@ function wireGridEvents(project, catKey, cat) {
     if (t.tagName === 'SELECT') return; // handled by change
     commit(Number(t.dataset.row), t.dataset.field, t.value, { learn: false });
   });
-  tbody.addEventListener('change', (e) => {
+  tbody.addEventListener('change', async (e) => {
     const t = e.target;
     if (!t.dataset.field) return;
     if (t.tagName === 'SELECT') {
@@ -1875,14 +2083,15 @@ function wireGridEvents(project, catKey, cat) {
       t.dataset.syncBaseline = t.value; // a second change compares against this one
       const fieldKey = t.dataset.field;
       const rowIdx = Number(t.dataset.row);
-      if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
+      // 同步視窗是非同步的（要等使用者按按鈕），所以這裡要 await。
+      if (COORD_FIELDS.includes(fieldKey) && await offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
       if (fieldKey === '檢測類別' && offerCategorySync(rowIdx, previous)) { renderContentPreservingScroll(); return; }
-      if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
+      if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && await offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
     }
   });
   // use focusout (bubbles) rather than blur to catch this via delegation; only
   // re-render on blur (not every keystroke) so typing isn't interrupted.
-  tbody.addEventListener('focusout', (e) => {
+  tbody.addEventListener('focusout', async (e) => {
     const t = e.target;
     if (!t.dataset.field || t.tagName === 'SELECT') return;
     const rowIdx = Number(t.dataset.row);
@@ -1961,9 +2170,9 @@ function wireGridEvents(project, catKey, cat) {
     delete t.dataset.syncBaseline;
     if (!edited) return; // focused and left without editing — nothing to sync
 
-    if (COORD_FIELDS.includes(fieldKey) && offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
-    if (DATE_TIME_FIELDS.includes(fieldKey) && offerDateTimeSync(rowIdx, fieldKey, prevStored)) { renderContentPreservingScroll(); return; }
-    if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
+    if (COORD_FIELDS.includes(fieldKey) && await offerCoordSync(rowIdx)) { renderContentPreservingScroll(); return; }
+    if (DATE_TIME_FIELDS.includes(fieldKey) && await offerDateTimeSync(rowIdx, fieldKey, prevStored)) { renderContentPreservingScroll(); return; }
+    if (!SYNC_EXCLUDED_FIELDS.has(fieldKey) && await offerGenericFieldSync(rowIdx, fieldKey)) renderContentPreservingScroll();
   });
   tbody.addEventListener('click', (e) => {
     const btn = e.target.closest('.row-del-btn');
@@ -3487,6 +3696,9 @@ function renderRowDetailTable(containerEl, rows, cat, onChange) {
     cb.addEventListener('change', () => {
       const uid = Number(cb.dataset.rowUid);
       if (cb.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
+      // 使用者自己動過的勾選永遠優先：從自動排除名單移除，之後改期別也不會再被蓋掉
+      if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(uid);
+      if (state.manualRowChoices) state.manualRowChoices.add(uid);
       notifyChanged();
     });
   });
@@ -3499,15 +3711,17 @@ function renderRowDetailTable(containerEl, rows, cat, onChange) {
       cb.checked = checkAll.checked;
       const uid = Number(cb.dataset.rowUid);
       if (checkAll.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
+      if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(uid);
+      if (state.manualRowChoices) state.manualRowChoices.add(uid);
     });
     notifyChanged();
   });
   containerEl.querySelector('#rowDetailSelectAllVisible').addEventListener('click', () => {
-    getVisibleRowChecks().forEach(cb => { cb.checked = true; state.excludedRowIndices.delete(Number(cb.dataset.rowUid)); });
+    getVisibleRowChecks().forEach(cb => { cb.checked = true; const u = Number(cb.dataset.rowUid); state.excludedRowIndices.delete(u); if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(u); if (state.manualRowChoices) state.manualRowChoices.add(u); });
     notifyChanged();
   });
   containerEl.querySelector('#rowDetailClearAllVisible').addEventListener('click', () => {
-    getVisibleRowChecks().forEach(cb => { cb.checked = false; state.excludedRowIndices.add(Number(cb.dataset.rowUid)); });
+    getVisibleRowChecks().forEach(cb => { cb.checked = false; const u = Number(cb.dataset.rowUid); state.excludedRowIndices.add(u); if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(u); if (state.manualRowChoices) state.manualRowChoices.add(u); });
     notifyChanged();
   });
 
@@ -3680,6 +3894,9 @@ async function handleBatchFiles(fileList) {
   // build per-category "sites" groupings the same way parseWorkbook does
   AUTO_DETECT_CATEGORIES.forEach(catKey => {
     const rows = perCategory[catKey].rows;
+    // 噪音的座標帶給同一次採樣的振動（見 smartparse.js 的說明）。
+    // 一定要在下面分測站之前做——測站設定的欄位是拿列上的值去帶的。
+    perCategory[catKey].filledFromNoise = fillVibrationSharedFromNoise(rows, catKey);
     const sites = {};
     rows.forEach((row, i) => {
       const key = row._siteCode || row._rawLocation || `row${i}`;
@@ -3907,6 +4124,7 @@ async function handleImportFile(fileOrFiles) {
         templateLikeFiles.forEach(n => aggregate.skippedSheets.push(`${n}（已是範本／完成版格式，請單獨匯入以進行欄位比對）`));
       }
       if (aggregate.rows.length > 0) {
+        aggregate.filledFromNoise = fillVibrationSharedFromNoise(aggregate.rows, catKey);
         const sites = {};
         aggregate.rows.forEach((row, i) => {
           const key = row._siteCode || row._rawLocation || `row${i}`;
@@ -4142,7 +4360,18 @@ function renderSmartImportPreview() {
   const datelessUids = result.rows.filter(r => !r['日期(起)']).map(r => r._rowUid);
   datelessUids.forEach(uid => state.excludedRowIndices.add(uid));
 
-  renderPeriodPicker('smartPeriodWrap', result.rows);
+  /*
+   * 採樣日期不屬於本次期別的列，同樣預設不勾（見 applyPeriodExclusions 的說明）。
+   * 順序有講究：要先讓 renderPeriodPicker 把 state.importPeriod 定下來
+   * （它會在沒有值的時候填入猜出來的期別），才算得出哪些列不屬於這一期；
+   * 而提示文字又要講出「已預設排除幾筆」，所以算完之後再畫一次選擇器。
+   */
+  state.autoExcludedByPeriod = new Set();
+  state.manualRowChoices = new Set(); // 新的一次解析＝重新開始，之前的手動勾選不再適用
+  const onPeriodChanged = () => { applyPeriodExclusions(result.rows); updateCountsAndRowDetail(); };
+  renderPeriodPicker('smartPeriodWrap', result.rows, onPeriodChanged); // 先定下 state.importPeriod
+  applyPeriodExclusions(result.rows);                                  // 再算哪些列不屬於這一期
+  renderPeriodPicker('smartPeriodWrap', result.rows, onPeriodChanged); // 重畫，讓提示講得出「已排除幾筆」
 
   const updateCounts = () => {
     const selectedTotal = filterRowsBySelection(result.rows, cat.itemField).length;
@@ -4192,6 +4421,25 @@ function renderSmartImportPreview() {
     warn.className = 'warning';
     warn.innerHTML = `ℹ️ 偵測到報告 Excel 檔案裡以下欄位被設定為「隱藏」（欄寬為0），代表這個測站實際上沒有監測這些項目，報告只是沿用共用範本、保留欄位但不對外顯示，已自動略過未匯入：${escapeHtml(skippedItems.join('、'))}。如果您確認這個測站其實有測這些項目，請直接用「＋新增一筆」手動補上。`;
     document.getElementById('smartImportItemsWrap').after(warn);
+  }
+
+  /*
+   * 從噪音帶給振動的欄位要**講出來**。
+   * 沒有講出來的自動填值，和悄悄改掉使用者的資料只差一線——
+   * 他要能知道振動那幾筆的座標與機構代碼是誰給的，才有辦法核對。
+   */
+  const existingFilledNotice = document.getElementById('smartImportFilledFromNoise');
+  if (existingFilledNotice) existingFilledNotice.remove();
+  const filled = result.filledFromNoise;
+  if (filled && filled.rows > 0) {
+    const detail = Object.entries(filled.byField).map(([f, n]) => `${f} ${n} 筆`).join('、');
+    const note = document.createElement('div');
+    note.id = 'smartImportFilledFromNoise';
+    note.className = 'warning';
+    note.innerHTML = `ℹ️ 報告的振動那一半通常不寫座標與檢測機構，已依「同一測站、同一次採樣」`
+      + `<strong>從噪音那一半帶入 ${filled.rows} 筆振動資料</strong>（${escapeHtml(detail)}）。`
+      + `<br><span class="hint">只填原本空白的格子，不會覆蓋報告本身已經有的值。請在下方詳細資料列表核對一下。</span>`;
+    document.getElementById('smartImportItemsWrap').after(note);
   }
 
   const existingMethodWarning = document.getElementById('smartImportMethodWarning');
@@ -4991,6 +5239,13 @@ function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assig
   const summary = [];
   if (cleanNew.length) summary.push(`新增 ${cleanNew.length} 筆`);
   if (cleanUpdates.length) summary.push(`更新 ${cleanUpdates.length} 筆既有資料`);
+  /*
+   * 從噪音帶給振動的欄位一定要講出來（見 smartparse.js）。
+   * 智慧判讀那條路徑在匯入預覽上已經先講過一次，這裡是「已是官方格式」
+   * 那條路徑的唯一機會——它沒有預覽提示區。
+   */
+  const filledNote = state.filledFromNoiseNote;
+  state.filledFromNoiseNote = '';
 
   if (state.batchQueue && state.batchQueue.length > 0) {
     state.batchQueue.shift();
@@ -5007,7 +5262,9 @@ function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assig
 
   closeImportModal();
   renderContent();
-  alert(`已匯入「${cat.label}」：${summary.join('、') || '沒有變更'}。請於表格中核對內容是否正確，特別是尚未有測站設定的欄位。`);
+  alert(`已匯入「${cat.label}」：${summary.join('、') || '沒有變更'}。`
+    + `${filledNote ? `\n\n${filledNote}` : ''}`
+    + `\n請於表格中核對內容是否正確，特別是尚未有測站設定的欄位。`);
 }
 
 /**
@@ -5184,6 +5441,15 @@ function confirmImport() {
 
   const newRows = ImportEngine.applyMapping(state.importParsed.rows, mapping, cat.fields);
   newRows.forEach((r, i) => { r._rowUid = i; });
+  // 匯入已是官方格式的檔案（上一季的完成版、別家交來的填好檔）走的是這條路徑。
+  // 那些檔案一樣可能只有噪音那一半有座標，所以這裡也要帶一次。
+  const filledFromNoise = fillVibrationSharedFromNoise(newRows, catKey);
+  state.filledFromNoiseNote = filledFromNoise.rows > 0
+    ? `ℹ️ 報告的振動那一半通常不寫座標與檢測機構，已依「同一測站、同一次採樣」從噪音那一半`
+      + `帶入 ${filledFromNoise.rows} 筆振動資料（`
+      + `${Object.entries(filledFromNoise.byField).map(([f, n]) => `${f} ${n} 筆`).join('、')}）。`
+      + `\n只填原本空白的格子，不會覆蓋檔案本身已經有的值——請核對一下。`
+    : '';
   // Same history-based fill as the smart-parse path: method/unit from item memory,
   // plus every OTHER blank field (座標/管制標準/管制區/環境音量標準/備註 etc) from
   // the last confirmed full-row snapshot for this exact (location, item-identity)

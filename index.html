@@ -63,6 +63,17 @@
   </div>
 </div>
 
+<!-- 同步選擇視窗：改了一格之後問「要套用到哪些資料」。
+     用視窗而不是 confirm()，是因為噪音與振動要能分開選——
+     confirm() 只有「確定／取消」兩個答案，表達不了三、四種選擇。 -->
+<div id="syncChoiceModal" class="modal-overlay hidden">
+  <div class="modal">
+    <h3 id="syncChoiceTitle">要一起修改嗎？</h3>
+    <div id="syncChoiceBody" style="font-size:13px;line-height:1.7"></div>
+    <div class="modal-actions" id="syncChoiceActions" style="flex-wrap:wrap"></div>
+  </div>
+</div>
+
 <!-- Import Modal -->
 <div id="importModal" class="modal-overlay hidden">
   <div class="modal modal-wide">
