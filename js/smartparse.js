@@ -204,11 +204,99 @@ const SmartParse = {
     const half = (v) => v.replace(/：/g, ':');
     return [half(m[1]) + ':00', half(m[2]) + ':00'];
   },
-  hourToTod(hh) {
+  /**
+   * 時 → 日間／晚間／夜間。
+   *
+   * v4.45：日晚夜的分界**照報告上寫的時段**判斷（windows 由 readPeriodWindows 讀出）。
+   * 不同的噪音管制區、不同的管制標準，分界本來就不一樣——第一、二類常見
+   * 「日間 6~20」，第三、四類常見「日間 7~20／晚間 20~23／夜間 23~翌日7」，
+   * 低頻噪音、振動又各有寫法。報告上寫了哪一套就用哪一套。
+   *
+   * 報告上**完全沒寫**時段時（windows 為 null，或這個時刻落在報告寫的幾段之外），
+   * 才退回舊版的 6／18／22 規則——這是為了不改變其他使用者既有的判讀結果。
+   */
+  hourToTod(hh, windows) {
     const h = parseInt(hh, 10);
+    if (windows && !isNaN(h)) {
+      for (const tod of ['日間', '晚間', '夜間']) {
+        const w = windows[tod];
+        if (!w) continue;
+        const [s, e] = w;
+        const inside = s < e ? (h >= s && h < e) : (h >= s || h < e);
+        if (inside) return tod;
+      }
+    }
     if (h >= 6 && h < 18) return '日間';
     if (h >= 18 && h < 22) return '晚間';
     return '夜間';
+  },
+
+  /** 中文數字（一～二十四）或阿拉伯數字 → 整數；讀不出來回 NaN。 */
+  _clockNum(t) {
+    const s = String(t || '').trim();
+    if (/^\d+$/.test(s)) return parseInt(s, 10);
+    const d = this.CJK_NUM;
+    if (s === '十') return 10;
+    let m = s.match(/^([一二])?十([一二三四五六七八九])?$/);
+    if (m) return (m[1] ? d[m[1]] : 1) * 10 + (m[2] ? d[m[2]] : 0);
+    if (s.length === 1 && d[s]) return d[s];
+    if (s === '零' || s === '〇') return 0;
+    return NaN;
+  },
+
+  /**
+   * 掃描整張工作表，找出報告寫的「日間／晚間／夜間」各自是幾點到幾點。
+   *
+   * 認得的寫法（都是實際報告上看得到的）：
+   *   L日(7~19)、L晚(19~23)、L夜(23~翌日7)、L夜,LF(23~翌日7)、Lv日(7~19)
+   *   日間(07:00~20:00)、日間：7時至20時
+   *   日間：上午六時至晚上八時（中文數字＋上午／下午／晚上）
+   * 不寫死欄位：整張表每一格都看，哪一格寫了就用哪一格。
+   * 同一個時段寫了兩次以上，以**第一次**出現的為準。
+   * 回傳 { 日間:[起,迄], 晚間:[起,迄], 夜間:[起,迄] }（缺的時段就沒有那個 key），
+   * 一個都沒找到回傳 null。
+   */
+  readPeriodWindows(grid) {
+    if (!grid) return null;
+    if (grid.__periodWindows !== undefined) return grid.__periodWindows;
+    const TOD = { 日: '日間', 晚: '晚間', 夜: '夜間' };
+    const NUM = '[0-9一二三四五六七八九十零〇]{1,3}';
+    const AMPM = '(上午|早上|清晨|凌晨|中午|下午|傍晚|晚上|夜間)?';
+    const toHour = (ampm, t) => {
+      let h = this._clockNum(t);
+      if (isNaN(h)) return NaN;
+      if (/下午|傍晚|晚上|夜間/.test(ampm || '') && h < 12) h += 12;
+      if (/中午/.test(ampm || '') && h < 12) h += 12;
+      return h;
+    };
+    const reParen = new RegExp(`(?:Lv?\\s*(日|晚|夜)|(日|晚|夜)間)[^()（）\\d]{0,8}[(（]\\s*(\\d{1,2})(?::\\d{2})?\\s*時?\\s*[~\\-－—至到]\\s*(?:翌日|隔日|次日)?\\s*(\\d{1,2})(?::\\d{2})?\\s*時?\\s*[)）]`, 'g');
+    const reText = new RegExp(`(日|晚|夜)間\\s*(?:時段)?\\s*[:為係指]?\\s*(?:自|為)?\\s*${AMPM}\\s*(${NUM})\\s*(?:時|點|:00)\\s*(?:起)?\\s*[~\\-－—至到]\\s*(?:翌日|隔日|次日)?\\s*${AMPM}\\s*(${NUM})\\s*(?:時|點|:00)`, 'g');
+    const out = {};
+    const put = (k, s, e) => {
+      const tod = TOD[k];
+      if (!tod || out[tod]) return;
+      if (isNaN(s) || isNaN(e) || s < 0 || s > 24 || e < 0 || e > 24 || s === e) return;
+      out[tod] = [s % 24, e === 24 ? 24 : e];
+    };
+    const maxCol = this.lastCol(grid);
+    for (let r = 0; r < grid.length; r++) {
+      const row = grid[r] || [];
+      const end = Math.min(row.length, maxCol + 1);
+      for (let c = 0; c < end; c++) {
+        let t = this.cellStr(row[c]);
+        if (!t || t.length > 400 || !/[日晚夜]/.test(t)) continue;
+        t = t.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0))
+          .replace(/：/g, ':').replace(/[～〜]/g, '~').replace(/\s+/g, ' ');
+        let m;
+        reParen.lastIndex = 0;
+        while ((m = reParen.exec(t))) put(m[1] || m[2], parseInt(m[3], 10), parseInt(m[4], 10));
+        reText.lastIndex = 0;
+        while ((m = reText.exec(t))) put(m[1], toHour(m[2], m[3]), toHour(m[4], m[5]));
+      }
+    }
+    const result = Object.keys(out).length ? out : null;
+    try { Object.defineProperty(grid, '__periodWindows', { value: result, enumerable: false }); } catch (e) { /* frozen */ }
+    return result;
   },
   /** Extract a bare NIEA-style method code, dropping the version suffix:
    *  "NIEA W217.51A" -> "NIEA W217". Also recognizes CNS/EPA/ASTM/APHA/ISO codes.
@@ -477,6 +565,10 @@ const SmartParse = {
     const isBV = !isLFN && (!!vibHit || /^BV/i.test(sheetName));
     const isBN = !isLFN && !isBV && (/固定音源噪音|營建工程/.test(title) || /固定音源噪音|營建工程/.test(sampleChar));
     if (!isLFN && !isBN && !isBV) return null;
+    // v4.45：24 小時的低頻噪音報告（逐時表＋「L日(7~19)／L晚／L夜,LF」成果表）
+    // 沒有單次量測的「整體低頻噪音測值(L1)」，交給 parseNoise24hrSheet 讀日晚夜三筆。
+    // 舊版在這裡硬產生一筆日間、數值空白的資料，日晚夜全部遺失。
+    if (isLFN && !this.findCell(grid, /整體低頻噪音測值/) && this.findCell(grid, /^L日\s*[(（]/)) return null;
 
     // 監測日期 on the noise sheets, 測定日期 on the vibration ones — same field.
     const dateRaw = this.labelValue(grid, /監測日期[:：]/) || this.labelValue(grid, /測定日期[:：]/)
@@ -520,7 +612,8 @@ const SmartParse = {
       }
       return '';
     })();
-    const tod = tStart ? this.hourToTod(tStart.split(':')[0]) : '日間';
+    // v4.45：日晚夜分界照報告上寫的時段（沒寫才用舊規則）
+    const tod = tStart ? this.hourToTod(tStart.split(':')[0], this.readPeriodWindows(grid)) : '日間';
     const siteCode = this.labelValue(grid, /測點編號[:：]/) || '';
 
     const baseRow = {
@@ -595,14 +688,21 @@ const SmartParse = {
 
   /** N-xx(平日/假日) 24hr ambient noise, or V-xx(平日/假日) 24hr vibration. */
   parseNoise24hrSheet(sheetName, grid) {
-    const isVib = /^V-?\d/i.test(sheetName)
+    const isNoiseName = /^N-?\d/i.test(sheetName);
+    const isVib = !isNoiseName && (/^V-?\d/i.test(sheetName)
       || !!this.findCell(grid, /Lv日\(Lv10\)=/)
       // 只寫夜間值的振動工作表原本認不出來，整張會被默默丟掉。
-      || !!this.findCell(grid, /Lv夜\(Lv10\)=/);
+      || !!this.findCell(grid, /Lv夜\(Lv10\)=/)
+      // v4.45：標題寫「環境振動測定報告」、但工作表不叫 V-xx 的也算振動
+      || !!this.findCell(grid, /振動測定報告/));
     // Don't require the specific "(6~20)" hours — 道路交通噪音 reports use a
     // different daytime window (e.g. "(7~20)"), and hardcoding the hours meant
     // those sheets never matched here at all.
-    const isNoise = /^N-?\d/i.test(sheetName) || !!this.findCell(grid, /^L日\(/);
+    //
+    // ⚠️ v4.45：先判斷振動、再判斷噪音。振動報告的成果表也寫「L日(7~19)／L晚／L夜」，
+    // 舊版只要看到「L日(」就當噪音，於是 V-01～V-13 全部被讀成「環境噪音／均能音量(Leq)」。
+    // 工作表名稱是 N-xx 的一律仍是噪音（和舊版相同）。
+    const isNoise = !isVib && (isNoiseName || !!this.findCell(grid, /^L日\s*[(（]/));
     if (!isVib && !isNoise) return null;
 
     const dateRaw = this.labelValue(grid, /監測日期[:：]/);
@@ -625,23 +725,31 @@ const SmartParse = {
     else if (/公私場所/.test(sampleChar)) noiseCategory = '公私場所噪音';
     else if (/航空/.test(sampleChar)) noiseCategory = '航空噪音';
 
+    // v4.45：起訖時間照報告逐時表的第一格與最後一格（例如「12~13」…「11~12」
+    // → 12:00 到翌日 12:00）。報告沒有逐時表時才維持舊版的 00:00～翌日 00:00。
+    // 逐時表從 00 點開始的報告，結果和舊版完全一樣。
+    const span = this.hourlySpan(grid);
     const baseRow = {
-      '日期(起)': dateISO, '時間(起)': '00:00:00',
-      '日期(迄)': this.addDaysISO(dateISO, 1), '時間(迄)': '00:00:00',
+      '日期(起)': dateISO, '時間(起)': span ? span.tStart : '00:00:00',
+      '日期(迄)': (span && !span.wraps) ? dateISO : this.addDaysISO(dateISO, 1), '時間(迄)': span ? span.tEnd : '00:00:00',
       '監測地點': location, '座標系統': coordX ? '3' : '', '採樣座標-經度 X': coordX, '採樣座標-緯度 Y': coordY,
       '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
       _siteCode: siteCode, _rawLocation: location,
     };
 
     const rows = [];
+    // v4.45：24 小時低頻噪音（樣品特性「低頻噪音(營建工程)」）走噪音這一支，
+    // 但檢測類別、音源發聲特性、頻率範圍、管制標準都和一般環境噪音不同。
+    const isLFN24 = isNoise && (/低頻噪音/.test(sampleChar) || /^LFN/i.test(sheetName));
     if (isNoise) {
       const methodRaw = this.labelValue(grid, /採樣方法[:：]/);
       const method = this.extractMethodCode(methodRaw) || 'NIEA P201';
+      const lfnZone = isLFN24 ? this.scanZone(grid) : '';
       // Find the "L日(...)" label without pinning to specific clock hours — different
       // control-zone classes (第一/二類 vs 第三/四類) and regulatory bases legitimately
       // use different day/evening/night windows (e.g. "L日(6~20)" vs "L日(7~20)"), so
       // matching only the "L日(" prefix works across all of them uniformly.
-      const labelHit = this.findCell(grid, /^L日\(/);
+      const labelHit = this.findCell(grid, /^L日\s*[(（]/);
       if (labelHit) {
         const labelRow = grid[labelHit.r];
         const valueRow = grid[labelHit.r + 1] || [];
@@ -662,6 +770,14 @@ const SmartParse = {
           if (p.col < 0) return;
           const v = this.cellStr(valueRow[p.col]);
           if (v !== '' && !isNaN(parseFloat(v))) {
+            if (isLFN24) {
+              rows.push({
+                ...baseRow, '管制標準': /營建/.test(sampleChar) ? '營建工程' : '', '管制區': lfnZone, '環境音量標準': '0',
+                '頻率範圍': '20 Hz 至 200 Hz', '檢測類別': '低頻噪音', '監測時段': p.tod, '音源發聲特性': '均能音量(Leq,LF)',
+                '監測單位': '16', '監測數值': String(Math.round(parseFloat(v) * 10) / 10), '監測方法': method,
+              });
+              return;
+            }
             rows.push({
               ...baseRow, '管制標準': '噪音管制法第7條第1項', '管制區': '', '環境音量標準': '', '頻率範圍': '20 Hz 至 20kHz',
               '檢測類別': noiseCategory, '監測時段': p.tod, '音源發聲特性': '均能音量(Leq)',
@@ -693,6 +809,31 @@ const SmartParse = {
         { labelKey: 'Lv10', dayRegex: /Lv日\(Lv10\)=/, nightRegex: /Lv夜\(Lv10\)=/, itemFor: (tod) => vibLv10ItemFor(tod) },
         { labelKey: 'Lveq', dayRegex: /Lv日\(Lveq\)=/, nightRegex: /Lv夜\(Lveq\)=/, itemFor: () => '事件振動位準(Lveq)', secondary: true },
       ];
+      // v4.45：另一種振動報告的成果表——
+      //     監測成果 | L日(7~19) | L晚(19~23) | L夜(23~翌日7)
+      //     Lveq     |   38.5    |   37.6     |   34.1
+      //     Lvmax    |   58.5    |   58       |   59.2
+      // 日晚夜三段都有，而且列名在左、時段在上。用「掃描」找：先找到 L日/L晚/L夜
+      // 那一列，再往下找列名是 Lveq／Lvmax／Lv10 的列，讀它在各時段欄位底下的值。
+      // 讀到「環境振動位準／標準」那幾列（法規標準值）就停。
+      // 這種報告**只有 Lveq 與 Lvmax**，申報用的是 Lveq（使用者 115Q2 完成版即是），
+      // 所以 Lveq 是主要測項、Lvmax 放在「其他測項」預設不勾。
+      const tableRows = this.readVibPeriodTable(grid);
+      if (tableRows) {
+        tableRows.forEach(t => {
+          const itemLabel = t.metric === 'Lveq' ? '事件振動位準(Lveq)'
+            : t.metric === 'Lvmax' ? '最大振動位準(Lvmax)'
+            : vibLv10ItemFor(t.tod);
+          if (!itemLabel) return;
+          rows.push({
+            ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
+            '檢測類別': '振動', '監測時段': t.tod, '音源發聲特性': itemLabel,
+            '監測單位': '159', '監測數值': String(Math.round(parseFloat(t.value) * 10) / 10),
+            '監測方法': method, _secondaryItem: t.metric !== 'Lveq',
+          });
+        });
+        return rows.length ? rows : null;
+      }
       vibMetrics.forEach(metric => {
         const dayVal = this.labelValue(grid, metric.dayRegex);
         const nightVal = this.labelValue(grid, metric.nightRegex);
@@ -715,6 +856,88 @@ const SmartParse = {
       });
     }
     return rows.length ? rows : null;
+  },
+
+  /**
+   * 逐時表的起訖時段（v4.45）。不看固定欄位：掃描整張表，找出「HH~HH」寫法最多的那一欄，
+   * 第一格的起始時刻＝時間(起)，最後一格的結束時刻＝時間(迄)。
+   * 至少要有 6 格才算逐時表（避免把備註裡偶然出現的「7~19」當成表格）。
+   * wraps：結束時刻 ≤ 起始時刻、或跨過午夜 → 日期(迄) 要加一天。
+   */
+  hourlySpan(grid) {
+    const re = /^(\d{1,2})\s*[~～\-－]\s*(\d{1,2})$/;
+    const maxCol = this.lastCol(grid);
+    const byCol = {};
+    for (let r = 0; r < grid.length; r++) {
+      const row = grid[r] || [];
+      const end = Math.min(row.length, maxCol + 1);
+      for (let c = 0; c < end; c++) {
+        const m = this.cellStr(row[c]).match(re);
+        if (!m) continue;
+        const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+        if (a > 24 || b > 24) continue;
+        (byCol[c] = byCol[c] || []).push([a, b]);
+      }
+    }
+    let best = null;
+    Object.values(byCol).forEach(list => { if (!best || list.length > best.length) best = list; });
+    if (!best || best.length < 6) return null;
+    const pad = n => String(n % 24).padStart(2, '0');
+    const first = best[0], last = best[best.length - 1];
+    let wraps = false;
+    for (let i = 1; i < best.length; i++) if (best[i][0] < best[i - 1][0]) wraps = true;
+    if (last[1] <= first[0] || last[1] === 24) wraps = true;
+    return { tStart: `${pad(first[0])}:00:00`, tEnd: `${pad(last[1])}:00:00`, wraps };
+  },
+
+  /** 掃描整張表找「第x類／第三類…管制區」，回傳「第3類」；找不到回空字串。 */
+  scanZone(grid) {
+    const maxCol = this.lastCol(grid);
+    for (let r = 0; r < grid.length; r++) {
+      const row = grid[r] || [];
+      const end = Math.min(row.length, maxCol + 1);
+      for (let c = 0; c < end; c++) {
+        const cell = this.cellStr(row[c]);
+        if (!/管制區/.test(cell)) continue;
+        const z = this.extractZone(cell);
+        if (z) return z;
+      }
+    }
+    return '';
+  },
+
+  /**
+   * 振動成果表（v4.45）：時段在上（L日/L晚/L夜），指標在左（Lveq/Lvmax/Lv10）。
+   * 回傳 [{metric, tod, value}]，沒有這種表回傳 null。
+   */
+  readVibPeriodTable(grid) {
+    const head = this.findCell(grid, /^L日\s*[(（]/);
+    if (!head) return null;
+    const labelRow = grid[head.r] || [];
+    const colOf = (re) => { for (let c = 0; c < labelRow.length; c++) if (re.test(this.cellStr(labelRow[c]))) return c; return -1; };
+    const periods = [
+      { tod: '日間', col: colOf(/^L日/) }, { tod: '晚間', col: colOf(/^L晚/) }, { tod: '夜間', col: colOf(/^L夜/) },
+    ].filter(p => p.col >= 0);
+    const firstPeriodCol = Math.min(...periods.map(p => p.col));
+    const out = [];
+    const seen = new Set();
+    for (let r = head.r + 1; r < Math.min(grid.length, head.r + 8); r++) {
+      const row = grid[r] || [];
+      const left = row.slice(0, firstPeriodCol).map(v => this.cellStr(v)).filter(v => v !== '');
+      if (left.some(v => /標準|位準|備註|管制/.test(v))) break;
+      const name = left[left.length - 1] || '';
+      let metric = null;
+      if (/^Lveq$/i.test(name)) metric = 'Lveq';
+      else if (/^Lvmax$/i.test(name)) metric = 'Lvmax';
+      else if (/^Lv\s*10$/i.test(name)) metric = 'Lv10';
+      if (!metric || seen.has(metric)) continue;
+      seen.add(metric);
+      periods.forEach(p => {
+        const v = this.cellStr(row[p.col]);
+        if (v !== '' && !isNaN(parseFloat(v))) out.push({ metric, tod: p.tod, value: v });
+      });
+    }
+    return out.length ? out : null;
   },
 
   /** For reports where "label：value" sits in a single cell (unlike separate label/value cells elsewhere). */
@@ -755,9 +978,13 @@ const SmartParse = {
   AIR_HOURLY_STAT: { key: 'hourly', label: '每小時測值', plainItemName: true },
 
   AIR_POLLUTANT_DEFS: [
+    // methodFrom：報告備註的「檢測方法」只列同一台分析儀的代表項目時，借用它的方法。
+    // NIEA A417（化學發光法）同時量 NO／NO2／NOx；NIEA A740（火焰離子化偵測法）同時量
+    // THC／CH4／NMHC。報告備註常常只寫「NOX:NIEA A417／THC:NIEA A740」，
+    // v4.44 以前 NO、CH4、NMHC 因此沒有檢測方法。報告有寫自己那一項時，以自己的為準。
     { key: 'SO2', unit: '113' }, { key: 'NO2', unit: '113', methodFrom: 'NOX' }, { key: 'NOx', unit: '113' },
-    { key: 'NO', unit: '113' }, { key: 'CO', unit: '113' }, { key: 'O3', unit: '113' },
-    { key: 'CH4', unit: '113' }, { key: 'NMHC', unit: '113' }, { key: 'THC', unit: '113' },
+    { key: 'NO', unit: '113', methodFrom: 'NOX' }, { key: 'CO', unit: '113' }, { key: 'O3', unit: '113' },
+    { key: 'CH4', unit: '113', methodFrom: 'THC' }, { key: 'NMHC', unit: '113', methodFrom: 'THC' }, { key: 'THC', unit: '113' },
     { key: 'PM10', unit: '127' },
   ],
 
@@ -911,9 +1138,12 @@ const SmartParse = {
     }
 
     // first/last hourly rows determine the start/end clock time (rolling 24hr window)
+    // v4.45：「小時」那一欄不再寫死第 2 欄，掃描出「HH ~ HH」最多的那一欄。
+    const hourCol = this._airHourCol(grid, unitRow + 1, avgHit.r);
+    cols.hour = hourCol;
     let timeStart = '', timeEnd = '';
     for (let r = unitRow + 1; r < avgHit.r; r++) {
-      const hourCell = this.cellStr(grid[r]?.[1]);
+      const hourCell = this.cellStr(grid[r]?.[hourCol]);
       const hm = hourCell.match(/(\d{1,2})\s*~\s*(\d{1,2})/);
       if (hm) { if (!timeStart) timeStart = `${hm[1].padStart(2, '0')}:00:00`; timeEnd = `${hm[2].padStart(2, '0')}:00:00`; }
     }
@@ -986,7 +1216,7 @@ const SmartParse = {
         const { cmp, val, note } = this.parseValueCell(v);
         const hasContent = cmp !== '' || note !== '' || (val !== '' && !isNaN(parseFloat(val)));
         if (!hasContent) return;
-        const methodKey = (def.methodFrom || def.key).toUpperCase();
+        const methodKey = methodMap[def.key.toUpperCase()] ? def.key.toUpperCase() : (def.methodFrom || def.key).toUpperCase();
         rows.push({
           ...baseRow,
           '檢測項目': statDef.plainItemName ? def.key : `${def.key}${statDef.label}`,
@@ -1043,6 +1273,114 @@ const SmartParse = {
     return rows.length ? rows : null;
   },
 
+  /** 逐時表的「小時」欄：在 rFrom..rTo 之間「HH ~ HH」最多的那一欄；都沒有就回 1（舊版位置）。 */
+  _airHourCol(grid, rFrom, rTo) {
+    const counts = {};
+    for (let r = rFrom; r < rTo; r++) {
+      (grid[r] || []).forEach((v, c) => { if (/^\d{1,2}\s*~\s*\d{1,2}$/.test(this.cellStr(v))) counts[c] = (counts[c] || 0) + 1; });
+    }
+    let best = 1, n = 0;
+    Object.entries(counts).forEach(([c, k]) => { if (k > n) { n = k; best = Number(c); } });
+    return best;
+  },
+
+  /**
+   * v4.45：「一列一個採樣」的空品表格（例如工區周界 TSP 報告）。
+   *
+   *   監測 | 監測 | 監測 | 測點 | 樣品 | 監測條件            | TSP    | PM2.5
+   *        |      |      |      |      | 風向 風速 溫度 濕度 |        | ★
+   *   日期 | 時間 | 地點 | 編號 | 編號 |      m/s  ℃   %   | μg/Nm3 | μg/m3
+   *   115年01月05日 | 10:00~11:00 | ○○工區周界上風處 | A-01 | … | 43 |
+   *
+   * **完全不看固定欄位**：表頭常常拆成上下兩、三格（「監測」＋「日期」），
+   * 所以把每一欄往下最多三格的文字接起來當成那一欄的標題，再用標題的**字**去認：
+   * 有「日期」的是日期欄、有「時間」的是時間欄、有「地點」的是地點欄、
+   * 有「編號」而且是測點／測站的是測點編號，標題開頭是 TSP／PM2.5／PM10／SO2… 的是測項欄。
+   * 欄位前後順序、多一欄少一欄、表格往下或往右移，都不影響。
+   * 風向／風速／溫度／濕度是採樣當下的氣象條件，不是測項，不會帶進來。
+   */
+  AIR_TABLE_ITEMS: [
+    { re: /^PM\s*2\.5/i, key: 'PM2.5', unit: '127' }, { re: /^PM\s*10/i, key: 'PM10', unit: '127' },
+    { re: /^TSP/i, key: 'TSP', unit: '127' }, { re: /^SO2/i, key: 'SO2', unit: '113' },
+    { re: /^NO2/i, key: 'NO2', unit: '113' }, { re: /^NOx/i, key: 'NOx', unit: '113' },
+    { re: /^NO(?![2xX])/i, key: 'NO', unit: '113' }, { re: /^CO(?!2)/i, key: 'CO', unit: '113' },
+    { re: /^O3/i, key: 'O3', unit: '113' }, { re: /^CH4/i, key: 'CH4', unit: '113' },
+    { re: /^NMHC/i, key: 'NMHC', unit: '113' }, { re: /^THC/i, key: 'THC', unit: '113' },
+  ],
+  parseAirSampleTableSheet(grid) {
+    const dateLike = (v) => /\d{2,4}\s*[年\/.\-]\s*\d{1,2}\s*[月\/.\-]\s*\d{1,2}/.test(v);
+    const rowHasDate = (r) => (grid[r] || []).some(v => dateLike(this.cellStr(v)));
+    const maxCol = this.lastCol(grid);
+    let header = null;
+    for (let r = 0; r < grid.length && !header; r++) {
+      if (rowHasDate(r)) continue;
+      const combined = [];
+      let depth = 0;
+      for (let k = 0; k < 3 && r + k < grid.length && !rowHasDate(r + k); k++) {
+        depth = k + 1;
+        for (let c = 0; c <= maxCol; c++) combined[c] = (combined[c] || '') + this.cellStr(grid[r + k]?.[c]).replace(/\s+/g, '');
+      }
+      const find = (re, not) => combined.findIndex(t => t && re.test(t) && !(not && not.test(t)));
+      const cols = {
+        date: find(/日期/, /收樣|報告/), time: find(/時間/, /日期/), location: find(/地點|位置|測站名稱/),
+        siteCode: find(/(測點|測站|點位)編號/),
+      };
+      const items = [];
+      combined.forEach((t, c) => {
+        const def = this.AIR_TABLE_ITEMS.find(d => d.re.test(t || ''));
+        if (def) items.push({ col: c, def, unitText: t.replace(def.re, '').replace(/[★☆*＊]/g, '').trim() });
+      });
+      if (cols.date >= 0 && cols.location >= 0 && items.length) header = { r, depth, cols, items };
+    }
+    if (!header) return null;
+    const { cols, items } = header;
+
+    const methodMap = {};
+    const methodNoteHit = this.findCell(grid, /檢測方法[:：].*NIEA/);
+    if (methodNoteHit) {
+      const noteText = this.cellStr(grid[methodNoteHit.r][methodNoteHit.c]);
+      const re = /([A-Za-z0-9.]+)\s*[:：]\s*NIEA\s*([A-Z]?\d+)/g;
+      let m;
+      while ((m = re.exec(noteText))) methodMap[m[1].toUpperCase()] = `NIEA ${m[2]}`;
+    }
+    const agencyCode = this.reverseAgencyLookup(this.labelValueSameCell(grid, /採樣單位[:：]/) || this.labelValue(grid, /採樣單位[:：]/));
+
+    const rows = [];
+    for (let r = header.r + header.depth; r < grid.length; r++) {
+      const cells = (grid[r] || []).map(v => this.cellStr(v));
+      const joined = cells.join('');
+      if (/以下空白|^法規|^備註/.test(joined.replace(/\s+/g, ''))) break;
+      const dateISO = this.rocDateToISO(cells[cols.date] || '');
+      if (!dateISO) continue;
+      const [tStart, tEnd] = cols.time >= 0 ? this.splitTimeRange(cells[cols.time]) : ['', ''];
+      const dateEnd = (tStart && tEnd && tEnd < tStart) ? this.addDaysISO(dateISO, 1) : dateISO;
+      const location = cells[cols.location] || '';
+      const siteCode = cols.siteCode >= 0 ? (cells[cols.siteCode] || '') : '';
+      items.forEach(({ col, def }) => {
+        const raw = cells[col] || '';
+        if (raw === '' || /^-+$/.test(raw)) return;
+        const { cmp, val, note } = this.parseValueCell(raw);
+        const hasContent = cmp !== '' || note !== '' || (val !== '' && !isNaN(parseFloat(val)));
+        if (!hasContent) return;
+        rows.push({
+          '日期(起)': dateISO, '時間(起)': tStart, '日期(迄)': dateEnd, '時間(迄)': tEnd,
+          '採樣地點': location, '座標系統': '', '採樣座標-經度 X': '', '採樣座標-緯度 Y': '',
+          '場所編號': '', '採樣地點高度(公尺)': '', '污染物採樣高度(公尺)': '', '管制編號': '', '煙道編號': '',
+          '檢測類別': '周界空氣品質', '檢測項目': def.key,
+          '檢測濃度/質量單位': def.unit, '其他檢測濃度/質量單位': '',
+          '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
+          '檢測方法': methodMap[def.key.toUpperCase()] || '', '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
+          '備註': note || '',
+          _siteCode: siteCode, _rawLocation: location,
+          // 同一份報告的「彙整表」和「分表」常常列同一筆採樣（有的報告第一張就是後面幾張分表的合併），
+          // parseWorkbook 用這個鍵把完全相同的採樣只留一筆。
+          _dedupeKey: ['airtable', siteCode, location, dateISO, tStart, tEnd, def.key, cmp, val].join('␟'),
+        });
+      });
+    }
+    return rows.length ? rows : null;
+  },
+
   /** Reads the hour-by-hour block of a 24hr air report into one row per pollutant per
    *  hour. The report writes hours as "08 ~ 09" and simply rolls past midnight without
    *  restating the date, so the calendar day is advanced whenever the clock wraps. */
@@ -1050,7 +1388,7 @@ const SmartParse = {
     let day = dateStart;
     let prevHour = null;
     for (let r = unitRow + 1; r < endRow; r++) {
-      const hm = this.cellStr(grid[r]?.[1]).match(/(\d{1,2})\s*~\s*(\d{1,2})/);
+      const hm = this.cellStr(grid[r]?.[cols.hour ?? 1]).match(/(\d{1,2})\s*~\s*(\d{1,2})/);
       if (!hm) continue;
       const h1 = parseInt(hm[1], 10), h2 = parseInt(hm[2], 10);
       if (prevHour !== null && h1 < prevHour) day = dateEnd || this.addDaysISO(day, 1);
@@ -1069,7 +1407,7 @@ const SmartParse = {
         const { cmp, val, note } = this.parseValueCell(v);
         const hasContent = cmp !== '' || note !== '' || (val !== '' && !isNaN(parseFloat(val)));
         if (!hasContent) return;
-        const methodKey = (def.methodFrom || def.key).toUpperCase();
+        const methodKey = methodMap[def.key.toUpperCase()] ? def.key.toUpperCase() : (def.methodFrom || def.key).toUpperCase();
         out.push({
           ...baseRow,
           '日期(起)': day, '時間(起)': tStart, '日期(迄)': endDay, '時間(迄)': tEnd,
@@ -1310,7 +1648,7 @@ const SmartParse = {
     } else if (category === 'geo') {
       rows = this.parseGeoSedimentSheet(grid);
     } else if (category === 'air') {
-      rows = this.parseAirDustfallSheet(grid) || this.parseAirQualitySheet(grid);
+      rows = this.parseAirDustfallSheet(grid) || this.parseAirQualitySheet(grid) || this.parseAirSampleTableSheet(grid);
     }
     if (rows && rows.length) return rows;
     if (allowAutoDetect && typeof AutoDetect !== 'undefined') {
@@ -1319,14 +1657,43 @@ const SmartParse = {
     return null;
   },
 
+  /**
+   * v4.45：把帶有 _dedupeKey 的重複採樣只留第一筆（就地修改 rows），回傳拿掉幾筆。
+   * 只有會產生 _dedupeKey 的格式（目前是 parseAirSampleTableSheet）受影響。
+   */
+  dedupeRows(rows) {
+    if (!Array.isArray(rows)) return 0;
+    const seen = new Set();
+    let removed = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const k = rows[i] && rows[i]._dedupeKey;
+      if (!k) continue;
+      if (seen.has(k)) { rows.splice(i, 1); i--; removed++; } else seen.add(k);
+    }
+    return removed;
+  },
+
   /** Parse every sheet of a workbook (given as {sheetName: grid}) for a category. */
   parseWorkbook(category, sheetGrids) {
     const rows = [];
     const matchedSheets = [];
     const skippedSheets = [];
+    const seenDedupe = new Set();
+    let dedupedCount = 0;
     for (const [sheetName, grid] of Object.entries(sheetGrids)) {
-      const parsed = this.parseSheet(category, sheetName, grid);
-      if (parsed && parsed.length) {
+      let parsed = this.parseSheet(category, sheetName, grid);
+      // v4.45：同一份報告裡「彙整表」與「分表」重複列出的同一筆採樣只留一筆
+      // （只對帶 _dedupeKey 的資料列生效，其他格式行為不變）。
+      const recognized = !!(parsed && parsed.length);
+      if (recognized) {
+        parsed = parsed.filter(r => {
+          if (!r._dedupeKey) return true;
+          if (seenDedupe.has(r._dedupeKey)) { dedupedCount++; return false; }
+          seenDedupe.add(r._dedupeKey);
+          return true;
+        });
+      }
+      if (recognized) {
         rows.push(...parsed);
         matchedSheets.push(sheetName);
       } else {
@@ -1346,7 +1713,7 @@ const SmartParse = {
       sites[key].rowIndices.push(i);
     });
 
-    return { rows, matchedSheets, skippedSheets, sites };
+    return { rows, matchedSheets, skippedSheets, sites, dedupedCount };
   },
 };
 

@@ -2693,6 +2693,9 @@ function wireFileStaging({ dropzoneId, fileInputId, listId, confirmBtnId, onConf
     fileInput.value = ''; // reset so picking the same file again still fires 'change'
   });
   wireDropzone(dropzoneId, addFiles);
+  // v4.45：整個拖曳框都能點——點框框任何地方都打開選檔視窗（點在原本的按鈕上照舊）
+  const zoneEl = document.getElementById(dropzoneId);
+  if (zoneEl) zoneEl.addEventListener('click', (e) => { if (e.target !== fileInput) fileInput.click(); });
   confirmBtn.addEventListener('click', () => {
     const filesToImport = staged;
     staged = [];
@@ -3257,10 +3260,12 @@ function renderVersionBadge() {
 function openChangelogModal() {
   document.getElementById('changelogCurrentVersion').textContent = APP_VERSION;
   const list = document.getElementById('changelogList');
+  // v4.45：版本說明是程式內建的固定文字（version.js），本來就用 <strong> 標重點；
+  // 以前整段跳脫，畫面上直接看到「<strong>」字樣。只有這裡不跳脫，使用者輸入的內容一律照舊跳脫。
   list.innerHTML = CHANGELOG.map(entry => `
     <div class="changelog-entry">
       <div class="changelog-header"><strong>${escapeHtml(entry.version)}</strong> <span class="hint">${escapeHtml(entry.date)}</span></div>
-      <ul>${entry.notes.map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>
+      <ul>${entry.notes.map(n => `<li>${n}</li>`).join('')}</ul>
     </div>
   `).join('');
   document.getElementById('changelogModal').classList.remove('hidden');
@@ -4329,6 +4334,7 @@ async function handleBatchFiles(fileList) {
     const rows = perCategory[catKey].rows;
     // 噪音的座標帶給同一次採樣的振動（見 smartparse.js 的說明）。
     // 一定要在下面分測站之前做——測站設定的欄位是拿列上的值去帶的。
+    perCategory[catKey].dedupedCount = SmartParse.dedupeRows(rows);
     perCategory[catKey].filledFromNoise = fillVibrationSharedFromNoise(rows, catKey);
     const sites = {};
     rows.forEach((row, i) => {
@@ -4557,6 +4563,8 @@ async function handleImportFile(fileOrFiles) {
         templateLikeFiles.forEach(n => aggregate.skippedSheets.push(`${n}（已是範本／完成版格式，請單獨匯入以進行欄位比對）`));
       }
       if (aggregate.rows.length > 0) {
+        // v4.45：彙整表＋分表重複列出的同一筆採樣只留一筆（見 SmartParse.dedupeRows）
+        aggregate.dedupedCount = SmartParse.dedupeRows(aggregate.rows);
         aggregate.filledFromNoise = fillVibrationSharedFromNoise(aggregate.rows, catKey);
         const sites = {};
         aggregate.rows.forEach((row, i) => {
@@ -5334,7 +5342,9 @@ function renderSmartImportPreview() {
   </table>`;
 
   document.getElementById('smartImportSkipped').textContent =
-    result.skippedSheets.length ? `略過 ${result.skippedSheets.length} 個無法辨識的工作表：${result.skippedSheets.join('、')}` : '';
+    [result.skippedSheets.length ? `略過 ${result.skippedSheets.length} 個無法辨識的工作表：${result.skippedSheets.join('、')}` : '',
+     result.dedupedCount ? `另有 ${result.dedupedCount} 筆在報告的彙整表與分表重複列出（同測點、同日期時間、同測項、同數值），已只保留一筆。` : '']
+      .filter(Boolean).join('　');
 
   document.getElementById('importStep1').classList.add('hidden');
   document.getElementById('importStep2').classList.add('hidden');

@@ -90,7 +90,8 @@
       </details>
       <div class="dropzone" id="importDropzone">
         <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
-        <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡（可分次拖曳，累積多個檔案後再一次確認）</p>
+        <div class="dropzone-icon">📂</div>
+        <p class="dropzone-hint"><strong>把檔案拖曳到這個框框裡</strong>，或點一下框框選擇檔案<br>（可分次拖曳，累積多個檔案後再一次確認）</p>
       </div>
       <div id="importStagedList" class="staged-file-list"></div>
       <button type="button" id="btnImportStagedConfirm" class="btn btn-primary hidden" style="width:100%;margin-top:8px">✅ 開始判讀</button>
@@ -260,7 +261,8 @@
     <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告，也支援單一 PDF 內含多類別內容，會逐頁嘗試判斷），系統會自動判斷每個檔案（或工作表／頁面）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前噪音／水質／空氣品質／地質四類支援自動判斷（地質目前支援底泥／土壤等實驗室檢測報告格式）；生態無法自動判斷，請於生態分類頁面匯入「填寫完成的生態調查資料填寫.xlsx（完成版）」。<strong>PDF 判讀準確度低於 Excel，來自 PDF 的資料請務必逐項核對。</strong></p>
     <div class="dropzone" id="batchDropzone">
       <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
-      <p class="dropzone-hint">📂 或直接將檔案拖曳到這裡（可分次拖曳，累積多個檔案後再一次確認）</p>
+      <div class="dropzone-icon">📂</div>
+        <p class="dropzone-hint"><strong>把檔案拖曳到這個框框裡</strong>，或點一下框框選擇檔案<br>（可分次拖曳，累積多個檔案後再一次確認）</p>
     </div>
     <div id="batchStagedList" class="staged-file-list"></div>
     <button type="button" id="btnBatchStagedConfirm" class="btn btn-primary hidden" style="width:100%;margin-top:8px">✅ 開始判讀</button>

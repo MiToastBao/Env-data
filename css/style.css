@@ -423,9 +423,16 @@ table.conflict-diff-table td.diff-new { color: var(--primary-dark); font-weight:
 .common-items-quantity label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
 .common-items-quantity input { width: 60px; padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; font-family: inherit; }
 
-.dropzone { border: 2px dashed var(--border); border-radius: 8px; padding: 10px; transition: border-color 0.15s, background 0.15s; }
-.dropzone.dropzone-active { border-color: var(--primary); background: #eef7f2; }
-.dropzone-hint { text-align: center; color: var(--text-muted); font-size: 12px; margin: 6px 0 0 0; pointer-events: none; }
+/* v4.45：拖曳區放大（原本只有一行高，檔案很難準確丟進去）。
+   整塊都可以丟檔案，也可以直接點一下開啟選檔視窗。 */
+.dropzone { border: 2px dashed var(--border); border-radius: 10px; padding: 18px 14px; min-height: 170px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  background: #fafcfb; cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.dropzone:hover { border-color: var(--primary); }
+.dropzone.dropzone-active { border-color: var(--primary); border-style: solid; background: #eef7f2; }
+.dropzone-icon { font-size: 34px; line-height: 1; pointer-events: none; }
+.dropzone-hint { text-align: center; color: var(--text-muted); font-size: 14px; margin: 0; pointer-events: none; }
+.dropzone-hint strong { color: var(--primary-dark); }
 
 .staged-file-list { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; max-height: 200px; overflow-y: auto; }
 .staged-file-item {
