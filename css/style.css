@@ -457,3 +457,15 @@ textarea.cell-required-missing {
   border: 1.5px dashed #d97706 !important;
   background: #fffbeb !important;
 }
+
+/* v4.45：「請確認」——程式先填了值、但要使用者決定的格子（例：報告印 μg/Nm3 時單位先填 127，
+   可改 142；水質報告沒有結束時間、時間(迄) 先填成和起始相同）。
+   用紫色實線，和「值有錯」紅框、「必填沒填」橘色虛線分開；格子右邊有 ✔ 可以直接確認。 */
+.cell-check-wrap { display: flex; align-items: center; gap: 3px; }
+.cell-check-wrap > input, .cell-check-wrap > select, .cell-check-wrap > textarea { flex: 1 1 auto; min-width: 0; }
+.cell-check-wrap input:not([type=checkbox]), .cell-check-wrap select, .cell-check-wrap textarea {
+  border: 2px solid #7c3aed !important; background: #f3e8ff !important; color: #3b0764;
+}
+.cell-check-ok { flex: 0 0 auto; border: 1px solid #7c3aed; background: #fff; color: #7c3aed; border-radius: 4px;
+  font-size: 12px; line-height: 1; padding: 3px 5px; cursor: pointer; }
+.cell-check-ok:hover { background: #7c3aed; color: #fff; }

@@ -1133,7 +1133,7 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
    * 篩選就挑出什麼，兩者永遠對得起來。再算一次的話，哪天規則改了而只改一邊，
    * 就會出現「篩選說有 3 筆，找過去卻只有 2 個紅框」這種最難查的狀況。
    */
-  const rowNeedsFixInDom = (tr) => !!tr.querySelector('.cell-invalid, .cell-required-missing');
+  const rowNeedsFixInDom = (tr) => !!tr.querySelector('.cell-invalid, .cell-required-missing, .cell-check-wrap');
 
   const roundBtn = document.getElementById('btnRoundCoords');
   if (roundBtn) roundBtn.addEventListener('click', () => runRoundCoords(state.currentProjectId, catKey));
@@ -1304,6 +1304,18 @@ function wireBulkSelection(project, catKey, cat) {
   tbody.addEventListener('change', (e) => {
     if (e.target.classList.contains('row-check')) updateBulkUI();
   });
+  // v4.45：「請確認」格子旁的 ✔——值不用改、確認後解除標示
+  tbody.addEventListener('click', (e) => {
+    const btn = e.target.closest && e.target.closest('.cell-check-ok');
+    if (!btn) return;
+    const rowsNow = DataStore.getData(project.id, catKey);
+    const r = rowsNow[Number(btn.dataset.checkRow)];
+    if (!r || !r._checkFields) return;
+    delete r._checkFields[btn.dataset.checkField];
+    if (!Object.keys(r._checkFields).length) delete r._checkFields;
+    DataStore.saveData(project.id, catKey, rowsNow);
+    renderContentPreservingScroll();
+  });
   if (checkAll) {
     checkAll.addEventListener('change', () => {
       getVisibleCheckboxes().forEach(cb => { cb.checked = checkAll.checked; });
@@ -1442,7 +1454,14 @@ function openBatchEditModal(project, catKey, cat, indices) {
     const rows = DataStore.getData(project.id, catKey);
     const touchedRows = [];
     indices.forEach(idx => {
-      if (rows[idx]) { rows[idx][field.key] = newValue; touchedRows.push(rows[idx]); }
+      if (rows[idx]) {
+        rows[idx][field.key] = newValue; touchedRows.push(rows[idx]);
+        // v4.45：批次改過的格子同樣算確認過，解除「請確認」標示
+        if (rows[idx]._checkFields && rows[idx]._checkFields[field.key]) {
+          delete rows[idx]._checkFields[field.key];
+          if (!Object.keys(rows[idx]._checkFields).length) delete rows[idx]._checkFields;
+        }
+      }
     });
     DataStore.saveData(project.id, catKey, rows);
     if (touchedRows.length > 0) learnSiteItemHistory(project.id, catKey, cat, touchedRows);
@@ -1636,7 +1655,17 @@ function rowHtml(cat, row, idx) {
   // v4.43：官方格式規則（座標範圍與位數、生態的字數上限／學名中文名／數量寫法）
   // 走同一條路。同樣是「已經填錯」的檢查，來源多半是別家公司交來的檔案。
   const ruleHere = new Map(allRuleViolations(row, cat).map(v => [v.key, v.why]));
-  const ctl = (f) => fieldControlHTML(f, row[f.key], `data-row="${idx}"`, missingHere.get(f.key), cat.key, ruleHere.get(f.key));
+  // v4.45：「請確認」的格子（紫色框＋格子旁的 ✔ 按鈕）。不算錯、也不是沒填，
+  // 是程式先填了一個值、但需要使用者決定的地方（單位 127／142、補結束時間…）。
+  const checkHere = row._checkFields || {};
+  const ctl = (f) => {
+    const html = fieldControlHTML(f, row[f.key], `data-row="${idx}"`, missingHere.get(f.key), cat.key, ruleHere.get(f.key));
+    const why = checkHere[f.key];
+    if (!why) return html;
+    return `<div class="cell-check-wrap" title="${escapeAttr(`請確認：${why}　確認無誤請按 ✔；直接修改這一格也會解除標示。`)}">`
+      + html
+      + `<button type="button" class="cell-check-ok" data-check-row="${idx}" data-check-field="${escapeAttr(f.key)}" title="${escapeAttr(`這一格確認無誤（${why}）`)}">✔</button></div>`;
+  };
   const pinnedCells = displayFieldOrder(cat).slice(0, 2).map(f => `<td${f.key === cat.itemField ? ' class="col-item"' : f.key === cat.locationField ? ' class="col-loc"' : ''}>${ctl(f)}</td>`).join('');
   const restCells = displayFieldOrder(cat).slice(2).map(f => `<td>${ctl(f)}</td>`).join('');
   // 操作 (delete button) and # (row number) sit right after 地點/測項 (the pinned
@@ -1871,6 +1900,11 @@ function wireGridEvents(project, catKey, cat) {
     const rows = DataStore.getData(project.id, catKey);
     if (!rows[rowIdx]) return;
     rows[rowIdx][fieldKey] = value;
+    // v4.45：使用者動手改過「請確認」的那一格，就當作確認過了
+    if (rows[rowIdx]._checkFields && rows[rowIdx]._checkFields[fieldKey]) {
+      delete rows[rowIdx]._checkFields[fieldKey];
+      if (!Object.keys(rows[rowIdx]._checkFields).length) delete rows[rowIdx]._checkFields;
+    }
     // 比較關係 is derived from whatever's actually in 檢測數值/監測數值, not an
     // independently-set attribute — keep it in sync automatically whenever the
     // value field itself changes, so editing the value never leaves a stale
@@ -2164,7 +2198,14 @@ function wireGridEvents(project, catKey, cat) {
       chosen = differing;
     }
 
-    chosen.forEach(({ r }) => { fields.forEach(f => { r[f] = source[f]; }); });
+    chosen.forEach(({ r }) => {
+      fields.forEach(f => {
+        r[f] = source[f];
+        // v4.45：同步過去的格子也算確認過，解除「請確認」
+        if (r._checkFields && r._checkFields[f]) delete r._checkFields[f];
+      });
+      if (r._checkFields && !Object.keys(r._checkFields).length) delete r._checkFields;
+    });
     DataStore.saveData(project.id, catKey, rows);
     learnSiteItemHistory(project.id, catKey, cat, chosen.map(m => m.r).concat([source]));
     /*
@@ -5039,7 +5080,11 @@ function renderSmartImportPreview() {
     warn.id = 'smartImportUnitWarning';
     warn.className = 'warning';
     const items = [...new Set(result.rows.filter(r => r._uncertainUnit).map(r => r[cat.itemField]))];
-    warn.innerHTML = `⚠️ 有 ${uncertainCount} 筆資料（${escapeHtml(items.join('、'))}）的單位代碼是系統自動比對、非完全確定，匯入後請至「單位代碼表」核對並視需要手動修正。 <button type="button" class="btn btn-ghost btn-sm" id="btnOpenUnitRefFromWarning">開啟單位代碼表</button>`;
+    // v4.45：有具體原因的（例如報告印 μg/Nm3）把原因講清楚，讓使用者知道要在哪兩個代碼之間選
+    const notes = [...new Set(result.rows.filter(r => r._uncertainUnit && r._unitNote).map(r => r._unitNote))];
+    warn.innerHTML = `⚠️ 有 ${uncertainCount} 筆資料（${escapeHtml(items.join('、'))}）的單位代碼是系統自動比對、非完全確定，匯入後請至「單位代碼表」核對並視需要手動修正。`
+      + (notes.length ? `<br>${notes.map(n => escapeHtml(n)).join('<br>')}` : '')
+      + ` <button type="button" class="btn btn-ghost btn-sm" id="btnOpenUnitRefFromWarning">開啟單位代碼表</button>`;
     document.getElementById('smartImportItemsWrap').after(warn);
     document.getElementById('btnOpenUnitRefFromWarning').addEventListener('click', openUnitRefModal);
   }
@@ -5710,6 +5755,13 @@ function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assig
   const cleanify = (r) => {
     const out = { _batchId: assignBatchId(r), _period: periodLabel };
     cat.fields.forEach(f => { out[f.key] = r[f.key] || ''; });
+    // v4.45：判讀時標成「請確認」的格子（單位 μg/Nm3、水質沒有結束時間…）帶進表格，
+    // 直到使用者改過那一格、或按格子旁的「✔」確認為止。
+    if (r._checkFields) {
+      const keep = {};
+      Object.entries(r._checkFields).forEach(([k, why]) => { if (why && k in out) keep[k] = why; });
+      if (Object.keys(keep).length) out._checkFields = keep;
+    }
     return out;
   };
 

@@ -654,8 +654,10 @@ const SmartParse = {
         const labelRow = grid[headerR] || [];
         const valueRow = grid[headerR + 1] || [];
         const colOf = (re) => { for (let c = 0; c < labelRow.length; c++) if (re.test(this.cellStr(labelRow[c]))) return c; return -1; };
+        // v4.45：營建振動申報取 Lv10 與 Lvmax（使用者確認）；Lveq 照樣讀出，
+        // 但放到「其他測項」預設不勾，需要時再勾。
         const metrics = [
-          { col: colOf(/^Lveq$/i), item: '事件振動位準(Lveq)' },
+          { col: colOf(/^Lveq$/i), item: '事件振動位準(Lveq)', secondary: true },
           { col: colOf(/^Lvmax$/i), item: '最大振動位準(Lvmax)' },
           // 日間→Lvd(10)、夜間→Lvn(10)；判不出時段就整筆不帶（見下方 return）
           { col: colOf(/^Lv\s*10$/i), item: vibLv10ItemFor(tod) },
@@ -668,6 +670,7 @@ const SmartParse = {
             ...baseRow, '管制標準': '無', '管制區': '無', '環境音量標準': '0', '頻率範圍': '',
             '檢測類別': '振動', '監測時段': tod, '音源發聲特性': m.item,
             '監測單位': '159', '監測數值': this.formatNumber(v), '監測方法': methodV,
+            _secondaryItem: !!m.secondary,
           });
         });
       }
@@ -728,10 +731,17 @@ const SmartParse = {
     // v4.45：起訖時間照報告逐時表的第一格與最後一格（例如「12~13」…「11~12」
     // → 12:00 到翌日 12:00）。報告沒有逐時表時才維持舊版的 00:00～翌日 00:00。
     // 逐時表從 00 點開始的報告，結果和舊版完全一樣。
+    //
+    // v4.45（使用者裁示）：結束時間寫成「最後一格的結束時刻減一分鐘」——
+    // 10/1 12:00 開始量 24 小時，就是 10/1 12:00 ～ 10/2 11:59；00:00 開始的就是當天 00:00 ～ 23:59
+    // （環境部規定勿填 24:00，全天示範即 00:00 → 同日 23:59）。噪音、振動、低頻一律相同。
     const span = this.hourlySpan(grid);
+    const startTime = span ? span.tStart : '00:00:00';
+    const endBase = { date: (span && !span.wraps) ? dateISO : this.addDaysISO(dateISO, 1), time: span ? span.tEnd : '00:00:00' };
+    const endMinus = this.minusOneMinute(endBase.date, endBase.time);
     const baseRow = {
-      '日期(起)': dateISO, '時間(起)': span ? span.tStart : '00:00:00',
-      '日期(迄)': (span && !span.wraps) ? dateISO : this.addDaysISO(dateISO, 1), '時間(迄)': span ? span.tEnd : '00:00:00',
+      '日期(起)': dateISO, '時間(起)': startTime,
+      '日期(迄)': dateISO ? endMinus.date : '', '時間(迄)': endMinus.time,
       '監測地點': location, '座標系統': coordX ? '3' : '', '採樣座標-經度 X': coordX, '採樣座標-緯度 Y': coordY,
       '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
       _siteCode: siteCode, _rawLocation: location,
@@ -867,27 +877,46 @@ const SmartParse = {
   hourlySpan(grid) {
     const re = /^(\d{1,2})\s*[~～\-－]\s*(\d{1,2})$/;
     const maxCol = this.lastCol(grid);
-    const byCol = {};
-    for (let r = 0; r < grid.length; r++) {
-      const row = grid[r] || [];
-      const end = Math.min(row.length, maxCol + 1);
-      for (let c = 0; c < end; c++) {
-        const m = this.cellStr(row[c]).match(re);
-        if (!m) continue;
-        const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
-        if (a > 24 || b > 24) continue;
-        (byCol[c] = byCol[c] || []).push([a, b]);
+    // 只認「成果表（L日/L晚/L夜）上方」那一段**連續**的逐時列。
+    // ⚠️ 實際報告的工作表下方常殘留舊的逐時表（實測有報告的 N/V 工作表第 73 列以後
+    //    還有兩份 07~08…06~07、12~13…11~12 的舊表），不限定「連續的一段」就會把
+    //    結束時間讀成那些殘留表的最後一格。
+    const summary = this.findCell(grid, /^L日\s*[(（]/);
+    const limitRow = summary ? summary.r : grid.length;
+    const runs = [];
+    for (let c = 0; c <= maxCol; c++) {
+      let run = null;
+      for (let r = 0; r < limitRow; r++) {
+        const m = this.cellStr(grid[r]?.[c]).match(re);
+        const a = m ? parseInt(m[1], 10) : NaN, b = m ? parseInt(m[2], 10) : NaN;
+        if (m && a <= 24 && b <= 24) {
+          if (run && r - run.lastRow <= 1) { run.list.push([a, b]); run.lastRow = r; }
+          else { run = { startRow: r, lastRow: r, list: [[a, b]] }; runs.push(run); }
+        }
       }
     }
-    let best = null;
-    Object.values(byCol).forEach(list => { if (!best || list.length > best.length) best = list; });
-    if (!best || best.length < 6) return null;
+    const good = runs.filter(x => x.list.length >= 6);
+    if (!good.length) return null;
+    // 有成果表時取最靠近成果表的那一段（就在它正上方）；沒有成果表時取最長、同長取最上面的。
+    good.sort((x, y) => summary ? (y.lastRow - x.lastRow) : (y.list.length - x.list.length || x.startRow - y.startRow));
+    const best = good[0].list;
     const pad = n => String(n % 24).padStart(2, '0');
     const first = best[0], last = best[best.length - 1];
     let wraps = false;
     for (let i = 1; i < best.length; i++) if (best[i][0] < best[i - 1][0]) wraps = true;
     if (last[1] <= first[0] || last[1] === 24) wraps = true;
     return { tStart: `${pad(first[0])}:00:00`, tEnd: `${pad(last[1])}:00:00`, wraps };
+  },
+
+  /** 'YYYY-MM-DD' + 'HH:MM:SS' 往前一分鐘（跨日會回到前一天）。 */
+  minusOneMinute(dateISO, time) {
+    const m = String(time || '').match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return { date: dateISO, time };
+    let mins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10) - 1;
+    let date = dateISO;
+    if (mins < 0) { mins += 24 * 60; date = dateISO ? this.addDaysISO(dateISO, -1) : dateISO; }
+    const pad = n => String(n).padStart(2, '0');
+    return { date, time: `${pad(Math.floor(mins / 60))}:${pad(mins % 60)}:00` };
   },
 
   /** 掃描整張表找「第x類／第三類…管制區」，回傳「第3類」；找不到回空字串。 */
@@ -1170,8 +1199,16 @@ const SmartParse = {
     const agencyRaw = this.labelValueSameCell(grid, /採樣單位[:：]/);
     const agencyCode = this.reverseAgencyLookup(agencyRaw);
 
+    // v4.45（使用者裁示＋環境部規定時間只能 00:00~23:59）：24 小時空品的日平均值等整段資料，
+    // 結束時間和噪音／振動一樣「減一分鐘」——9/7 11:00 開始量就是 9/7 11:00 ～ 9/8 10:59。
+    // 逐時那幾列另外照各自的小時填（辭典逐時示範 12:00→13:00），不受這裡影響。
+    let dateEnd24 = dateEnd, timeEnd24 = timeEnd;
+    if (dateEnd && timeEnd) {
+      const m1 = this.minusOneMinute(dateEnd, timeEnd);
+      dateEnd24 = m1.date; timeEnd24 = m1.time;
+    }
     const baseRow = {
-      '日期(起)': dateStart, '時間(起)': timeStart, '日期(迄)': dateEnd, '時間(迄)': timeEnd,
+      '日期(起)': dateStart, '時間(起)': timeStart, '日期(迄)': dateEnd24, '時間(迄)': timeEnd24,
       '採樣地點': location, '座標系統': '', '採樣座標-經度 X': '', '採樣座標-緯度 Y': '',
       '場所編號': '', '採樣地點高度(公尺)': '', '污染物採樣高度(公尺)': '', '管制編號': '', '煙道編號': '',
       '檢測類別': '周界空氣品質', '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
@@ -1237,8 +1274,10 @@ const SmartParse = {
       skippedPlaceholderItems.push('TSP');
     } else if (tspVal) {
       const { cmp, val, note } = this.parseValueCell(tspVal);
+      const tspUnit = this.airUnitFor('127', this.cellStr(grid[unitRow]?.[cols.TSP]));
       rows.push({
-        ...baseRow, '檢測項目': 'TSP', '檢測濃度/質量單位': '127',
+        ...baseRow, '檢測項目': 'TSP', '檢測濃度/質量單位': tspUnit.unit, _uncertainUnit: tspUnit.uncertain, _unitNote: tspUnit.note,
+        _checkFields: tspUnit.uncertain ? { '檢測濃度/質量單位': tspUnit.note } : undefined,
         '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
         '檢測方法': methodMap.TSP || '', '備註': note || '',
       });
@@ -1307,6 +1346,25 @@ const SmartParse = {
     { re: /^O3/i, key: 'O3', unit: '113' }, { re: /^CH4/i, key: 'CH4', unit: '113' },
     { re: /^NMHC/i, key: 'NMHC', unit: '113' }, { re: /^THC/i, key: 'THC', unit: '113' },
   ],
+  /**
+   * v4.45：空品測項的單位代碼。
+   *
+   * 官方單位代碼表（V2）同一個單位有兩種寫法、兩個代碼：
+   *   127 ug/m^3 ／ 140 μg/m3、128 ug/Nm^3 ／ 142 μg/Nm3。
+   * 這個程式（以及使用者實際送出的完成版）一向把 μg/m3 填 127，所以：
+   *   ・報告印 μg/m3（或沒印）→ 照舊填預設（TSP／PM10／PM2.5 是 127），不改變任何人原本的結果；
+   *   ・報告印 μg/Nm3（標準狀態）→ 填同一套寫法的 **128（ug/Nm^3）**，並標成「單位請確認」，
+   *     因為 142（μg/Nm3）也是官方代碼，該用哪一個由使用者決定。不再默默填成 127（那是 m3、不是 Nm3）。
+   */
+  airUnitFor(defUnit, unitText) {
+    const t = String(unitText || '').replace(/\s+/g, '');
+    if (/[μuµ]g\/?N\s*m/i.test(t) || /\/Nm/i.test(t)) {
+      return { unit: defUnit, uncertain: true,
+        note: `報告上的單位是「${unitText}」（標準狀態）。系統先填 ${defUnit}，官方代碼表裡同一個單位是 142（μg/Nm3）或 128（ug/Nm^3），請確認要填哪一個。` };
+    }
+    return { unit: defUnit, uncertain: false, note: '' };
+  },
+
   parseAirSampleTableSheet(grid) {
     const dateLike = (v) => /\d{2,4}\s*[年\/.\-]\s*\d{1,2}\s*[月\/.\-]\s*\d{1,2}/.test(v);
     const rowHasDate = (r) => (grid[r] || []).some(v => dateLike(this.cellStr(v)));
@@ -1328,7 +1386,11 @@ const SmartParse = {
       const items = [];
       combined.forEach((t, c) => {
         const def = this.AIR_TABLE_ITEMS.find(d => d.re.test(t || ''));
-        if (def) items.push({ col: c, def, unitText: t.replace(def.re, '').replace(/[★☆*＊]/g, '').trim() });
+        if (def) {
+          const unitText = t.replace(def.re, '').replace(/[★☆*＊]/g, '').trim();
+          const { unit, uncertain, note: unitNote } = this.airUnitFor(def.unit, unitText);
+          items.push({ col: c, def, unitText, unit, uncertain, unitNote });
+        }
       });
       if (cols.date >= 0 && cols.location >= 0 && items.length) header = { r, depth, cols, items };
     }
@@ -1356,7 +1418,7 @@ const SmartParse = {
       const dateEnd = (tStart && tEnd && tEnd < tStart) ? this.addDaysISO(dateISO, 1) : dateISO;
       const location = cells[cols.location] || '';
       const siteCode = cols.siteCode >= 0 ? (cells[cols.siteCode] || '') : '';
-      items.forEach(({ col, def }) => {
+      items.forEach(({ col, def, unit, uncertain, unitNote }) => {
         const raw = cells[col] || '';
         if (raw === '' || /^-+$/.test(raw)) return;
         const { cmp, val, note } = this.parseValueCell(raw);
@@ -1367,11 +1429,12 @@ const SmartParse = {
           '採樣地點': location, '座標系統': '', '採樣座標-經度 X': '', '採樣座標-緯度 Y': '',
           '場所編號': '', '採樣地點高度(公尺)': '', '污染物採樣高度(公尺)': '', '管制編號': '', '煙道編號': '',
           '檢測類別': '周界空氣品質', '檢測項目': def.key,
-          '檢測濃度/質量單位': def.unit, '其他檢測濃度/質量單位': '',
+          '檢測濃度/質量單位': unit, '其他檢測濃度/質量單位': '',
           '比較關係': cmp, '檢測數值': /^[\d.]+$/.test(val) ? this.formatNumber(val, 3) : val,
           '檢測方法': methodMap[def.key.toUpperCase()] || '', '檢測機構許可證號': agencyCode, '其他檢測機構名稱': '',
           '備註': note || '',
-          _siteCode: siteCode, _rawLocation: location,
+          _siteCode: siteCode, _rawLocation: location, _uncertainUnit: uncertain, _unitNote: unitNote,
+          _checkFields: uncertain && unitNote ? { '檢測濃度/質量單位': unitNote } : undefined,
           // 同一份報告的「彙整表」和「分表」常常列同一筆採樣（有的報告第一張就是後面幾張分表的合併），
           // parseWorkbook 用這個鍵把完全相同的採樣只留一筆。
           _dedupeKey: ['airtable', siteCode, location, dateISO, tStart, tEnd, def.key, cmp, val].join('␟'),
@@ -1609,6 +1672,10 @@ const SmartParse = {
         : { '採樣深度(公尺)': '', '採樣水深(公尺)': '' };
       rows.push({
         '日期(起)': sampleDateISO, '時間(起)': sampleTime, '日期(迄)': sampleDateISO, '時間(迄)': sampleTime,
+        // v4.45：實驗室報告只寫「採樣時間」一個時刻，沒有結束時間。時間(迄) 先填和起始相同，
+        // 但在表格上標成「請確認」，提醒使用者照實際採樣結束時間修改（使用者確認：
+        // 以往完成版的時間(迄) 都是自己補的）。
+        _checkFields: sampleTime ? { '時間(迄)': '報告只寫了採樣起始時間，沒有結束時間。時間(迄) 先填成和時間(起) 相同，請依實際採樣結束時間修改。' } : undefined,
         '採樣地點': location, '座標系統': '', '採樣座標-經度 X': '', '採樣座標-緯度 Y': '',
         ...depthFields, '管制編號': '',
         '檢測類別': category, '檢測項目': itemName,
@@ -1642,7 +1709,13 @@ const SmartParse = {
     if (!grid || grid.length === 0) return null;
     let rows = null;
     if (category === 'noise') {
-      rows = this.parseNoiseEventSheet(grid, sheetName) || this.parseNoise24hrSheet(sheetName, grid);
+      rows = this.parseNoiseEventSheet(grid, sheetName);
+      if (!rows) {
+        // v4.45：24 小時噪音／振動的起訖**一律是整段 24 小時**（使用者裁示），日晚夜各列不另外切時段。
+        // 原因：報告的日間是「第一天 12:00~20:00 ＋ 第二天 07:00~12:00」兩段合算，
+        // 寫成單一一段 07:00~20:00 反而和實際量測對不上。
+        rows = this.parseNoise24hrSheet(sheetName, grid);
+      }
     } else if (category === 'water') {
       rows = this.parseWaterTableSheet(grid);
     } else if (category === 'geo') {
@@ -1650,11 +1723,31 @@ const SmartParse = {
     } else if (category === 'air') {
       rows = this.parseAirDustfallSheet(grid) || this.parseAirQualitySheet(grid) || this.parseAirSampleTableSheet(grid);
     }
-    if (rows && rows.length) return rows;
+    if (rows && rows.length) return this.normalizeMidnightEnd(rows);
     if (allowAutoDetect && typeof AutoDetect !== 'undefined') {
-      return AutoDetect.parseSheet(category, sheetName, grid);
+      return this.normalizeMidnightEnd(AutoDetect.parseSheet(category, sheetName, grid));
     }
     return null;
+  },
+
+  /**
+   * v4.45：環境部規定時間「僅能輸入 00:00~23:59，勿輸入 24:00」，辭典示範的全天量測寫成
+   * 「2022/01/18 00:00 → 2022/01/18 23:59」。所以結束在「隔天 00:00」（＝當天 24:00）的，
+   * 改寫成**同一天 23:59**：00~01…23~24 的 24 小時噪音、空品逐時表的「23 ~ 24」那一格都是這種。
+   * 其他結束時間一律照報告（辭典的逐時示範 12:00→13:00、07:00→08:00 都沒有少一分鐘），
+   * 例如 10:00 開始的 24 小時就是 10:00 → 翌日 10:00。
+   */
+  normalizeMidnightEnd(rows) {
+    if (!Array.isArray(rows)) return rows;
+    rows.forEach(r => {
+      if (!r) return;
+      const d1 = r['日期(起)'], d2 = r['日期(迄)'], t2 = r['時間(迄)'];
+      if (d1 && d2 && /^00:00(:00)?$/.test(String(t2 || '')) && this.addDaysISO(d1, 1) === d2) {
+        r['日期(迄)'] = d1;
+        r['時間(迄)'] = '23:59:00';
+      }
+    });
+    return rows;
   },
 
   /**

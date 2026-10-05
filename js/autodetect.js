@@ -527,6 +527,10 @@ const AutoDetect = {
             : (metaDates.end || startDate));
         row['時間(起)'] = entry.timeStart || metaTimes.start || '';
         row['時間(迄)'] = entry.timeEnd || metaTimes.end || row['時間(起)'];
+        // v4.45：結束時間是拿起始時間頂替的，就在表格上標「請確認」
+        if (!entry.timeEnd && !metaTimes.end && row['時間(起)']) {
+          row._checkFields = { ...(row._checkFields || {}), '時間(迄)': '報告上找不到結束時間，時間(迄) 先填成和時間(起) 相同，請依實際結束時間修改。' };
+        }
         row[cat.locationField] = entry.rowLocation || metaLocation;
         row[cat.itemField] = entry.item;
         if (valueFieldKey) row[valueFieldKey] = /^[\d.]+$/.test(val) ? SmartParse.formatNumber(val, 3) : val;
