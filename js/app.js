@@ -568,54 +568,8 @@ function markVibMigrationDone(projectId) {
 
 /** 內部帳本的轉換。沒有畫面、不需要同意，而且每次開啟計畫跑都是安全的（冪等）。 */
 function migrateVibBookkeeping(projectId) {
-  const cat = CATEGORIES.noise;
-  // 跨季測站記憶：識別碼與記下來的測項名稱一起改。
-  const history = DataStore.getSiteItemHistory(projectId, 'noise');
-  let historyChanged = false;
-  Object.keys(history).forEach(loc => {
-    const entries = history[loc];
-    if (!entries || typeof entries !== 'object' || Array.isArray(entries)) return;
-    Object.keys(entries).forEach(key => {
-      const entry = entries[key];
-      if (!entry || typeof entry !== 'object') return;
-      const seg = entry.timeSegment || '';
-      const fixedName = canonicalVibItemName(entry.itemName, seg);
-      /*
-       * 只處理「夜間的 Lvd(10)」這一種，其餘一律原封不動。
-       *
-       * 第一版是先組出 `${fixedName}::${seg}` 再跟原本的 key 比對，結果把所有
-       * 「key 的長相剛好不是這個格式」的舊資料也一起改寫、刪除——包含更早期
-       * 沒有時段的記憶格式，以及跟本次修正毫無關係的測項。函式註解寫著只動一種
-       * 組合，就該只動一種。
-       */
-      if (fixedName === entry.itemName) return;
-      const fixedKey = `${fixedName}::${seg}`;
-      const existing = entries[fixedKey];
-      const merged = { ...entry, itemName: fixedName };
-      if (existing) {
-        /*
-         * 兩個識別碼同時存在（使用者在舊版就手動改過一部分）。筆數取兩者的較大值、
-         * 日期取聯集，**不相加**——相加會把同一次量測算成兩筆，下次匯入就會出現
-         * 「缺 N 筆」的假警報。少算不會有人受害（頂多不提醒），多算會。
-         */
-        merged.count = Math.max(existing.count || 1, entry.count || 1);
-        merged.dates = [...new Set([...(existing.dates || []), ...(entry.dates || [])])];
-        merged.snapshot = entry.snapshot || existing.snapshot;
-      }
-      entries[fixedKey] = merged;
-      delete entries[key];
-      historyChanged = true;
-    });
-  });
-  if (historyChanged) DataStore.saveSiteItemHistory(projectId, 'noise', history);
-
-  // 測項方法記憶是用純測項名稱當 key（沒有時段），所以不能改名，
-  // 而是把 Lvd(10) 記住的方法與單位「複製」一份給 Lvn(10)——兩者本來就同方法同單位。
-  const memory = DataStore.getItemMemory(projectId, 'noise');
-  if (memory[VIB_LV10_DAY] && !memory[VIB_LV10_NIGHT]) {
-    DataStore.updateItemMemory(projectId, 'noise', { [VIB_LV10_NIGHT]: { ...memory[VIB_LV10_DAY] } });
-  }
-  return cat;
+  // v4.46：跨季測站記憶、測項方法記憶都改成從目前資料現算，沒有另外的帳本要轉換了。
+  return CATEGORIES.noise;
 }
 
 /** 找出所有「夜間 ＋ 振動 ＋ Lvd(10)」的資料列——依定義那就是錯的組合。 */
@@ -1478,8 +1432,7 @@ function openBatchEditModal(project, catKey, cat, indices) {
  * 寫死的話規定一改就得改程式、重新打包、重新上傳；改成設定之後，
  * 使用者自己在畫面上改一改就好，而出廠預設仍然是目前官方辭典的規定。
  *
- * ⚠️ 這個設定是**整台電腦共用**的，不是每個計畫一份——官方規定全國一致，
- * 不會因計畫而異，每開一個新計畫就要重設一次反而容易漏。
+ * v4.46（#34，使用者裁示）：改成**每個計畫各一份**（以前整台電腦共用）。
  */
 function openDecimalSettingsModal(currentCatKey) {
   const modal = document.getElementById('decimalModal');
@@ -2568,15 +2521,12 @@ function wireGridEvents(project, catKey, cat) {
 }
 
 // ---------- item-selection presets ("記憶標籤") for 常用測項新增 ----------
-// Stored per-category, shared across ALL projects in this browser (not tied to one
-// project) — the person's "typical combo of 10 items for 3 stations" recurs across
-// different projects, so a global-per-browser scope is more useful here than a
-// per-project one. Stores { itemName, method } pairs (not variant array indices),
+// v4.46（#33，使用者裁示）：改成每個計畫、每個類別各一份（以前整台電腦共用）。 Stores { itemName, method } pairs (not variant array indices),
 // so a preset still applies correctly even if the shared catalog's variant order
 // later changes — matching is done by method text at apply time, skipping any item
 // that's no longer findable rather than silently misapplying the wrong method.
 const ITEM_PRESET_LIMIT = 8;
-function presetStorageKey(catKey) { return `envapp_itemPresets_${catKey}`; }
+function presetStorageKey(catKey) { return DataStore._presetKey(state.currentProjectId || '', catKey); }   // v4.46：每個計畫各一份（#33）
 function getItemPresets(catKey) {
   try { return JSON.parse(localStorage.getItem(presetStorageKey(catKey))) || []; }
   catch (e) { return []; }
@@ -2806,7 +2756,7 @@ function openCommonItemsModal(project, catKey) {
   if (staleBody) staleBody.innerHTML = '';
   const cat = CATEGORIES[catKey];
   const builtIn = siteConfig.itemCatalog[catKey] || [];
-  const itemMemory = DataStore.getItemMemory(project.id, catKey);
+  const itemMemory = liveItemMemory(project.id, catKey);
   const builtInNames = new Set(builtIn.map(e => e.itemName));
   const projectOwnItems = Object.entries(itemMemory)
     .filter(([name]) => name && !builtInNames.has(name))
@@ -3163,7 +3113,7 @@ function saveCoordModal() {
 function openMethodModal(project, catKey) {
   const cat = CATEGORIES[catKey];
   const rows = DataStore.getData(project.id, catKey);
-  const memory = DataStore.getItemMemory(project.id, catKey);
+  const memory = liveItemMemory(project.id, catKey);
   const itemField = cat.itemField;
 
   const groups = {}; // itemName -> { indices, method, unitCode, methodSet, unitSet }
@@ -3281,7 +3231,7 @@ function saveMethodModal() {
     return;
   }
   DataStore.saveData(projectId, catKey, rows);
-  if (Object.keys(memoryUpdates).length) DataStore.updateItemMemory(projectId, catKey, memoryUpdates);
+  // v4.46：不再另外記測項方法記憶（從目前資料現算，見 liveItemMemory）
   // Also refresh the FULL per-location snapshot memory, not just the flat item-name
   // memory above — otherwise a correction made here wouldn't carry through to next
   // season's "entirely absent location" reconstruction, which prefers the fuller
@@ -4730,7 +4680,7 @@ function renderMappingStep() {
     // 檢測方法 can change what gets compared.
     const noticeEl = document.getElementById('genericImportMethodDiffNotice');
     if (cat.methodField && noticeEl) {
-      const memory = DataStore.getItemMemory(project.id, cat.key);
+      const memory = liveItemMemory(project.id, cat.key);
       const diffsByItem = {};
       mappedRows.forEach(row => {
         const mem = memory[row[cat.itemField]];
@@ -4783,7 +4733,7 @@ function renderSmartImportPreview() {
   const cat = CATEGORIES[catKey];
   const result = state.smartResult;
   const profileFields = SmartParse.SITE_PROFILE_FIELDS[catKey] || [];
-  const savedAliases = DataStore.getSiteAliases(project.id, catKey);
+  const savedAliases = liveSiteAliases(project.id, catKey);
 
   // Fill in method/unit from this project's remembered values (learned from past
   // confirmed imports, any season) wherever the report itself didn't supply one —
@@ -4801,8 +4751,8 @@ function renderSmartImportPreview() {
   // rather than leaving them permanently blank, since only date/time/value should
   // genuinely differ quarter to quarter for an otherwise-unchanged monitoring point.
   if (!result._memoryApplied) {
-    const memory = DataStore.getItemMemory(project.id, catKey);
-    const siteHistory = DataStore.getSiteItemHistory(project.id, catKey);
+    const memory = liveItemMemory(project.id, catKey);
+    const siteHistory = liveSiteHistory(project.id, catKey);
     const methodDiffsByItem = {};
     result.rows.forEach(row => {
       const mem = memory[row[cat.itemField]];
@@ -5110,8 +5060,8 @@ function renderSmartImportPreview() {
   // separate 日/晚/夜 rows for the same 音源發聲特性 collapse into one indistinguishable
   // entry and only one of the three ever gets suggested/rebuilt.
   const existingMissingWrap = document.getElementById('smartImportMissingItemsWrap');
-  const siteHistory = DataStore.getSiteItemHistory(project.id, catKey);
-  const itemMemoryForSuggestion = DataStore.getItemMemory(project.id, catKey);
+  const siteHistory = liveSiteHistory(project.id, catKey);
+  const itemMemoryForSuggestion = liveItemMemory(project.id, catKey);
 
   // Fuzzy location-name matching against history — catches the case where this
   // season's raw location text differs from a historically-known location only by
@@ -5213,7 +5163,10 @@ function renderSmartImportPreview() {
       })
       .filter(Boolean);
     if (missing.length > 0) {
-      suggestions.push({ siteKeys: siteKeysByLoc[confirmedLoc], location: confirmedLoc, missingItems: missing });
+      // v4.46（#35）：這個地點最新一季沒有、資料來自較早的季 → 只列出來，預設不勾
+      const olderPeriod = missing.find(m => m.fromOlder)?.fromPeriod;
+      suggestions.push({ siteKeys: siteKeysByLoc[confirmedLoc], location: confirmedLoc, missingItems: missing,
+        older: missing.some(m => m.fromOlder), olderPeriod: olderPeriod || '' });
     }
   });
   // A whole location can be entirely absent from this import — e.g. this quarter's
@@ -5230,17 +5183,20 @@ function renderSmartImportPreview() {
     if (historicalEntries.length === 0) return;
     suggestions.push({
       siteKeys: [], location: histLoc, entirelyAbsent: true,
+      older: historicalEntries.some(([, e]) => e.fromOlder),
+      olderPeriod: (historicalEntries.find(([, e]) => e.fromOlder) || [, {}])[1].fromPeriod || '',
       missingItems: historicalEntries.map(([identityKey, entry]) => ({ identityKey, ...entry, missingCount: entry.count || 1 })),
     });
   });
   state.missingItemSuggestions = suggestions;
+  const baselineLabel = (comparisonGroups(project.id, catKey)[0] || {}).label || '';
 
   if (suggestions.length === 0) {
     existingMissingWrap.innerHTML = '';
   } else {
     existingMissingWrap.innerHTML = `
       <div class="warning" style="background:#e8f0fe;border-color:#a8c7fa;">
-        📋 系統比對過去記錄，列出以下差異。若要一併新增空白列（檢測方法／單位／項目名稱及對應的檢測類別會依過去記錄先幫您填好，檢測數值請自行輸入），請勾選：
+        📋 系統比對目前表格裡的資料，列出以下差異。若要一併新增空白列（檢測方法／單位／項目名稱及對應的檢測類別會依現有資料先幫您填好，檢測數值請自行輸入），請勾選：
         <div class="hint" style="margin:6px 0 0 0">
           ・<strong>本次完全沒有這個測項</strong>：預設<strong>已勾選</strong>（過去有測、這次報告裡整個不見了，通常需要補）。<br>
           ・<strong>本次有、但比過去少幾筆</strong>：預設<strong>不勾選</strong>。最常見的原因是兩邊涵蓋的採樣次數不同——例如過去比對的是一整季完成版（1、2、3 月各一次共 3 筆），而這次只匯入單月報告（1 筆），並不是真的少了資料。每個項目下方都會列出兩邊實際的採樣日期供您判斷。
@@ -5248,8 +5204,10 @@ function renderSmartImportPreview() {
         <details style="margin-top:6px">
           <summary style="cursor:pointer;font-size:12.5px;color:var(--text-muted)">ℹ️ 這是跟哪一份資料比對的？（點此展開說明）</summary>
           <p class="hint" style="margin:6px 0 0 0">
-            系統一律以「您最近一次確認匯入的內容」為比對基準，不是依季別標籤強制對應到「上一季」——只是一般情況下季度是照順序匯入，所以看起來就像是跟前一季比對。<br>
-            如果您想指定要跟哪一份資料比對（例如想跳過中間某幾季，直接參考更早以前的完整版資料），只要<strong>先把那份資料匯入並確認</strong>，之後才匯入這次真正要處理的資料，系統就會以最後確認的那份為準。
+            系統只拿<strong>目前表格裡還存在的資料</strong>比對；已經刪掉的資料不會再被拿來比（v4.46 起）。<br>
+            比對基準是表格裡<strong>最新的一季</strong>${baselineLabel ? `（這次是「${escapeHtml(baselineLabel)}」）` : ''}；較早的季才有的測項不會被當成缺少。
+            較早的季才有、最新一季沒有的<strong>整個測站</strong>會另外列出來、標明來自哪一季，預設不勾，需要時再勾選。<br>
+            想改用別的季當基準：把較新的那一季刪掉（或先不要匯入），系統就會改用剩下最新的那一季。
           </p>
         </details>
         <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap">
@@ -5268,11 +5226,14 @@ function renderSmartImportPreview() {
             // batches; requiring an explicit opt-in here is the safer default.
             // A group is ticked only if something inside it is — with shortfalls now
             // unticked, a group of nothing but shortfalls must not look "selected".
-            const defaultChecked = !s.entirelyAbsent && s.missingItems.some(m => m.absent);
+            const defaultChecked = !s.entirelyAbsent && !s.older && s.missingItems.some(m => m.absent);
+            // v4.46（#35）：資料來自較早的季（最新一季沒有這個測站）
+            const olderNote = s.older
+              ? ` <span class="hint">（最新一季沒有這個測站，資料來自「${escapeHtml(s.olderPeriod || '未標示期別')}」——需要帶進這一季才勾選，日期請自行填寫）</span>` : '';
             return `
             <div class="missing-item-loc-group" data-search-text="${escapeAttr(s.location.toLowerCase())}" style="margin-top:6px${s.entirelyAbsent ? ';padding:6px 8px;background:#fff6e0;border-radius:6px' : ''}">
               <label style="font-weight:700">
-                <input type="checkbox" class="missing-item-group" data-group-idx="${i}" ${defaultChecked ? 'checked' : ''}> ${escapeHtml(s.location)}${s.entirelyAbsent ? ' <span class="hint">（本次報告完全沒有這個測站——若這是不同專案/不相關的批次資料，請保持不勾選；確定要帶回本測站的舊資料才勾選。建議新增的資料日期需要您自行填寫）</span>' : ''}
+                <input type="checkbox" class="missing-item-group" data-group-idx="${i}" ${defaultChecked ? 'checked' : ''}> ${escapeHtml(s.location)}${s.entirelyAbsent && !s.older ? ' <span class="hint">（本次報告完全沒有這個測站——若這是不同專案/不相關的批次資料，請保持不勾選；確定要帶回本測站的舊資料才勾選。建議新增的資料日期需要您自行填寫）</span>' : ''}${olderNote}
               </label>
               <div style="margin-left:22px">
                 ${s.missingItems.map((m) => {
@@ -5283,7 +5244,7 @@ function renderSmartImportPreview() {
                   // both sides — that is what tells apart "a reading really went
                   // missing" from "this file is one month, that history was a
                   // whole quarter".
-                  const itemChecked = s.entirelyAbsent ? false : !!m.absent;
+                  const itemChecked = (s.entirelyAbsent || m.fromOlder) ? false : !!m.absent;
                   const fmtDates = (ds) => (ds || []).map(d => toDateDisplayValue(d) || d).join('、');
                   let countNote = '';
                   if (!m.absent && m.historicalCount !== undefined) {
@@ -5300,7 +5261,7 @@ function renderSmartImportPreview() {
                   const methodNote = snapshot?.[cat.methodField] || mem?.method;
                   const unitNote = snapshot?.[cat.unitField] || mem?.unitCode;
                   const memParts = [category ? `檢測類別：${category}` : '', methodNote, unitNote ? `單位代碼${unitNote}` : ''].filter(Boolean);
-                  const memNote = memParts.length ? `（已記憶：${memParts.join('，')}）` : '（無先前記憶的方法/單位，需另外補上）';
+                  const memNote = memParts.length ? `（依現有資料：${memParts.join('，')}）` : '（現有資料沒有方法/單位，需另外補上）';
                   return `<label style="display:block">
                     <input type="checkbox" class="missing-item-single" data-group-idx="${i}" data-identity-key="${escapeAttr(identityKey)}" ${itemChecked ? 'checked' : ''}>
                     ${escapeHtml(displayName)} ${countNote} <span class="hint">${escapeHtml(memNote)}</span>
@@ -5412,7 +5373,7 @@ function learnItemMemoryFromRows(projectId, catKey, cat, rows) {
     if (cat.unitField && r[cat.unitField]) fields.unitCode = r[cat.unitField];
     if (Object.keys(fields).length) updates[itemName] = { ...(updates[itemName] || {}), ...fields };
   });
-  if (Object.keys(updates).length) DataStore.updateItemMemory(projectId, catKey, updates);
+  // v4.46：不再另外記測項方法記憶（從目前資料現算，見 liveItemMemory）
 }
 
 /** Records which items have ever been confirmed for each location — this is what
@@ -5477,35 +5438,111 @@ function buildFieldSnapshot(row, cat) {
   return snap;
 }
 
-function learnSiteItemHistory(projectId, catKey, cat, rows) {
-  const locField = cat.locationField, itemField = cat.itemField;
-  // Recompute from the FULL current DataStore contents for whichever locations were
-  // touched — not from `rows` directly — so a partial call (e.g. commit() passing
-  // just the one row that was edited, or coordinate-manager passing only the rows
-  // it changed) can't corrupt the remembered COUNT for a site that legitimately has
-  // multiple rows sharing the same item identity (e.g. 平日/假日 pairs both landing
-  // on "均能音量(Leq)::日間"). `rows` only tells us WHICH locations to re-learn;
-  // the actual counting always looks at everything currently in DataStore for
-  // those locations, which is the single source of truth.
-  const touchedLocations = new Set(rows.filter(r => r[locField]).map(r => r[locField]));
-  if (touchedLocations.size === 0) return;
-  const allRows = DataStore.getData(projectId, catKey);
-  const relevantRows = allRows.filter(r => touchedLocations.has(r[locField]) && r[itemField]);
-  const entries = relevantRows.map(r => ({
-    location: r[locField],
-    identityKey: itemIdentityKey(r, cat),
-    // 記下來的名稱也要正規化。這份 itemName 是日後「補回缺少的測項」時用來重建
-    // 資料列的（buildSuggestedRows），留著舊的 Lvd(10) 會把錯誤再種回去一次。
-    itemName: hasTimeSegmentField(cat)
-      ? canonicalVibItemName(r[itemField], r['監測時段'] || '')
-      : r[itemField],
-    timeSegment: hasTimeSegmentField(cat) ? (r['監測時段'] || '') : '',
-    itemCategory: r['檢測類別'] || '',
-    date: r['日期(起)'] || '',
-    snapshot: buildFieldSnapshot(r, cat),
-  }));
-  DataStore.learnSiteItemSnapshots(projectId, catKey, entries);
+// ---------- v4.46：記憶一律從「目前表格裡的資料」現算（#29～#32）----------
+//
+// v4.45 以前另外存了兩本只增不減的帳（跨季測站記憶、測項方法記憶），資料刪掉了
+// 帳還在，下次匯入時會拿已經刪掉的舊資料來比對、補欄位、建議「缺少的測項」。
+// 使用者要求：**只拿目前存在的資料比對**，刪掉的就不要再記得。所以改成每次需要時
+// 從 DataStore 現算，不再另外存。
+//
+// 比對基準＝目前表格裡「最新的一季」（不是全部合在一起）：表格裡同時有 115Q1、
+// 115Q2 時只拿 115Q2 比，115Q1 才有的測項不會被當成缺少。
+// 但 115Q1 有、115Q2 沒有的**整個測站**仍會列出來（標明來自哪一季、預設不勾），
+// 需要時可以勾選帶進這一季；使用者把 115Q2 刪掉，基準自然就變成 115Q1。
+
+/** 依期別分組，算出每一組的先後（最新的在前）。沒標期別的列自成一組。 */
+function periodGroupsNewestFirst(rows) {
+  const groups = new Map(); // label -> { label, rows, maxDate, lastIdx }
+  rows.forEach((r, idx) => {
+    const label = r._period || '';
+    if (!groups.has(label)) groups.set(label, { label, rows: [], maxDate: '', lastIdx: -1 });
+    const g = groups.get(label);
+    g.rows.push(r);
+    const d = String(r['日期(起)'] || '');
+    if (d > g.maxDate) g.maxDate = d;
+    g.lastIdx = idx;
+  });
+  return [...groups.values()].sort((a, b) => (b.maxDate.localeCompare(a.maxDate)) || (b.lastIdx - a.lastIdx));
 }
+
+/**
+ * 拿來比對的期別順序（最新的在前）。正在匯入某一季、而表格裡已經有同一季的資料時
+ * （重新匯入／補匯入），那一季不能拿來當基準——否則是自己比自己。
+ */
+function comparisonGroups(projectId, catKey) {
+  const groups = periodGroupsNewestFirst(DataStore.getData(projectId, catKey));
+  const importing = (state.importPeriod || '').trim();
+  if (!importing) return groups;
+  const others = groups.filter(g => g.label !== importing);
+  return others.length ? others : groups;
+}
+
+/**
+ * 現算的跨季測站記憶。格式和 v4.45 的帳本相同：
+ * { 地點: { 測項識別碼: { itemName, timeSegment, category, snapshot, count, dates, fromPeriod, fromOlder } } }
+ * 每個地點只取「它出現過的最新一季」：最新一季有這個地點就只用最新一季；
+ * 最新一季沒有、較早的季才有的地點，用它最後出現的那一季，標 fromOlder（預設不勾）。
+ */
+function liveSiteHistory(projectId, catKey) {
+  const cat = CATEGORIES[catKey];
+  const locField = cat.locationField, itemField = cat.itemField;
+  const groups = comparisonGroups(projectId, catKey);
+  const history = {};
+  groups.forEach((g, gi) => {
+    const seenHere = {};
+    g.rows.forEach(r => {
+      const loc = r[locField];
+      if (!loc || !r[itemField]) return;
+      if (history[loc] && !seenHere[loc]) return;      // 這個地點較新的一季已經有了
+      seenHere[loc] = true;
+      if (!history[loc]) history[loc] = {};
+      const identityKey = itemIdentityKey(r, cat);
+      const e = history[loc][identityKey] || (history[loc][identityKey] = {
+        itemName: hasTimeSegmentField(cat) ? canonicalVibItemName(r[itemField], r['監測時段'] || '') : r[itemField],
+        timeSegment: hasTimeSegmentField(cat) ? (r['監測時段'] || '') : '',
+        category: r['檢測類別'] || '', snapshot: null, count: 0, dates: [],
+        fromPeriod: g.label, fromOlder: gi > 0,
+      });
+      e.count += 1;
+      const d = r['日期(起)'] || '';
+      if (d && !e.dates.includes(d)) e.dates.push(d);
+      e.snapshot = buildFieldSnapshot(r, cat);
+    });
+  });
+  return history;
+}
+
+/** 現算的測項方法／單位記憶：{ 測項: { method, unitCode } }，從最新一季往前找第一個有填的值。 */
+function liveItemMemory(projectId, catKey) {
+  const cat = CATEGORIES[catKey];
+  const memory = {};
+  periodGroupsNewestFirst(DataStore.getData(projectId, catKey)).forEach(g => {
+    for (let i = g.rows.length - 1; i >= 0; i--) {     // 同一季裡越後面加入的越新
+      const r = g.rows[i];
+      const name = r[cat.itemField];
+      if (!name) continue;
+      const m = memory[name] || (memory[name] = {});
+      if (cat.methodField && !m.method && r[cat.methodField]) m.method = r[cat.methodField];
+      if (cat.unitField && !m.unitCode && r[cat.unitField]) m.unitCode = r[cat.unitField];
+    }
+  });
+  return memory;
+}
+
+/** 測站名稱對照：只套用「對到的地點目前表格裡還有」的那幾筆（地點的資料刪光了，對照也不再套用）。 */
+function liveSiteAliases(projectId, catKey) {
+  const cat = CATEGORIES[catKey];
+  const locs = new Set(DataStore.getData(projectId, catKey).map(r => r[cat.locationField]).filter(Boolean));
+  const out = {};
+  Object.entries(DataStore.getSiteAliases(projectId, catKey)).forEach(([k, v]) => {
+    if (v && typeof v === 'object' && v[cat.locationField] && locs.has(v[cat.locationField])) out[k] = v;
+  });
+  return out;
+}
+
+/** v4.46 起不再另外存跨季測站記憶（都從目前資料現算），保留這個名字只為了少改呼叫的地方。 */
+function learnSiteItemHistory(projectId, catKey, cat, rows) { /* 不再記帳，見 liveSiteHistory */ }
+
 
 /**
  * Compares candidate rows against what's already in this category, split into:
@@ -5651,7 +5688,7 @@ function buildSuggestedRows(project, catKey, cat, result) {
     return !groupCb || groupCb.checked;
   });
   if (checkedBoxes.length === 0) return [];
-  const itemMemory = DataStore.getItemMemory(project.id, catKey);
+  const itemMemory = liveItemMemory(project.id, catKey);
 
   // Build each checked item's single-row template first (without expanding
   // copiesToAdd yet), then interleave by OCCURRENCE index below rather than
@@ -5877,7 +5914,7 @@ function confirmSmartImport() {
   const cat = CATEGORIES[catKey];
   const result = state.smartResult;
   const profileFields = SmartParse.SITE_PROFILE_FIELDS[catKey] || [];
-  const savedAliases = DataStore.getSiteAliases(project.id, catKey);
+  const savedAliases = liveSiteAliases(project.id, catKey);   // 對不到現有地點的舊對照，存回去時一併清掉
 
   // collect edited values per site from the DOM
   document.querySelectorAll('#smartSitesBody tr').forEach(tr => {
@@ -6013,8 +6050,8 @@ function confirmImport() {
   // a prior season's completed export or the government template) is the MAIN way
   // people actually re-import a full season's data, so it needs the same treatment
   // as the raw-report smart-parse path, not just the older method/unit-only fill.
-  const memory = DataStore.getItemMemory(project.id, catKey);
-  const siteHistoryForFill = DataStore.getSiteItemHistory(project.id, catKey);
+  const memory = liveItemMemory(project.id, catKey);
+  const siteHistoryForFill = liveSiteHistory(project.id, catKey);
   newRows.forEach(row => {
     const mem = memory[row[cat.itemField]];
     if (mem) {
@@ -6159,6 +6196,8 @@ DataStore.onStorageError = (err) => {
 };
 
 function init() {
+  // v4.46：清掉舊的只增不減帳本、把共用設定分給各計畫（#29～#34）。失敗也不能擋住整個畫面
+  try { DataStore.migrateV446(); } catch (e) { console.error(e); }
   document.getElementById('versionBadge').addEventListener('click', openChangelogModal);
   document.getElementById('btnChangelogClose').addEventListener('click', () => document.getElementById('changelogModal').classList.add('hidden'));
 
@@ -6283,7 +6322,7 @@ function init() {
       });
     }
     DataStore.saveData(project.id, catKey, rows);
-    if (Object.keys(memoryUpdates).length) DataStore.updateItemMemory(project.id, catKey, memoryUpdates);
+    // v4.46：不再另外記測項方法記憶（從目前資料現算，見 liveItemMemory）
     rememberItemPreset(catKey, presetItems);
     document.getElementById('commonItemsModal').classList.add('hidden');
     renderContent();

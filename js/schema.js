@@ -443,10 +443,16 @@ const DECIMAL_OFF = { mode: 'off', digits: 2 };
 function decimalSettingKey(catKey, fieldKey) { return `${catKey}|${fieldKey}`; }
 
 /** 讀出整份設定（含出廠預設）。壞掉的內容一律忽略，不讓它把畫面弄爆。 */
-function readDecimalSettings() {
+/** v4.46（#34）：每個計畫各一份。沒指定計畫就用目前開著的計畫。 */
+function decimalSettingsStorageKey(projectId) {
+  const pid = projectId || (typeof state !== 'undefined' && state && state.currentProjectId) || '';
+  return pid ? `${DECIMAL_SETTINGS_KEY}_${pid}` : DECIMAL_SETTINGS_KEY;
+}
+
+function readDecimalSettings(projectId) {
   let stored = {};
   try {
-    const raw = localStorage.getItem(DECIMAL_SETTINGS_KEY);
+    const raw = localStorage.getItem(decimalSettingsStorageKey(projectId));
     if (raw) stored = JSON.parse(raw) || {};
   } catch { stored = {}; }
   const out = {};
@@ -460,8 +466,8 @@ function readDecimalSettings() {
   return out;
 }
 
-function writeDecimalSettings(settings) {
-  localStorage.setItem(DECIMAL_SETTINGS_KEY, JSON.stringify(settings));
+function writeDecimalSettings(settings, projectId) {
+  localStorage.setItem(decimalSettingsStorageKey(projectId), JSON.stringify(settings));
 }
 
 /** 這個類別的這個欄位，目前要怎麼呈現小數。沒設定過就是「不處理」。 */

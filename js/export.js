@@ -75,7 +75,7 @@ const ExportEngine = {
   buildWorkbook(project, basicInfo, categoryKey, rowsOverride) {
     const cat = CATEGORIES[categoryKey];
     // 一次讀出來給整張表用，不要每一格各讀一次 localStorage。
-    const decimalSettings = readDecimalSettings();
+    const decimalSettings = readDecimalSettings(project && project.id);   // 這個計畫自己的設定（#34）
     const rows = rowsOverride || DataStore.getData(project.id, categoryKey);
 
     const wb = XLSX.utils.book_new();
