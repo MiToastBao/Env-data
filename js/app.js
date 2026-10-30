@@ -1744,10 +1744,11 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
       const sugCls = (ruleCls + missCls).trim();
       return `<input type="text" ${base}${ruleWhy ? ruleTip : missTip} value="${escapeAttr(value)}" list="${listId}"${maxAttr}${sugCls ? ` class="${sugCls}"` : ''}>`;
     }
+    // v4.47（#51）：代碼不在代碼表時紅框＋說明（以前只有滑鼠提示，格子看不出來）
     case 'unitcode':
-      return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}" data-codetype="unit" title="${escapeAttr(missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupUnit(value))}" placeholder="代碼">`;
+      return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}${ruleCls}" data-codetype="unit" title="${escapeAttr(ruleWhy ? `${ruleWhy}。這是官方資料辭典明文規定，不改申報可能被退件。` : missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupUnit(value))}" placeholder="代碼">`;
     case 'agencycode':
-      return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}" data-codetype="agency" title="${escapeAttr(missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupAgency(value))}" placeholder="代碼">`;
+      return `<input type="text" ${base} value="${escapeAttr(value)}" class="code-input${missCls}${ruleCls}" data-codetype="agency" title="${escapeAttr(ruleWhy ? `${ruleWhy}。這是官方資料辭典明文規定，不改申報可能被退件。` : missingWhy ? `「${field.label}」是${missingWhy}，目前是空的。` : lookupAgency(value))}" placeholder="代碼">`;
     default: {
       /*
        * 依「小數位數設定」把值格式化後顯示。設定是使用者自己調的
@@ -2713,8 +2714,10 @@ function currentPeriodForNewRow(project, catKey) {
   const filtered = state.periodFilter[catKey];
   if (filtered && filtered !== '__none__') return filtered;
   const batches = DataStore.getImportBatches(project.id, catKey);
-  for (let i = batches.length - 1; i >= 0; i--) if (batches[i].period) return batches[i].period;
   const rows = DataStore.getData(project.id, catKey);
+  // v4.47（#52）：匯入紀錄裡那一季的資料已經整個刪掉的話，不拿它當預設期別
+  const livePeriods = new Set(rows.map(r => r._period).filter(Boolean));
+  for (let i = batches.length - 1; i >= 0; i--) if (batches[i].period && livePeriods.has(batches[i].period)) return batches[i].period;
   for (let i = rows.length - 1; i >= 0; i--) if (rows[i]._period) return rows[i]._period;
   return '';
 }
@@ -5305,6 +5308,12 @@ function renderSmartImportPreview() {
   }
 
   const wrap = document.getElementById('smartImportSitesWrap');
+  // v4.48（#55）：說明放在表格外面——表格本身會捲動，放裡面一捲就看不到
+  const oldHint = document.getElementById('noiseVibCoordHint');
+  if (oldHint) oldHint.remove();
+  if (cat.key === 'noise' && siteEntries.length > 1) {
+    wrap.insertAdjacentHTML('beforebegin', `<p id="noiseVibCoordHint" class="hint" style="margin:10px 0 6px 0">📍 改噪音那一列的座標時，<strong>同一監測地點的振動那一列會自動填上一樣的值</strong>；振動那一列若已經是不同的值，則不會被覆蓋。</p>`);
+  }
   wrap.innerHTML = `<table class="mapping-table">
     <thead><tr>
       <th>報告測點編號 / 原始記錄</th>
@@ -5346,6 +5355,44 @@ function renderSmartImportPreview() {
       }).join('')}
     </tbody>
   </table>`;
+
+  /*
+   * v4.48（#55，使用者選定）：噪音、振動同一地點同一次到場，座標本來就一致。
+   * 測站表把噪音（N…）與振動（V…）分成兩列，座標要輸入兩次——改成：改噪音那一列的座標，
+   * 同一監測地點的振動那一列**自動跟著改、不詢問**。振動那一列的值若已經和噪音原本的值不同
+   * （使用者另外填過、或報告本身寫的不一樣），就不覆蓋。只從噪音帶給振動，不反過來。
+   * 被帶過去的格子值會和 data-seeded 不同，確認匯入時就照「使用者改過」整組套用（見下方 collect）。
+   */
+  if (cat.key === 'noise') {
+    const body = document.getElementById('smartSitesBody');
+    const fieldEl = (tr, k) => tr.querySelector(`[data-site-field="${CSS.escape(k)}"]`);
+    const fieldVal = (tr, k) => { const el = fieldEl(tr, k); return el ? String(el.value ?? '').trim() : ''; };
+    body.querySelectorAll('[data-site-field]').forEach(el => {
+      if (COORD_FIELDS.includes(el.dataset.siteField)) el.dataset.prev = el.value;
+    });
+    const mirrorNoiseCoordToVib = (e) => {
+      const el = e.target;
+      const key = el && el.dataset && el.dataset.siteField;
+      if (!key || !COORD_FIELDS.includes(key)) return;
+      const prev = String(el.dataset.prev ?? '').trim();
+      el.dataset.prev = el.value;
+      const tr = el.closest('tr');
+      if (!tr || fieldVal(tr, '檢測類別') === '振動') return;
+      const loc = fieldVal(tr, locField);
+      if (!loc) return;
+      body.querySelectorAll('tr').forEach(other => {
+        if (other === tr || fieldVal(other, '檢測類別') !== '振動' || fieldVal(other, locField) !== loc) return;
+        const target = fieldEl(other, key);
+        if (!target) return;
+        const cur = String(target.value ?? '').trim();
+        if (cur !== '' && cur !== prev) return; // 振動那一列已經是不同的值 → 不覆蓋
+        target.value = el.value;
+        target.dataset.prev = target.value;
+      });
+    };
+    body.addEventListener('input', mirrorNoiseCoordToVib);
+    body.addEventListener('change', mirrorNoiseCoordToVib);
+  }
 
   document.getElementById('smartImportSkipped').textContent =
     [result.skippedSheets.length ? `略過 ${result.skippedSheets.length} 個無法辨識的工作表：${result.skippedSheets.join('、')}` : '',
@@ -5415,7 +5462,8 @@ function itemIdentityKey(row, cat) {
  *  result (never null/undefined) — clearing the value to blank must also clear a
  *  stale comparison symbol left over from before, not leave one behind. */
 function deriveComparisonRelation(rawValue) {
-  const s = String(rawValue ?? '').trim();
+  // v4.47（#49②）：≦≤→<、≧≥→>、千分位逗號，和判讀報告那一條（parseValueCell）一致
+  const s = normalizeValueSymbols(rawValue);
   if (s === '') return { cmp: '', val: '', note: '' };
   // ND: 比較關係="ND", 檢測數值 stays BLANK — same rule as SmartParse.parseValueCell.
   if (/^ND$/i.test(s)) return { cmp: 'ND', val: '', note: '' };
@@ -5529,13 +5577,27 @@ function liveItemMemory(projectId, catKey) {
   return memory;
 }
 
-/** 測站名稱對照：只套用「對到的地點目前表格裡還有」的那幾筆（地點的資料刪光了，對照也不再套用）。 */
+/**
+ * 測站名稱對照：只套用「對到的地點目前表格裡還有」的那幾筆（地點的資料刪光了，對照也不再套用）。
+ *
+ * v4.47（#52）：對照另外記下是**哪一季的匯入**存的（_period）。那一季的資料整個刪掉了，
+ * 那次匯入時勾「記住此設定」留下的對照（含當時改過的座標等欄位）也一起失效。
+ * 情境：115Q2 在，匯入 115Q3 時記住了一筆對照，之後刪掉這份 115Q3、重新匯入另一份 115Q3
+ * ——刪掉的那份不能影響重新匯入的判讀。v4.46 以前存的對照沒有記期別，v4.48 起一律不套用（#53）。
+ */
 function liveSiteAliases(projectId, catKey) {
   const cat = CATEGORIES[catKey];
-  const locs = new Set(DataStore.getData(projectId, catKey).map(r => r[cat.locationField]).filter(Boolean));
+  const rows = DataStore.getData(projectId, catKey);
+  const locs = new Set(rows.map(r => r[cat.locationField]).filter(Boolean));
+  const periods = new Set(rows.map(r => r._period || ''));
   const out = {};
   Object.entries(DataStore.getSiteAliases(projectId, catKey)).forEach(([k, v]) => {
-    if (v && typeof v === 'object' && v[cat.locationField] && locs.has(v[cat.locationField])) out[k] = v;
+    if (!v || typeof v !== 'object' || !v[cat.locationField] || !locs.has(v[cat.locationField])) return;
+    // v4.48（#53，使用者裁示）：v4.46 以前存的對照沒有記期別，無法判斷是不是來自已刪掉的匯入——
+    // 一律不再套用（下次存檔時順便清掉），下次匯入時在測站表重新勾一次「記住此設定」即可。
+    if (!Object.prototype.hasOwnProperty.call(v, '_period')) return;
+    if (v._period && !periods.has(v._period)) return;
+    out[k] = v;
   });
   return out;
 }
@@ -5926,7 +5988,8 @@ function confirmSmartImport() {
     });
     const remember = tr.querySelector('[data-site-remember]').checked;
     const aliasKey = siteAliasKey(site, result, cat);
-    if (remember) savedAliases[aliasKey] = overrides;
+    // v4.47（#52）：記下是哪一季的匯入存的，那一季的資料刪光了這筆對照就失效（見 liveSiteAliases）
+    if (remember) savedAliases[aliasKey] = { ...overrides, _period: (state.importPeriod || '').trim() };
     else delete savedAliases[aliasKey];
 
     /*
@@ -6198,6 +6261,7 @@ DataStore.onStorageError = (err) => {
 function init() {
   // v4.46：清掉舊的只增不減帳本、把共用設定分給各計畫（#29～#34）。失敗也不能擋住整個畫面
   try { DataStore.migrateV446(); } catch (e) { console.error(e); }
+  try { DataStore.migrateV448(); } catch (e) { console.error(e); }
   document.getElementById('versionBadge').addEventListener('click', openChangelogModal);
   document.getElementById('btnChangelogClose').addEventListener('click', () => document.getElementById('changelogModal').classList.add('hidden'));
 

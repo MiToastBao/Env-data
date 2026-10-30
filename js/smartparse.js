@@ -513,13 +513,16 @@ const SmartParse = {
     // fall through as literal text, which left 比較關係 empty, put non-numeric text
     // in 檢測數值, AND suppressed the detection limit (limitApplies never became
     // true). Normalize once, up front.
-    const s = String(raw ?? '').trim()
+    const s0 = String(raw ?? '').trim()
       .replace(/[＜﹤〈]/g, '<').replace(/[＞﹥〉]/g, '>')
       .replace(/[Ｎｎ]/g, 'N').replace(/[Ｄｄ]/g, 'D').replace(/[Ａａ]/g, 'A')
       .replace(/／/g, '/').replace(/（/g, '(').replace(/）/g, ')')
       .replace(/[０-９]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
       .replace(/[．]/g, '.')
       .trim();
+    // v4.47（#49②，使用者同意）：≦≤ 視為 <、≧≥ 視為 >、去掉千分位逗號（100,000 → 100000）。
+    // 只做不會猜錯的轉換；規則放在 schema.js 的 normalizeValueSymbols，手動輸入那一條也共用。
+    const s = normalizeValueSymbols(s0);
     if (s === '') return { cmp: '', val: '', note: '' };
     // ND: 比較關係 filled, 檢測數值 stays BLANK — "ND" is not itself a measured
     // value, so it has no business sitting in the value field once 比較關係

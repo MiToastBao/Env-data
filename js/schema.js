@@ -754,6 +754,86 @@ function ecoFormatViolations(row) {
   return out;
 }
 
+/*
+ * 數值、比較關係、代碼的格式規則（v4.47，修正清單 #48、#49、#51）
+ * ─────────────────────────────────────────────────────────────
+ * 使用者的原則：**程式自己判讀的值不能填錯**；使用者自己在格子裡打的值，
+ * 用格子變色提醒就好。這一組就是「變色提醒」那一半——判讀出來的值本來就
+ * 符合（10 份化驗 Excel 實測 409 筆零異常），會被它標出來的只會是手動打的、
+ * 別家公司交來的、或報告寫法真的認不得而原樣帶進來的。
+ */
+const COMPARE_ALLOWED = new Set(['<', '>', 'ND', '＜', '＞']); // 辭典原文用全形「＞、＜」，說明會用半形，兩種都收
+const PLAIN_DECIMAL = /^[+-]?(\d+(\.\d+)?|\.\d+)$/;
+
+/**
+ * 判讀前把「不會猜錯」的寫法統一（v4.47 #49②，使用者同意）：
+ *   ≦ ≤ → <　　≧ ≥ → >　　千分位逗號 100,000 → 100000
+ * 只處理逗號真的落在千分位上的寫法（1,234 / 12,345.6），1,2 這種不動——那不是千分位。
+ */
+function normalizeValueSymbols(raw) {
+  let s = String(raw ?? '').trim().replace(/[≦≤]/g, '<').replace(/[≧≥]/g, '>');
+  const m = s.match(/^([<>＜＞]?\s*)(\d{1,3}(?:,\d{3})+(?:\.\d+)?)$/);
+  if (m) s = m[1] + m[2].replace(/,/g, '');
+  return s;
+}
+
+function valueAndCodeViolations(row, cat) {
+  const out = [];
+  const has = (k) => cat.fields.some((f) => f.key === k);
+  // #48 比較關係：辭典「含 ＞、＜、ND，共3種」
+  if (has('比較關係')) {
+    const c = String(row['比較關係'] ?? '').trim();
+    if (c !== '' && !COMPARE_ALLOWED.has(c)) {
+      out.push({ key: '比較關係', label: '比較關係', value: c,
+        why: `官方規定「比較關係」只能填 <、>、ND 三種（目前是「${c}」）。沒有數值的原因請寫在備註` });
+    }
+  }
+  // #49① 檢測數值／監測數值
+  const vf = has('檢測數值') ? '檢測數值' : has('監測數值') ? '監測數值' : null;
+  if (vf) {
+    const v = String(row[vf] ?? '').trim();
+    if (v !== '') {
+      if (!PLAIN_DECIMAL.test(v)) {
+        out.push({ key: vf, label: vf, value: v,
+          why: `「${vf}」只能填數字，不可以有符號、括號、單位或文字（目前是「${v}」）`
+            + (has('比較關係') ? `。「<0.1」請拆成比較關係「<」＋數值「0.1」；ND 請寫在比較關係、數值留空` : '') });
+      } else {
+        const n = Number(v);
+        if ((cat.key === 'air' || cat.key === 'geo') && !(n > 0)) {
+          out.push({ key: vf, label: vf, value: v,
+            why: `官方規定${cat.label}的「${vf}」要填大於 0 的數字（目前是「${v}」）` });
+        } else if (cat.key === 'water' && n === 0) {
+          out.push({ key: vf, label: vf, value: v,
+            why: `官方規定水質的「${vf}」勿輸入 0（正負皆可）（目前是「${v}」）。量不到請寫 ND，或留空並在備註寫原因` });
+        }
+      }
+    }
+  }
+  // #51 單位代碼：1～161
+  if (cat.unitField && typeof UNIT_CODES !== 'undefined') {
+    const u = String(row[cat.unitField] ?? '').trim();
+    if (u !== '' && !UNIT_CODES[u]) {
+      out.push({ key: cat.unitField, label: cat.unitField, value: u,
+        why: `「${cat.unitField}」要填單位代碼表裡的代碼 1～161（目前是「${u}」，代碼表裡沒有）` });
+    }
+  }
+  // #51 檢測機構許可證號：代碼表內的代碼或 AA，多個用半形分號
+  if (has('檢測機構許可證號') && typeof AGENCY_CODES !== 'undefined') {
+    const a = String(row['檢測機構許可證號'] ?? '').trim();
+    if (a !== '') {
+      const bad = a.split(';').map((x) => x.trim()).filter((x) => !AGENCY_CODES[x]);
+      if (bad.length) {
+        const full = /[；，,、]/.test(a);
+        out.push({ key: '檢測機構許可證號', label: '檢測機構許可證號', value: a,
+          why: full
+            ? `多個機構代碼要用半形分號「;」分隔，例如 1;2（目前是「${a}」）`
+            : `「檢測機構許可證號」要填檢測機構代碼表裡的代碼，不在表內的機構填 AA 並在「其他檢測機構名稱」寫公司名稱（目前「${bad.filter(Boolean).join('、') || '空的分段'}」代碼表裡沒有）` });
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * 這一列有哪些格子不符合官方格式規定。
  * 給表格紅框、滑鼠提示、匯出前清點共用。
@@ -763,6 +843,7 @@ function fieldFormatViolations(row, cat) {
   const out = coordViolations(row, cat);
   out.push(...charLimitViolations(row, cat));
   if (cat.key === 'eco') out.push(...ecoFormatViolations(row));
+  out.push(...valueAndCodeViolations(row, cat));
   return out;
 }
 
@@ -855,6 +936,13 @@ function missingRequiredFields(row, cat) {
    * 需填寫檢測數值未填的原因」。生態的「檢測數值」就是「數量」，
    * 而辭典 22 說沒有數字的時候填「-」——所以填了「-」＝沒有數值，備註就必填。
    */
+  /*
+   * v4.47（#50）：辭典 噪音-19 備註「依據噪音管制法第15條第3項時，環境音量標準為必填」。
+   * 判讀報告時程式不會自動填這個管制標準，所以只會發生在使用者手動選的時候。
+   */
+  if (cat.key === 'noise' && String(row['管制標準'] ?? '').trim() === '噪音管制法第15條第3項' && blank('環境音量標準')) {
+    out.push({ key: '環境音量標準', label: '環境音量標準', why: '必填（管制標準選「噪音管制法第15條第3項」時，官方規定環境音量標準為必填）' });
+  }
   if (cat.key === 'eco' && String(row['數量'] ?? '').trim() === '-' && blank('備註')) {
     out.push({ key: '備註', label: '備註', why: '「數量」填「-」時必填，請說明沒有數值的原因' });
   }

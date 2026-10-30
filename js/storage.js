@@ -108,6 +108,25 @@ const DataStore = {
    *     （以前每個計畫都看得到同一份，複製後各計畫看到的和以前一樣，之後各改各的），
    *     然後刪掉共用的那一份。
    */
+  /**
+   * v4.48（#53，使用者裁示）一次性清理（冪等）：v4.46 以前存的「記住此設定」測站對照沒有記是哪一季存的，
+   * 無法判斷是不是來自已經刪掉的匯入，一律清掉；下次匯入時在測站表重新勾一次即可。
+   * v4.47 起存的對照帶 _period，不受影響。
+   */
+  migrateV448() {
+    this.getProjects().forEach(p => {
+      CATEGORY_ORDER.forEach(c => {
+        const all = this.getSiteAliases(p.id, c);
+        const keep = {};
+        let dropped = 0;
+        Object.entries(all || {}).forEach(([k, v]) => {
+          if (v && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v, '_period')) keep[k] = v; else dropped++;
+        });
+        if (dropped) this.saveSiteAliases(p.id, c, keep);
+      });
+    });
+  },
+
   migrateV446() {
     const projects = this.getProjects();
     const legacyDecimal = localStorage.getItem(DECIMAL_SETTINGS_KEY);
