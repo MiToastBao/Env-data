@@ -3,9 +3,18 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.48';
+const APP_VERSION = 'v4.49';
 
 const CHANGELOG = [
+  {
+    version: 'v4.49',
+    date: '2026-11-03',
+    notes: [
+      '【修正】<strong>匯入官方格式的檔案時，非本期資料真的不會匯入了。</strong>匯入上一季完成版、別家交來的填好檔這類官方格式檔案時，畫面寫「不屬於本期的 N 筆已預設取消勾選、不會匯入」，實際卻全部勾著、按確認就整批寫進去，而且被標成本期。現在和匯入檢測報告一樣預設不勾，確認按鈕上的筆數也跟著扣掉（空品、水質、地質、噪音、生態都適用）。',
+      '【修正】改了期別之後，「橫跨不同期別」與「這個期別先前已經有資料」兩則提示會跟著更新，不再停在原本的期別與筆數。',
+      '【修正】「詳細資料列表」搜尋日期時，照畫面上的寫法（2026/03/30）也找得到；以前只認 2026-03-30。',
+    ],
+  },
   {
     version: 'v4.48',
     date: '2026-10-30',

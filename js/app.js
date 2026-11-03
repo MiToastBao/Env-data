@@ -250,26 +250,36 @@ function renderPeriodPicker(containerId, rows, onPeriodChange) {
     if (p) periodCounts[p] = (periodCounts[p] || 0) + 1;
   });
   const periodEntries = Object.entries(periodCounts).sort((a, b) => b[1] - a[1]);
-  const target = normalizePeriodShorthand(state.importPeriod || '').trim();
-  const offCount = periodEntries.filter(([p]) => p !== target).reduce((n, [, c]) => n + c, 0);
-  const outlierWarning = periodEntries.length > 1
-    ? `⚠️ 偵測到本次資料的採樣日期橫跨不同期別：${periodEntries.map(([p, c]) => `${escapeHtml(p)}（${c}筆）`).join('、')}。`
-      + (offCount > 0
-        ? `<br><strong>不屬於「${escapeHtml(target)}」的 ${offCount} 筆已經預設取消勾選、不會匯入</strong>（常見原因是報告裡夾帶了沒刪乾淨的舊工作表或參考值）。資料仍然列在下方「詳細資料列表」，確定要送的話展開勾回來即可。`
-        : `如果其中有不屬於本次要送件季度的資料（例如報告裡夾帶的舊資料或參考值），建議到下方「詳細資料列表」展開後取消勾選排除，避免誤送。`)
-    : '';
+  /*
+   * v4.49（#58）：兩則提示都跟「目前選的期別」有關，改期別後要跟著重寫——
+   * 以前只在第一次畫的時候算，改成 115年第1季 之後，畫面還寫著「不屬於 115年第3季 的 N 筆…」。
+   * 只重寫提示那一塊，不重畫輸入框（使用者可能還在打字）。
+   */
+  const buildWarningsHTML = () => {
+    const target = normalizePeriodShorthand(state.importPeriod || '').trim();
+    const offCount = periodEntries.filter(([p]) => p !== target).reduce((n, [, c]) => n + c, 0);
+    const outlierWarning = periodEntries.length > 1
+      ? `⚠️ 偵測到本次資料的採樣日期橫跨不同期別：${periodEntries.map(([p, c]) => `${escapeHtml(p)}（${c}筆）`).join('、')}。`
+        + (offCount > 0
+          ? `<br><strong>不屬於「${escapeHtml(target)}」的 ${offCount} 筆已經預設取消勾選、不會匯入</strong>（常見原因是報告裡夾帶了沒刪乾淨的舊工作表或參考值）。資料仍然列在下方「詳細資料列表」，確定要送的話展開勾回來即可。`
+          : `如果其中有不屬於本次要送件季度的資料（例如報告裡夾帶的舊資料或參考值），建議到下方「詳細資料列表」展開後取消勾選排除，避免誤送。`)
+      : '';
 
-  // Warn (not block) when the entered/guessed period already has data in this
-  // category — likely a corrected re-import of the same quarter's file. The actual
-  // per-row diff-and-choose-which-version handling already happens automatically
-  // via the conflict-resolution step after confirming, so this is just visibility:
-  // the person doesn't have to guess that re-importing will behave sensibly.
-  const project = getImportProject();
-  const catKey = state.importCatKey;
-  let duplicateWarning = '';
-  if (project && catKey && state.importPeriod && getKnownPeriods(project, catKey).includes(state.importPeriod)) {
-    duplicateWarning = `ℹ️ 「${escapeHtml(state.importPeriod)}」這個期別先前已經有資料了。若這是同一期的修正版，請放心繼續匯入——確認時系統會自動比對每一筆的差異，列出讓您選擇要保留哪個版本；若只是重複匯入同一份原始檔案，內容完全相同的部分會自動忽略，不會產生重複資料。`;
-  }
+    // Warn (not block) when the entered/guessed period already has data in this
+    // category — likely a corrected re-import of the same quarter's file. The actual
+    // per-row diff-and-choose-which-version handling already happens automatically
+    // via the conflict-resolution step after confirming, so this is just visibility:
+    // the person doesn't have to guess that re-importing will behave sensibly.
+    const project = getImportProject();
+    const catKey = state.importCatKey;
+    let duplicateWarning = '';
+    if (project && catKey && state.importPeriod && getKnownPeriods(project, catKey).includes(state.importPeriod)) {
+      duplicateWarning = `ℹ️ 「${escapeHtml(state.importPeriod)}」這個期別先前已經有資料了。若這是同一期的修正版，請放心繼續匯入——確認時系統會自動比對每一筆的差異，列出讓您選擇要保留哪個版本；若只是重複匯入同一份原始檔案，內容完全相同的部分會自動忽略，不會產生重複資料。`;
+    }
+
+    return (outlierWarning ? `<div class="warning" style="width:100%;margin-top:8px">${outlierWarning}</div>` : '')
+      + (duplicateWarning ? `<div class="warning" style="width:100%;margin-top:8px;background:#e8f0fe;border-color:#a8c7fa">${duplicateWarning}</div>` : '');
+  };
 
   const parsed = parsePeriodString(normalizePeriodShorthand(state.importPeriod)) || {};
 
@@ -289,8 +299,7 @@ function renderPeriodPicker(containerId, rows, onPeriodChange) {
       <input type="text" id="importPeriodInput" value="${escapeAttr(state.importPeriod)}" placeholder="例：115年第1季 或 115Q1" style="width:160px">
     </label>
     <span class="hint">${guess ? `系統依照資料中的採樣日期猜測為「${escapeHtml(guess)}」，如不正確請直接修改。` : '系統無法從資料中判斷期別，請填上方民國年+季別，或直接輸入文字（含 115Q1 這種簡寫）。'}</span>
-    ${outlierWarning ? `<div class="warning" style="width:100%;margin-top:8px">${outlierWarning}</div>` : ''}
-    ${duplicateWarning ? `<div class="warning" style="width:100%;margin-top:8px;background:#e8f0fe;border-color:#a8c7fa">${duplicateWarning}</div>` : ''}
+    <div class="period-warnings" style="width:100%">${buildWarningsHTML()}</div>
   `;
 
   const yearInput = document.getElementById('periodRocYearInput');
@@ -298,7 +307,11 @@ function renderPeriodPicker(containerId, rows, onPeriodChange) {
   const textInput = document.getElementById('importPeriodInput');
 
   // 改了期別就要重算「哪些列不屬於這一期」，否則畫面上的排除是照舊期別算的。
-  const notifyPeriodChanged = () => { if (onPeriodChange) onPeriodChange(); };
+  const notifyPeriodChanged = () => {
+    if (onPeriodChange) onPeriodChange();
+    const warnEl = container.querySelector('.period-warnings');
+    if (warnEl) warnEl.innerHTML = buildWarningsHTML();
+  };
 
   const applyFromDropdown = () => {
     if (yearInput.value && quarterInput.value) {
@@ -4061,6 +4074,7 @@ function filterRowsBySelection(rows, itemField) {
  * Shows whatever the item checklist currently leaves in (so it doesn't duplicate
  * rows already excluded that way), collapsed by default since it can be long.
  */
+// v4.49（#59）：搜尋也比對畫面上顯示的日期寫法（2026/03/30），以前只認存檔的 2026-03-30，照著畫面打搜不到。
 function renderRowDetailTable(containerEl, rows, cat, onChange) {
   if (!state.excludedRowIndices) state.excludedRowIndices = new Set();
   if (!state.rowDetailColumnFilters) state.rowDetailColumnFilters = {}; // { loc: Set, item: Set }
@@ -4097,7 +4111,7 @@ function renderRowDetailTable(containerEl, rows, cat, onChange) {
           </tr></thead>
           <tbody id="rowDetailTbody">
             ${rows.map(r => `
-              <tr data-search-text="${escapeAttr([r[locField], r[itemField], r['日期(起)'], r['時間(起)'], r[valueField]].filter(Boolean).join(' ').toLowerCase())}" data-loc-value="${escapeAttr(r[locField] || '')}" data-item-value="${escapeAttr(r[itemField] || '')}">
+              <tr data-search-text="${escapeAttr([r[locField], r[itemField], r['日期(起)'], toDateDisplayValue(r['日期(起)']), r['時間(起)'], r[valueField]].filter(Boolean).join(' ').toLowerCase())}" data-loc-value="${escapeAttr(r[locField] || '')}" data-item-value="${escapeAttr(r[itemField] || '')}">
                 <td>${checkboxHTML(` class="row-detail-check" data-row-uid="${r._rowUid}"`, !state.excludedRowIndices.has(r._rowUid))}</td>
                 <td>${escapeHtml(r[locField] || '')}</td>
                 <td>${escapeHtml(r[itemField] || '')}</td>
@@ -4623,6 +4637,9 @@ function renderMappingStep() {
   const { headers, rows } = state.importParsed;
   const mapping = ImportEngine.suggestMapping(headers, cat.fields);
   state.excludedRowIndices = new Set();
+  // v4.49（#57）：這條路徑以前沒有「非本期預設不勾」——提示寫已取消勾選，實際全部照樣匯入。
+  state.autoExcludedByPeriod = new Set();
+  state.manualRowChoices = new Set();
 
   const tbody = document.getElementById('mappingTableBody');
   tbody.innerHTML = cat.fields.map(f => {
@@ -4704,10 +4721,20 @@ function renderMappingStep() {
   if (itemSel) itemSel.addEventListener('change', refreshGenericItemChecklist);
 
   const dateSel = tbody.querySelector(`select[data-target-field="日期(起)"]`);
+  /*
+   * v4.49（#57）：和報告判讀那條路徑一樣——採樣日期不屬於本期的列預設不勾（applyPeriodExclusions）。
+   * 以前這裡只畫了期別選單與提示，提示說「已預設取消勾選、不會匯入」，
+   * 但沒有真的排除，確認匯入時照樣全部寫進去、而且被標成本期。
+   * _rowUid 用列的順序，和 refreshGenericRowDetail、confirmImport 的編號一致。
+   */
   const refreshPeriodPicker = () => {
     const mappedHeader = dateSel ? dateSel.value : '';
-    const shimRows = mappedHeader ? rows.map(r => ({ '日期(起)': normalizeDateString(r[mappedHeader]) })) : [];
-    renderPeriodPicker('genericPeriodWrap', shimRows);
+    const shimRows = mappedHeader ? rows.map((r, i) => ({ '日期(起)': normalizeDateString(r[mappedHeader]), _rowUid: i })) : [];
+    const onPeriodChanged = () => { applyPeriodExclusions(shimRows); refreshGenericRowDetail(); };
+    renderPeriodPicker('genericPeriodWrap', shimRows, onPeriodChanged); // 先定下 state.importPeriod
+    applyPeriodExclusions(shimRows);                                     // 再算哪些列不屬於這一期
+    renderPeriodPicker('genericPeriodWrap', shimRows, onPeriodChanged); // 重畫，讓提示講得出「已排除幾筆」
+    refreshGenericRowDetail();                                           // 勾選、筆數跟著更新
   };
   refreshPeriodPicker();
   if (dateSel) dateSel.addEventListener('change', refreshPeriodPicker);
