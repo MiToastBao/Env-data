@@ -261,7 +261,7 @@ function renderPeriodPicker(containerId, rows, onPeriodChange) {
     const outlierWarning = periodEntries.length > 1
       ? `⚠️ 偵測到本次資料的採樣日期橫跨不同期別：${periodEntries.map(([p, c]) => `${escapeHtml(p)}（${c}筆）`).join('、')}。`
         + (offCount > 0
-          ? `<br><strong>不屬於「${escapeHtml(target)}」的 ${offCount} 筆已經預設取消勾選、不會匯入</strong>（常見原因是報告裡夾帶了沒刪乾淨的舊工作表或參考值）。資料仍然列在下方「詳細資料列表」，確定要送的話展開勾回來即可。`
+          ? `<br><strong>不屬於「${escapeHtml(target)}」的 ${offCount} 筆已經預設取消勾選、不會匯入</strong>（常見原因是報告裡夾帶了沒刪乾淨的舊工作表或參考值）。資料仍然列在下方「🗓 非本期資料・預設不匯入」那一區，確定要送的話展開勾回來即可。`
           : `如果其中有不屬於本次要送件季度的資料（例如報告裡夾帶的舊資料或參考值），建議到下方「詳細資料列表」展開後取消勾選排除，避免誤送。`)
       : '';
 
@@ -3915,6 +3915,26 @@ function confirmLimitBeforeExport(rows, cat) {
 // need a subset). Rather than hard-coding which items "belong" in a filing, the parser
 // extracts everything the report actually contains and this checklist lets the person
 // choose which ones to bring in.
+/**
+ * v4.50（#62，使用者要求）：測項後面括號裡的數字＝這個測項「實際會匯入」的筆數——
+ * 扣掉預設不匯入的非本期資料、在詳細資料列表裡取消勾選的列。以前是檔案裡的總筆數，
+ * 和確認按鈕上的數字對不起來。測項本身取消勾選時，它的列一筆都不會匯入，靠勾選框表示，數字不另外歸零。
+ */
+function refreshItemChecklistCounts(containerEl) {
+  if (!containerEl || !containerEl._itemCountRows) return;
+  const itemField = containerEl._itemCountField;
+  const excluded = state.excludedRowIndices || new Set();
+  const counts = {};
+  containerEl._itemCountRows.forEach(r => {
+    if (r._rowUid !== undefined && excluded.has(r._rowUid)) return;
+    const v = (r[itemField] || '').trim() || '（未標示）';
+    counts[v] = (counts[v] || 0) + 1;
+  });
+  containerEl.querySelectorAll('[data-item-count]').forEach(el => {
+    el.textContent = `(${counts[el.dataset.itemCount] || 0})`;
+  });
+}
+
 function renderItemChecklist(containerEl, rows, itemField, onChange) {
   const counts = {};
   // An item is PRIMARY unless every single row for it is marked secondary. Parsers
@@ -3943,7 +3963,7 @@ function renderItemChecklist(containerEl, rows, itemField, onChange) {
   const checkboxFor = (item) => `
     <label class="item-check">
       <input type="checkbox" data-item-check value="${escapeAttr(item)}" ${state.itemSelection.has(item) ? 'checked' : ''}>
-      ${escapeHtml(item)} <span class="hint">(${counts[item]})</span>
+      ${escapeHtml(item)} <span class="hint" data-item-count="${escapeAttr(item)}">(${counts[item]})</span>
     </label>`;
   const extraCount = extraItems.reduce((n, i) => n + counts[i], 0);
   const wasOpen = containerEl.querySelector('.extra-items-toggle')?.open;
@@ -3969,6 +3989,9 @@ function renderItemChecklist(containerEl, rows, itemField, onChange) {
       </div>
     </details>`}
   `;
+  containerEl._itemCountRows = rows;
+  containerEl._itemCountField = itemField;
+  refreshItemChecklistCounts(containerEl);
   containerEl.querySelectorAll('[data-item-check]').forEach(cb => {
     cb.addEventListener('change', () => {
       if (cb.checked) state.itemSelection.add(cb.value); else state.itemSelection.delete(cb.value);
@@ -4075,42 +4098,71 @@ function filterRowsBySelection(rows, itemField) {
  * rows already excluded that way), collapsed by default since it can be long.
  */
 // v4.49（#59）：搜尋也比對畫面上顯示的日期寫法（2026/03/30），以前只認存檔的 2026-03-30，照著畫面打搜不到。
+/*
+ * v4.50（#63，使用者要求）：分成兩區——
+ *   ・「本期資料」：採樣日期屬於本次期別（或判斷不出期別）的列；
+ *   ・「非本期資料・預設不匯入」：採樣日期屬於別的期別的列，預設收合、預設不勾。
+ * 最上面一行直接寫「本次匯入 Y 筆、不匯入 N 筆（列表共 T 筆）」，兩區標題也各自寫出匯入／不匯入幾筆，
+ * 勾選或取消時當場更新（不重畫，展開狀態與捲動位置都留著）。
+ * 在「非本期」那區勾選的列，就是要匯入的列——和本期那區一樣走 excludedRowIndices，確認時正常匯入。
+ * 一列只會出現在其中一區，所以兩區的數字加起來就是總數。
+ */
 function renderRowDetailTable(containerEl, rows, cat, onChange) {
   if (!state.excludedRowIndices) state.excludedRowIndices = new Set();
-  if (!state.rowDetailColumnFilters) state.rowDetailColumnFilters = {}; // { loc: Set, item: Set }
+  if (!state.rowDetailColumnFilters) state.rowDetailColumnFilters = {}; // 本期區 { loc: Set, item: Set }
+  if (!state.rowDetailColumnFiltersOff) state.rowDetailColumnFiltersOff = {}; // 非本期區，各自一份
   if (rows.length === 0) { containerEl.innerHTML = ''; return; }
   const locField = cat.locationField;
   const itemField = cat.itemField;
   const valueField = cat.fields.find(f => ['檢測數值', '監測數值'].includes(f.key))?.key || '';
   const valueLabel = cat.fields.find(f => f.key === valueField)?.label || '數值';
-  const locFilterActive = state.rowDetailColumnFilters.loc && state.rowDetailColumnFilters.loc.size > 0;
-  const itemFilterActive = state.rowDetailColumnFilters.item && state.rowDetailColumnFilters.item.size > 0;
 
-  const wasOpen = containerEl.querySelector('details')?.open;
-  containerEl.innerHTML = `
-    <details class="row-detail-toggle" ${wasOpen ? 'open' : ''}>
-      <summary>📋 詳細資料列表（可個別排除不匯入的資料，共 ${rows.length} 筆）</summary>
+  // 哪些列不屬於本次期別：和 applyPeriodExclusions 用同一個判斷（判斷不出期別的列算本期區）
+  const target = normalizePeriodShorthand(state.importPeriod || '').trim();
+  const isOff = (r) => {
+    if (!target) return false;
+    const own = guessPeriodFromRows([r]);
+    return !!own && own !== target;
+  };
+  const mainRows = rows.filter(r => !isOff(r));
+  const offRows = rows.filter(isOff);
+
+  const prevMainOpen = containerEl.querySelector('details[data-block="main"]')?.open;
+  const prevOffOpen = containerEl.querySelector('details[data-block="off"]')?.open;
+
+  const countIn = (list) => list.filter(r => !state.excludedRowIndices.has(r._rowUid)).length;
+  const blockHTML = (key, list, open, filters) => {
+    const sfx = key === 'main' ? '' : 'Off';
+    const locActive = filters.loc && filters.loc.size > 0;
+    const itemActive = filters.item && filters.item.size > 0;
+    const offHint = key === 'off'
+      ? `<p class="hint" style="margin:6px 0">這些列的採樣日期不屬於「${escapeHtml(target)}」，預設不匯入。要一起送的話在這裡勾選，確認後就會正常匯入（期別會標成上面選的「${escapeHtml(target)}」）。</p>`
+      : '';
+    return `
+    <details class="row-detail-toggle" data-block="${key}" ${open ? 'open' : ''}>
+      <summary data-block-summary="${key}"></summary>
+      ${offHint}
       <div style="display:flex;gap:8px;align-items:center;margin:8px 0;flex-wrap:wrap">
-        <input type="text" id="rowDetailSearchInput" placeholder="🔍 搜尋地點、測項等關鍵字，快速篩選" style="flex:1;min-width:200px;max-width:360px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-family:inherit;font-size:13px">
-        <button type="button" id="rowDetailSelectAllVisible" class="btn btn-ghost btn-sm">勾選目前顯示的</button>
-        <button type="button" id="rowDetailClearAllVisible" class="btn btn-ghost btn-sm">取消勾選目前顯示的</button>
+        <input type="text" id="rowDetailSearchInput${sfx}" placeholder="🔍 搜尋地點、測項、日期等關鍵字，快速篩選" style="flex:1;min-width:200px;max-width:360px;padding:6px 9px;border:1px solid var(--border);border-radius:5px;font-family:inherit;font-size:13px">
+        <button type="button" id="rowDetailSelectAllVisible${sfx}" class="btn btn-ghost btn-sm">勾選目前顯示的</button>
+        <button type="button" id="rowDetailClearAllVisible${sfx}" class="btn btn-ghost btn-sm">取消勾選目前顯示的</button>
       </div>
       <div class="mapping-table-wrap" style="max-height:320px">
         <table class="mapping-table">
           <thead><tr>
-            <th>${checkboxHTML(' id="rowDetailCheckAll"', true)}</th>
+            <th>${checkboxHTML(` id="rowDetailCheckAll${sfx}"`, true)}</th>
             <th>
               <span class="th-label">地點</span>
-              <button type="button" class="col-filter-btn${locFilterActive ? ' col-filter-active' : ''}" data-row-detail-field="loc" title="篩選地點">▾</button>
+              <button type="button" class="col-filter-btn${locActive ? ' col-filter-active' : ''}" data-row-detail-field="loc" title="篩選地點">▾</button>
             </th>
             <th>
               <span class="th-label">測項</span>
-              <button type="button" class="col-filter-btn${itemFilterActive ? ' col-filter-active' : ''}" data-row-detail-field="item" title="篩選測項">▾</button>
+              <button type="button" class="col-filter-btn${itemActive ? ' col-filter-active' : ''}" data-row-detail-field="item" title="篩選測項">▾</button>
             </th>
             <th>日期</th><th>時間</th><th>${escapeHtml(valueLabel)}</th>
           </tr></thead>
-          <tbody id="rowDetailTbody">
-            ${rows.map(r => `
+          <tbody id="rowDetailTbody${sfx}">
+            ${list.map(r => `
               <tr data-search-text="${escapeAttr([r[locField], r[itemField], r['日期(起)'], toDateDisplayValue(r['日期(起)']), r['時間(起)'], r[valueField]].filter(Boolean).join(' ').toLowerCase())}" data-loc-value="${escapeAttr(r[locField] || '')}" data-item-value="${escapeAttr(r[itemField] || '')}">
                 <td>${checkboxHTML(` class="row-detail-check" data-row-uid="${r._rowUid}"`, !state.excludedRowIndices.has(r._rowUid))}</td>
                 <td>${escapeHtml(r[locField] || '')}</td>
@@ -4123,91 +4175,111 @@ function renderRowDetailTable(containerEl, rows, cat, onChange) {
           </tbody>
         </table>
       </div>
-    </details>
-  `;
-  const checkAll = containerEl.querySelector('#rowDetailCheckAll');
-  const getRowChecks = () => [...containerEl.querySelectorAll('.row-detail-check')];
-  const getVisibleRowChecks = () => getRowChecks().filter(cb => !cb.closest('tr').classList.contains('row-hidden'));
-  const syncCheckAllState = () => {
-    const visible = getVisibleRowChecks();
-    checkAll.checked = visible.length > 0 && visible.every(cb => cb.checked);
+    </details>`;
   };
+
+  containerEl.innerHTML = `
+    <div class="row-detail-summary" style="margin:4px 0 6px;font-weight:600"></div>
+    ${mainRows.length ? blockHTML('main', mainRows, prevMainOpen, state.rowDetailColumnFilters) : ''}
+    ${offRows.length ? blockHTML('off', offRows, prevOffOpen, state.rowDetailColumnFiltersOff) : ''}
+  `;
+
+  // 數字一律從勾選狀態現算：最上面一行＋兩區標題
+  const updateSummaries = () => {
+    const inAll = countIn(rows);
+    const sumEl = containerEl.querySelector('.row-detail-summary');
+    if (sumEl) sumEl.textContent = `本次匯入 ${inAll} 筆、不匯入 ${rows.length - inAll} 筆（列表共 ${rows.length} 筆）`;
+    const m = containerEl.querySelector('[data-block-summary="main"]');
+    if (m) {
+      const n = countIn(mainRows);
+      m.textContent = offRows.length
+        ? `📋 本期資料（匯入 ${n} 筆、不匯入 ${mainRows.length - n} 筆，共 ${mainRows.length} 筆）`
+        : `📋 詳細資料列表（可個別排除不匯入的資料，匯入 ${n} 筆、不匯入 ${mainRows.length - n} 筆，共 ${mainRows.length} 筆）`;
+    }
+    const o = containerEl.querySelector('[data-block-summary="off"]');
+    if (o) {
+      const n = countIn(offRows);
+      o.textContent = `🗓 非本期資料・預設不匯入（不匯入 ${offRows.length - n} 筆、勾選要匯入 ${n} 筆，共 ${offRows.length} 筆）`;
+    }
+  };
+
   // The caller passes a callback that refreshes the confirm button, the summary line
-  // and the per-site counts. It used to be declared away (the function took only
-  // three parameters), so unticking rows here changed what would be imported while
-  // every number on screen kept claiming the original count — the wrong number in the
-  // unsafe direction, shown at the exact moment the person checks their exclusions.
-  const notifyChanged = () => { syncCheckAllState(); if (onChange) onChange(); };
-  getRowChecks().forEach(cb => {
-    cb.addEventListener('change', () => {
-      const uid = Number(cb.dataset.rowUid);
-      if (cb.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
-      // 使用者自己動過的勾選永遠優先：從自動排除名單移除，之後改期別也不會再被蓋掉
-      if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(uid);
-      if (state.manualRowChoices) state.manualRowChoices.add(uid);
+  // and the per-site counts. Unticking rows here must update every number on screen.
+  const markChoice = (uid, include) => {
+    if (include) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
+    // 使用者自己動過的勾選永遠優先：從自動排除名單移除，之後改期別也不會再被蓋掉
+    if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(uid);
+    if (state.manualRowChoices) state.manualRowChoices.add(uid);
+  };
+
+  const wireBlock = (key, list, filterStoreKey) => {
+    const block = containerEl.querySelector(`details[data-block="${key}"]`);
+    if (!block) return;
+    const sfx = key === 'main' ? '' : 'Off';
+    const checkAll = block.querySelector(`#rowDetailCheckAll${sfx}`);
+    const getRowChecks = () => [...block.querySelectorAll('.row-detail-check')];
+    const getVisibleRowChecks = () => getRowChecks().filter(cb => !cb.closest('tr').classList.contains('row-hidden'));
+    const syncCheckAllState = () => {
+      const visible = getVisibleRowChecks();
+      checkAll.checked = visible.length > 0 && visible.every(cb => cb.checked);
+    };
+    const notifyChanged = () => { syncCheckAllState(); updateSummaries(); if (onChange) onChange(); };
+    getRowChecks().forEach(cb => {
+      cb.addEventListener('change', () => { markChoice(Number(cb.dataset.rowUid), cb.checked); notifyChanged(); });
+    });
+    // "Select all" only ever affects rows currently visible under the search/column filter.
+    checkAll.addEventListener('change', () => {
+      getVisibleRowChecks().forEach(cb => { cb.checked = checkAll.checked; markChoice(Number(cb.dataset.rowUid), checkAll.checked); });
       notifyChanged();
     });
-  });
-  // "Select all" only ever affects rows currently visible under the search/column
-  // filter — same convention as the main data grid's search+select-all, so
-  // filtering down to a handful of rows and clicking select-all doesn't silently
-  // re-check hundreds of rows the person can't currently see.
-  checkAll.addEventListener('change', () => {
-    getVisibleRowChecks().forEach(cb => {
-      cb.checked = checkAll.checked;
-      const uid = Number(cb.dataset.rowUid);
-      if (checkAll.checked) state.excludedRowIndices.delete(uid); else state.excludedRowIndices.add(uid);
-      if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(uid);
-      if (state.manualRowChoices) state.manualRowChoices.add(uid);
+    block.querySelector(`#rowDetailSelectAllVisible${sfx}`).addEventListener('click', () => {
+      getVisibleRowChecks().forEach(cb => { cb.checked = true; markChoice(Number(cb.dataset.rowUid), true); });
+      notifyChanged();
     });
-    notifyChanged();
-  });
-  containerEl.querySelector('#rowDetailSelectAllVisible').addEventListener('click', () => {
-    getVisibleRowChecks().forEach(cb => { cb.checked = true; const u = Number(cb.dataset.rowUid); state.excludedRowIndices.delete(u); if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(u); if (state.manualRowChoices) state.manualRowChoices.add(u); });
-    notifyChanged();
-  });
-  containerEl.querySelector('#rowDetailClearAllVisible').addEventListener('click', () => {
-    getVisibleRowChecks().forEach(cb => { cb.checked = false; const u = Number(cb.dataset.rowUid); state.excludedRowIndices.add(u); if (state.autoExcludedByPeriod) state.autoExcludedByPeriod.delete(u); if (state.manualRowChoices) state.manualRowChoices.add(u); });
-    notifyChanged();
-  });
+    block.querySelector(`#rowDetailClearAllVisible${sfx}`).addEventListener('click', () => {
+      getVisibleRowChecks().forEach(cb => { cb.checked = false; markChoice(Number(cb.dataset.rowUid), false); });
+      notifyChanged();
+    });
 
-  // Combines the free-text search with any active column filters (地點/測項) — a
-  // row must satisfy all of them to stay visible, same AND logic as the main grid.
-  const applyAllFilters = () => {
-    const q = searchInput.value.trim().toLowerCase();
-    const locFilter = state.rowDetailColumnFilters.loc;
-    const itemFilter = state.rowDetailColumnFilters.item;
-    containerEl.querySelectorAll('#rowDetailTbody tr').forEach(tr => {
-      let matches = !q || tr.dataset.searchText.includes(q);
-      if (matches && locFilter && locFilter.size > 0) matches = locFilter.has(tr.dataset.locValue);
-      if (matches && itemFilter && itemFilter.size > 0) matches = itemFilter.has(tr.dataset.itemValue);
-      tr.classList.toggle('row-hidden', !matches);
+    // Free-text search AND the 地點/測項 column filters (each block keeps its own filters).
+    const searchInput = block.querySelector(`#rowDetailSearchInput${sfx}`);
+    const applyAllFilters = () => {
+      const q = searchInput.value.trim().toLowerCase();
+      const store = state[filterStoreKey];
+      block.querySelectorAll(`#rowDetailTbody${sfx} tr`).forEach(tr => {
+        let matches = !q || tr.dataset.searchText.includes(q);
+        if (matches && store.loc && store.loc.size > 0) matches = store.loc.has(tr.dataset.locValue);
+        if (matches && store.item && store.item.size > 0) matches = store.item.has(tr.dataset.itemValue);
+        tr.classList.toggle('row-hidden', !matches);
+      });
+      syncCheckAllState();
+    };
+    searchInput.addEventListener('input', applyAllFilters);
+    block.querySelectorAll('.col-filter-btn[data-row-detail-field]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openRowDetailColumnFilterPopup(btn.dataset.rowDetailField, btn, list, locField, itemField, applyAllFilters, filterStoreKey);
+      });
     });
-    syncCheckAllState();
+    applyAllFilters(); // re-apply any column filter left over from before this re-render
   };
 
-  const searchInput = containerEl.querySelector('#rowDetailSearchInput');
-  searchInput.addEventListener('input', applyAllFilters);
-
-  containerEl.querySelectorAll('.col-filter-btn[data-row-detail-field]').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openRowDetailColumnFilterPopup(btn.dataset.rowDetailField, btn, rows, locField, itemField, applyAllFilters);
-    });
-  });
-
-  applyAllFilters(); // re-apply any column filter left over from before this re-render
+  wireBlock('main', mainRows, 'rowDetailColumnFilters');
+  wireBlock('off', offRows, 'rowDetailColumnFiltersOff');
+  updateSummaries();
 }
 
 /** Excel-style AutoFilter popup for the 詳細資料列表's 地點/測項 columns — mirrors
  *  openColumnFilterPopup's UI, but reads from the in-memory candidate rows (this is
  *  an import preview, not saved DataStore data) and stores its filter state
- *  separately in state.rowDetailColumnFilters. */
-function openRowDetailColumnFilterPopup(fieldType, btnEl, rows, locField, itemField, onApply) {
+ *  separately in state[filterStoreKey]（v4.50：本期區與非本期區各自一份）. */
+function openRowDetailColumnFilterPopup(fieldType, btnEl, rows, locField, itemField, onApply, filterStoreKey = 'rowDetailColumnFilters') {
+  if (!state[filterStoreKey]) state[filterStoreKey] = {};
+  const filterStore = state[filterStoreKey];
   const popup = document.getElementById('colFilterPopup');
   const getVal = fieldType === 'loc' ? (r => r[locField] || '') : (r => r[itemField] || '');
   const uniqueValues = [...new Set(rows.map(getVal))].sort((a, b) => a.localeCompare(b, 'zh-Hant'));
-  const currentFilter = state.rowDetailColumnFilters[fieldType];
+  const currentFilter = filterStore[fieldType];
 
   popup.innerHTML = `
     <div class="col-filter-search"><input type="text" id="colFilterSearchInput" placeholder="搜尋選項..."></div>
@@ -4253,10 +4325,10 @@ function openRowDetailColumnFilterPopup(fieldType, btnEl, rows, locField, itemFi
   document.getElementById('colFilterApply').addEventListener('click', () => {
     const checked = [...document.querySelectorAll('#colFilterList input[type="checkbox"]:checked')].map(cb => cb.value);
     if (checked.length === uniqueValues.length) {
-      delete state.rowDetailColumnFilters[fieldType];
+      delete filterStore[fieldType];
       btnEl.classList.remove('col-filter-active');
     } else {
-      state.rowDetailColumnFilters[fieldType] = new Set(checked);
+      filterStore[fieldType] = new Set(checked);
       btnEl.classList.add('col-filter-active');
     }
     popup.classList.add('hidden');
@@ -4666,6 +4738,7 @@ function renderMappingStep() {
   const updateGenericCount = () => {
     const n = filterRowsBySelection(lastMappedRows, cat.itemField).length;
     document.getElementById('btnImportConfirm').textContent = `確認匯入 ${n} 筆資料`;
+    refreshItemChecklistCounts(document.getElementById('genericImportItemsWrap'));
   };
 
   const refreshGenericItemChecklist = () => {
@@ -4674,7 +4747,7 @@ function renderMappingStep() {
     const mappedHeader = itemSel ? itemSel.value : '';
     const wrap = document.getElementById('genericImportItemsWrap');
     if (!mappedHeader) { wrap.innerHTML = ''; document.getElementById('genericImportRowDetailWrap').innerHTML = ''; return; }
-    const shimRows = rows.map(r => ({ [cat.itemField]: r[mappedHeader] }));
+    const shimRows = rows.map((r, i) => ({ [cat.itemField]: r[mappedHeader], _rowUid: i }));
     renderItemChecklist(wrap, shimRows, cat.itemField, refreshGenericRowDetail);
     refreshGenericRowDetail();
   };
@@ -4879,6 +4952,7 @@ function renderSmartImportPreview() {
       if (cell) cell.textContent = n;
     });
     document.getElementById('btnImportConfirm').textContent = `確認匯入 ${selectedTotal} 筆資料`;
+    refreshItemChecklistCounts(document.getElementById('smartImportItemsWrap'));
   };
   const updateCountsAndRowDetail = () => {
     updateCounts();

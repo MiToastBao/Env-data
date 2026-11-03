@@ -3,9 +3,17 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.49';
+const APP_VERSION = 'v4.50';
 
 const CHANGELOG = [
+  {
+    version: 'v4.50',
+    date: '2026-11-03',
+    notes: [
+      '【調整】<strong>測項後面括號裡的數字改成「實際會匯入的筆數」。</strong>以前是檔案裡的總筆數，扣掉預設不匯入的非本期資料之後，和確認按鈕上的數字對不起來。現在在詳細資料列表勾選或取消時，數字也當場跟著變。',
+      '【新增】<strong>詳細資料列表分成兩區：「📋 本期資料」與「🗓 非本期資料・預設不匯入」</strong>（後者預設收合）。最上面一行直接寫「本次匯入 Y 筆、不匯入 N 筆」，兩區標題也各自寫出匯入／不匯入幾筆，可以直接比對。在非本期那一區勾選的資料，確認後會正常匯入。',
+    ],
+  },
   {
     version: 'v4.49',
     date: '2026-11-03',

@@ -3,6 +3,11 @@
 一個純前端（HTML/CSS/JavaScript）小工具，用來管理多個環評計畫、輸入/匯入各類監測資料，
 並匯出成符合「環境監測填寫範本」欄位格式的 Excel 檔。可直接發布在 GitHub Pages 上使用。
 
+## v4.50（2026-11-03）本版重點
+
+1. **測項數字＝實際會匯入的筆數**（`refreshItemChecklistCounts`）：扣掉 `excludedRowIndices`（預設不匯入的非本期、手動取消的列）；確認按鈕更新時一併更新。欄位對應路徑的測項清單 shim rows 補上 `_rowUid`。
+2. **`renderRowDetailTable` 分兩區**：本期／非本期（判斷同 `applyPeriodExclusions`，判斷不出期別的列算本期），非本期區預設收合；最上方「本次匯入 Y 筆、不匯入 N 筆（列表共 T 筆）」與兩區標題由勾選狀態現算、勾選時就地更新。兩區各自有搜尋、全選與欄位篩選（`state.rowDetailColumnFiltersOff`）；本期區沿用原本的元件 id，非本期區 id 加 `Off`。
+
 ## v4.49（2026-11-03）本版重點
 
 1. **欄位對應匯入（官方格式檔）補上非本期預設不勾**：`renderMappingStep` 以前只畫期別選單與提示，沒有呼叫 `applyPeriodExclusions`，提示說已取消勾選、實際全部匯入。現在和報告判讀路徑相同（先定期別 → 算排除 → 重畫提示 → 更新列表與筆數；改期別、改日期欄位對應都會重算；`_rowUid` 用列順序，與 `confirmImport` 一致）。五類共用這條路徑。
