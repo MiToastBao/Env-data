@@ -3,9 +3,23 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.54';
+const APP_VERSION = 'v4.56';
 
 const CHANGELOG = [
+  {
+    version: 'v4.56',
+    date: '2026-11-04',
+    notes: [
+      '【調整】機構代碼之間夾的<strong>任何符號</strong>（半形、全形都算，例如 - ~ ～ | _ * : # . ・），以及「及」「和」「與」「跟」，一鍵修正都會改成半形分號（例如 36~12 → 36;12）。夾了其他中文字的（例如「華光36」）可能是機構名稱，不自動改，只紅框。',
+    ],
+  },
+  {
+    version: 'v4.55',
+    date: '2026-11-04',
+    notes: [
+      '【調整】機構代碼寫成「36-12」時，一鍵修正也會改成 36;12。機構代碼不會是範圍（代碼表裡全是純數字或 AA），「-」只可能是寫錯的分隔符號；上一版只紅框、不自動改，是多慮了。',
+    ],
+  },
   {
     version: 'v4.54',
     date: '2026-11-04',

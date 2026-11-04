@@ -843,7 +843,8 @@ function valueAndCodeViolations(row, cat) {
       const bad = a.split(';').map((x) => x.trim()).filter((x) => !AGENCY_CODES[x]);
       if (bad.length) {
         // v4.54（#91）：用了分號以外的符號、空白、重複或多餘的分號 → 講「分隔符號不對」，不要講成「代碼表裡沒有」
-        const full = /[；，,、\/／+＋&＆\-－\s]|及|和|;;|^;|;$/.test(a);
+        // v4.56（#94）：分號以外的任何符號（半形、全形）、「及」「和」「與」「跟」、空白、重複或多餘的分號
+        const full = /[^0-9A-Za-z;０-９Ａ-Ｚａ-ｚ\u3400-\u9fff]|及|和|與|跟|;;|^;|;$/.test(a);
         const wide = /[０-９Ａ-Ｚａ-ｚ]/.test(a), lowerAA = /(^|;)\s*aa\s*(;|$)/i.test(a) && !/(^|;)\s*AA\s*(;|$)/.test(a);
         out.push({ key: '檢測機構許可證號', label: '檢測機構許可證號', value: a,
           why: (!full && wide) ? `機構代碼要用半形數字（目前是「${a}」）`
