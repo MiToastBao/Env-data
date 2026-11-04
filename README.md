@@ -3,6 +3,10 @@
 一個純前端（HTML/CSS/JavaScript）小工具，用來管理多個環評計畫、輸入/匯入各類監測資料，
 並匯出成符合「環境監測填寫範本」欄位格式的 Excel 檔。可直接發布在 GitHub Pages 上使用。
 
+## v4.60（2026-11-04）本版重點
+
+- 「用上一季建立本季」下載的 Excel：沿用上一季、標「請確認」的格子改成紅字（ExportEngine.downloadCategoryMarked → _applyRedFont，直接改 xlsx 內的 styles.xml／sheet2.xml；失敗時退回一般匯出）。
+
 ## v4.59（2026-11-04）本版重點
 
 - 新增「📋 用上一季建立本季」（openPrevPeriodModal）：表格建立或下載成 Excel 填寫；機構／座標／方法／檢測極限沿用並標請確認，日期時間數值備註留空。

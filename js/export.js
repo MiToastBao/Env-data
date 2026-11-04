@@ -121,6 +121,75 @@ const ExportEngine = {
     XLSX.writeFile(wb, fname);
   },
 
+  /*
+   * v4.60（#104）：下載的 Excel 裡，指定的格子改成紅字。
+   * SheetJS 免費版寫檔時不支援字型樣式，所以先照常產生 xlsx，再打開壓縮檔、
+   * 在 styles.xml 加一個紅色字型、把指定格子的樣式指過去，重新打包下載。
+   * marks：[{ row: 第幾筆資料（0 起算）, key: 欄位名稱 }]，只改資料工作表（第 2 張）。
+   */
+  downloadCategoryMarked(project, basicInfo, categoryKey, rowsOverride, fileSuffix, marks) {
+    const cat = CATEGORIES[categoryKey];
+    const wb = this.buildWorkbook(project, basicInfo, categoryKey, rowsOverride);
+    const fname = `${project.code}_${cat.sourceFile.replace(/\.xlsx$/i, '')}_${fileSuffix}.xlsx`;
+    let bytes = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+    try {
+      bytes = this._applyRedFont(bytes, cat, marks || []);
+    } catch (e) {
+      console.warn('紅字標示失敗，改下載一般檔案', e);
+    }
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  },
+
+  _applyRedFont(bytes, cat, marks) {
+    if (!marks.length) return bytes;
+    const CFB = XLSX.CFB;
+    const z = CFB.read(new Uint8Array(bytes), { type: 'array' });
+    const entry = (re) => { const i = z.FullPaths.findIndex(p => re.test(p)); return i >= 0 ? z.FileIndex[i] : null; };
+    const dec = (c) => new TextDecoder('utf-8').decode(c instanceof Uint8Array ? c : new Uint8Array(c));
+    const enc = (t) => new TextEncoder().encode(t);
+    const styles = entry(/xl\/styles\.xml$/), sheet = entry(/xl\/worksheets\/sheet2\.xml$/);
+    if (!styles || !sheet) return bytes;
+    let st = dec(styles.content), sh = dec(sheet.content);
+    // 1) 加一個紅色字型
+    const fontCount = +(st.match(/<fonts count="(\d+)"/) || [])[1];
+    if (!fontCount) return bytes;
+    st = st.replace(/<\/fonts>/, '<font><sz val="12"/><color rgb="FFFF0000"/><name val="Calibri"/><family val="2"/><scheme val="minor"/></font></fonts>')
+      .replace(/<fonts count="\d+"/, `<fonts count="${fontCount + 1}"`);
+    const redFont = fontCount;
+    // 2) 每一種原本的樣式各做一份「紅字版」
+    const xfsBlock = st.match(/<cellXfs count="(\d+)">([\s\S]*?)<\/cellXfs>/);
+    if (!xfsBlock) return bytes;
+    const xfs = xfsBlock[2].match(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) || [];
+    const redOf = new Map();
+    const added = [];
+    const redIndex = (orig) => {
+      if (redOf.has(orig)) return redOf.get(orig);
+      const src = xfs[orig] || xfs[0];
+      const clone = src.replace(/fontId="\d+"/, `fontId="${redFont}"`).replace(/<xf\b/, (m) => (/applyFont=/.test(src) ? m : `${m} applyFont="1"`));
+      const idx = xfs.length + added.length;
+      added.push(clone);
+      redOf.set(orig, idx);
+      return idx;
+    };
+    // 3) 指定的格子改用紅字版樣式
+    marks.forEach(({ row, key }) => {
+      const col = cat.fields.findIndex(f => f.key === key);
+      if (col < 0) return;
+      const ref = XLSX.utils.encode_col(col) + (row + 2);
+      sh = sh.replace(new RegExp(`<c r="${ref}"( s="(\\d+)")?`), (m, _a, s) => `<c r="${ref}" s="${redIndex(s ? +s : 0)}"`);
+    });
+    if (!added.length) return bytes;
+    st = st.replace(/<cellXfs count="\d+">([\s\S]*?)<\/cellXfs>/, (m, inner) => `<cellXfs count="${xfs.length + added.length}">${inner}${added.join('')}</cellXfs>`);
+    styles.content = enc(st);
+    sheet.content = enc(sh);
+    return CFB.write(z, { fileType: 'zip', type: 'array' });
+  },
+
   downloadAll(project) {
     const basicInfo = DataStore.getBasicInfo(project.id);
     CATEGORY_ORDER.forEach(catKey => {

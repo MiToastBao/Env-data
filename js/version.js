@@ -3,9 +3,16 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.59';
+const APP_VERSION = 'v4.60';
 
 const CHANGELOG = [
+  {
+    version: 'v4.60',
+    date: '2026-11-04',
+    notes: [
+      '【調整】「📋 用上一季建立本季」選<strong>下載成 Excel 填寫</strong>時，沿用上一季、需要確認的欄位（檢測機構、座標、檢測方法、檢測極限）在 Excel 裡改成<strong style="color:#d00">紅字</strong>，在 Excel 裡也看得出哪些要核對；匯回程式不受影響。',
+    ],
+  },
   {
     version: 'v4.59',
     date: '2026-11-04',

@@ -1481,9 +1481,12 @@ function openPrevPeriodModal(project, catKey) {
   $('btnPpExcel').onclick = () => {
     const tgt = normalizePeriodShorthand(tgtIn.value.trim());
     const newRows = buildRowsFromPrevPeriod(picked(), cat, srcSel.value, tgt, null);
-    ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey, newRows, `${tgt}_填寫用`);
+    // v4.60（#104）：沿用上一季、需要確認的格子在 Excel 裡用紅字標出來
+    const marks = [];
+    newRows.forEach((r, i) => Object.keys(r._checkFields || {}).forEach(key => marks.push({ row: i, key })));
+    ExportEngine.downloadCategoryMarked(project, DataStore.getBasicInfo(project.id), catKey, newRows, `${tgt}_填寫用`, marks);
     close();
-    showToast(`📥 已下載「${tgt}」填寫用 Excel（${newRows.length} 筆）。填好日期時間、數值，並確認檢測機構、座標、檢測方法、檢測極限（這幾欄是上一季的值）後，用「📥 匯入資料」匯回，期別選「${tgt}」。`, 10000);
+    showToast(`📥 已下載「${tgt}」填寫用 Excel（${newRows.length} 筆）。<b>紅字</b>是沿用上一季的值（檢測機構、座標、檢測方法、檢測極限），請對照本季報告確認或修改；填好日期時間、數值後，用「📥 匯入資料」匯回，期別選「${tgt}」。紅字只是提醒，不影響匯入。`, 11000);
   };
   modal.classList.remove('hidden');
 }
