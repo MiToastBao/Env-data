@@ -17,6 +17,9 @@ const state = {
   // re-render (a sort click, an accepted sync, a column filter) can't silently clear
   // the search box while the ▾ filters still look active. That mismatch made
   // "select all visible + delete" act on far more rows than the person could see.
+  problemFilter: {}, // v4.53：{ [catKey]: 錯誤分類 id } — 「只看這類」
+  problemGroups: {}, // v4.53：{ [catKey]: 這次畫面算出的錯誤分類 }
+  problemPanelCollapsed: {},
   onlyProblems: {}, // { [catKey]: true } — 「⚠️ 只看需要修正的」是否開著（v4.43）
   columnFilters: {}, // { [catKey]: { [fieldKey]: Set of allowed display values } } — Excel-style AutoFilter
   columnSort: {}, // { [catKey]: { fieldKey, direction: 'asc'|'desc' } } — Excel-style column sort
@@ -721,7 +724,7 @@ function renderBasicTab(project) {
      */
     const missWhy = (missingBasic.find(m => m.key === f.key) || {}).why;
     const fmtWhy = (basicWarn.find(m => m.key === f.key) || {}).why;
-    const miss = missWhy ? ' cell-required-missing' : fmtWhy ? ' cell-invalid' : '';
+    const miss = missWhy ? ' cell-required-missing' : fmtWhy ? ' cell-soft-warn' : '';
     const missTip = missWhy ? ` title="${escapeAttr(`「${f.label}」${missWhy}，目前是空的。`)}"`
       : fmtWhy ? ` title="${escapeAttr(fmtWhy)}"` : '';
     let control;
@@ -743,7 +746,7 @@ function renderBasicTab(project) {
       || (Array.isArray(f.requiredWhenStatus) && f.requiredWhenStatus.includes(String(info['執行現況'] ?? '').trim()));
     return `<label class="${wide}"><span class="basic-label">${f.label}${showStar ? '<span class="req">＊</span>' : ''}</span>
       ${control}
-      ${fmtWhy ? `<span class="field-help" style="color:var(--danger)">⚠️ ${escapeHtml(fmtWhy)}</span>` : ''}
+      ${fmtWhy ? `<span class="field-help soft-warn-text">💡 ${escapeHtml(fmtWhy)}</span>` : ''}
       ${f.help ? `<span class="field-help">${escapeHtml(f.help)}</span>` : ''}
     </label>`;
   }).join('');
@@ -833,10 +836,13 @@ const AUTO_FIX_KINDS = [
   { kind: 'paren', label: '檢測數值帶括號「<10(8)」 → 比較關係 <、檢測數值 10', why: '括號內是低於方法偵測極限的參考值（不一定準確），申報以前面的「<10」為準；數值欄不可有括號（說明會 p.23）。比較關係原本已填、而且和符號不同的不改。' },
   { kind: 'width', label: '數字欄位有全形字或前後空白 → 改成半形、去掉空白', why: '「０．５」「 3.2 」這類寫法看起來對，但數值欄只能填半形數字，上傳時會被當成文字。只改「改完就是正確數字或代碼」的格子。' },
   { kind: 'unit', label: '單位寫成文字（例如 mg/L） → 換成單位代碼', why: '單位欄要填代碼 1～161。只換代碼表裡寫法完全相同、而且只有一個代碼對得上的；對不上或有兩個以上可能的不動。' },
-  { kind: 'agency', label: '機構代碼用全形分號、逗號、頓號分隔 → 半形分號', why: '兩個以上的機構代碼要用半形分號分隔，例如 1;2（辭典）。分隔後每個代碼都在代碼表裡才改。' },
+  { kind: 'agency', label: '機構代碼的分隔符號或寫法不對（36；12、36、12、36/12、36及12、aa） → 36;12', why: '兩個以上的機構代碼要用半形分號分隔，例如 1;2（辭典）。全形分號、逗號、頓號、斜線、加號、「及」「和」、空白、重複或多餘的分號都改成一個半形分號，小寫 aa 改 AA；改完每個代碼都在代碼表裡才改。「36-12」的「-」可能是範圍，不自動改。' },
+  // ── v4.54 追加（修正清單 #89，使用者 11/4 裁示：合法的十進位也一起轉、中央經線一律 121 度）──
+  { kind: 'dms', label: '座標寫成度分或度分秒（24 30 08.6） → 轉成 TWD97 二度分帶，座標系統改 3', why: '官方規定座標不可填度分秒。換算方式和「🧭 座標轉換」相同（中央經線 121 度，和環境部座標轉換網頁一致），結果四捨五入成整數。金門、馬祖算出來 X 不是 6 位數的不轉。' },
+  { kind: 'dd', label: '經緯度十進位座標（座標系統 2） → 轉成 TWD97 二度分帶，座標系統改 3', why: '十進位經緯度本來就合法；依使用者裁示統一轉成 TWD97（不想轉可以取消這一類）。中央經線 121 度、四捨五入成整數；金門、馬祖算出來 X 不是 6 位數的不轉，保留原本座標。' },
   { kind: 'sys', label: '座標系統寫成文字（WGS84／TWD97） → 2／3', why: '座標系統只能填代碼 2（WGS84）或 3（TWD97-TM2）。' },
   { kind: 'swap', label: '經度、緯度明顯寫反 → 對調', why: '代碼 2：經度 X 應在 116～125、緯度 Y 應在 20～26；代碼 3：經度 X 為 6 位、緯度 Y 為 7 位。只對調「兩格都剛好落在對方範圍」的；對調後若還有小數，會在下一次一鍵修正四捨五入。' },
-  { kind: 'timesep', label: '時間用分號或全形冒號（08;30） → 08:30', why: '時間為 24 小時制 hh:mm，勿用分號（辭典、說明會 p.15）。' },
+  { kind: 'timesep', label: '時間寫法不對（08;30、10時30分、1030） → hh:mm', why: '時間為 24 小時制 hh:mm，勿用分號（辭典、說明會 p.15）。只改讀得懂是幾點的；看不懂的（例如「上午」）不改，會列在「時間看不懂」那一類。' },
   { kind: 'date', label: '日期不是西元格式（例如民國 115/07/08） → 西元 2026/07/08', why: '日期一律填西元 yyyy/mm/dd，勿用民國年（辭典、說明會 p.15）。畫面上雖然已經顯示成西元，存的值還是原樣。' },
   { kind: 'cons', label: '保育分類寫法不一致（一級、Ⅱ、3、珍貴稀有…） → I／II／III', why: '保育分類只能填英文大寫 I 組成的 I、II、III（勿填數字、國字、羅馬數字符號）。第一級＝瀕臨絕種＝I、第二級＝珍貴稀有＝II、第三級＝其他應予保育＝III。EX、CR、LC 等 IUCN 等級對不上，不改。' },
   { kind: 'qty', label: '生態數量寫成「5隻」「12株」 → 5、12', why: '數量只能填數字或「-」。單位欄空白時，把「隻」「株」這些字搬到單位欄；單位欄已經填了別的字的不改。「約10」「10+」「>5」意思不確定，不改。' },
@@ -928,15 +934,34 @@ function collectAutoFixes(rows, cat) {
     if (hasCmp && cmp !== '' && cmp !== 'ND' && isNDText(cmp) && !touched.has('比較關係')) {
       push('ndcase', [{ key: '比較關係', from: cmpRaw, to: 'ND' }]);
     }
-    // 座標系統文字 → 代碼
     let sys = has('座標系統') ? toHalfWidth(row['座標系統']) : '';
-    if (has('座標系統')) {
+    // v4.54（#89）：經緯度（十進位、度分、度分秒）→ TWD97 二度分帶整數，座標系統改 3
+    if (has('採樣座標-經度 X') && has('座標系統') && typeof CoordUtil !== 'undefined') {
+      const X = '採樣座標-經度 X', Y = '採樣座標-緯度 Y';
+      const pa = CoordUtil.parseAngle(row[X]), pb = CoordUtil.parseAngle(row[Y]);
+      if (pa && pb) {
+        let lon = pa.deg, lat = pb.deg;
+        if (lon >= 20 && lon <= 26 && lat >= 116 && lat <= 125) [lat, lon] = [lon, lat]; // 經緯度寫反
+        if (CoordUtil.inTaiwan(lat, lon)) {
+          const tm = CoordUtil.toTM2(lat, lon);
+          const xi = String(Math.round(tm.x)), yi = String(Math.round(tm.y));
+          if (/^\d{6}$/.test(xi) && /^\d{7}$/.test(yi)) {
+            const ch = [{ key: X, from: row[X], to: xi }, { key: Y, from: row[Y], to: yi }];
+            if (String(row['座標系統'] ?? '').trim() !== '3') ch.push({ key: '座標系統', from: row['座標系統'] ?? '', to: '3' });
+            push(pa.fmt === 'DD' && pb.fmt === 'DD' ? 'dd' : 'dms', ch);
+            sys = '3';
+          }
+        }
+      }
+    }
+    // 座標系統文字 → 代碼
+    if (has('座標系統') && !touched.has('座標系統')) {
       const t = sys.toUpperCase().replace(/[\s\-_()]/g, '');
       const code = /^WGS/.test(t) ? '2' : /^(TWD97|TWD|TM2)/.test(t) ? '3' : '';
       if (code) { push('sys', [{ key: '座標系統', from: row['座標系統'], to: code }]); sys = code; }
     }
     // 經緯度寫反 → 對調
-    if (has('採樣座標-經度 X')) {
+    if (has('採樣座標-經度 X') && !touched.has('採樣座標-經度 X')) {
       const X = '採樣座標-經度 X', Y = '採樣座標-緯度 Y';
       const xs = toHalfWidth(row[X]), ys = toHalfWidth(row[Y]);
       let swap = false;
@@ -960,6 +985,10 @@ function collectAutoFixes(rows, cat) {
       const m = t.match(/^(\d{1,2})\s*[;；:]\s*(\d{2})$/);
       if (m && /[;；：]/.test(String(row[k])) && +m[1] <= 23 && +m[2] <= 59) {
         sepCh.push({ key: k, from: row[k], to: `${String(+m[1]).padStart(2, '0')}:${m[2]}:00` });
+      } else if (t !== '' && !/^\d{1,2}:\d{2}(:\d{2})?$/.test(t) && !DateTimeUtil.canClampToDayEnd(row[k])) {
+        // v4.53（#83）：10時30分、1030、上午10:30 這類讀得懂的寫法 → hh:mm
+        const hms = DateTimeUtil.toHMS(t);
+        if (/^\d{2}:\d{2}:00$/.test(hms) && !DateTimeUtil.outOfRangeTimeReason(hms)) sepCh.push({ key: k, from: row[k], to: hms });
       } else if (DateTimeUtil.canClampToDayEnd(row[k])) {
         dayEndCh.push({ key: k, from: row[k], to: '23:59:00' });
       }
@@ -989,9 +1018,12 @@ function collectAutoFixes(rows, cat) {
     // 機構代碼：全形、分隔符號
     if (has('檢測機構許可證號') && typeof AGENCY_CODES !== 'undefined') {
       const raw = String(row['檢測機構許可證號'] ?? '');
-      const norm = toHalfWidth(raw).replace(/\s*[；;，,、]\s*/g, ';').replace(/[\s　]+/g, ';').toUpperCase();
+      const norm = toHalfWidth(raw).toUpperCase()
+        .replace(/\s*(?:[；;，,、\/／+＋&＆]|及|和)\s*/g, ';').replace(/[\s\u3000]+/g, ';')
+        .replace(/;{2,}/g, ';').replace(/^;|;$/g, '');
       if (norm !== raw && norm.split(';').every(c => c !== '' && AGENCY_CODES[c])) {
-        push(/[；，,、]/.test(raw) ? 'agency' : 'width', [{ key: '檢測機構許可證號', from: raw, to: norm }]);
+        // v4.54（#91）：只差在全形數字（３６）的歸「全形字」那一類，其餘都是分隔符號或大小寫的問題
+        push(norm === toHalfWidth(raw) ? 'width' : 'agency', [{ key: '檢測機構許可證號', from: raw, to: norm }]);
       }
     }
     // 生態：保育分類、數量
@@ -1040,25 +1072,55 @@ function autoFixScopeRows(rows, catKey) {
   return rows.filter(r => r._period === p);
 }
 
-/** 一列裡需要修正的格子數：格式規則＋必填未填＋下拉欄位的值不在清單裡（表格上同樣是紅框）。 */
-function rowProblemCellCount(row, cat) {
-  const keys = new Set([...allRuleViolations(row, cat), ...missingRequiredFields(row, cat)].map(v => v.key));
+/*
+ * 一列裡每一格的問題，含分類名稱（v4.53，修正清單 #86）
+ * ─────────────────────────────────────────────────────────────
+ * 表格上會畫紅框／橘框的四種來源全部收在這裡：格式規則、必填未填、
+ * 下拉欄位的值不在清單裡、時間超出 00:00～23:59。
+ * group＝分類名稱＝錯誤原因（不含這一格的值），給「錯誤分類」區用；why＝這一格的完整說明。
+ */
+function problemGroupOf(why) {
+  return String(why).replace(/（目前[^）]*）/g, '').replace(/目前是「[^」]*」/g, '').replace(/[。，、]+$/, '').replace(/^[——\s]+/, '').trim();
+}
+/** 必填未填的分類名稱：「備註」沒填（「檢測數值」沒有數值時必填）——條件寫短，完整說明放在例子裡。 */
+function missingGroupOf(m) {
+  const w = String(m.why);
+  let cond = '';
+  const inner = w.match(/^必填（([^）]*)）/);
+  if (inner && inner[1].includes('時')) cond = inner[1].split('，')[0] + '必填';
+  else if (!w.startsWith('必填')) cond = w.split('，')[0];
+  return `「${m.label}」沒填${cond ? `（${cond}）` : ''}`;
+}
+function cellProblems(row, cat) {
+  const out = [];
+  const seen = new Set();
+  const add = (key, why, group) => { if (seen.has(key)) return; seen.add(key); out.push({ key, why, group }); };
+  allRuleViolations(row, cat).forEach(v => add(v.key, v.why, v.group || problemGroupOf(v.why).split('。')[0]));
+  missingRequiredFields(row, cat).forEach(m => add(m.key, `「${m.label}」${m.why}，目前是空的。`, missingGroupOf(m)));
   cat.fields.forEach(f => {
     if (f.type !== 'select' || !Array.isArray(f.options)) return;
     const v = String(row[f.key] ?? '');
-    if (v !== '' && !f.options.includes(v)) keys.add(f.key);
+    if (v !== '' && !f.options.includes(v)) {
+      add(f.key, `「${v}」不在官方允許的選項裡（${f.options.filter(Boolean).join('、')}），申報時可能被退件。請從清單中改選正確的值。`,
+        `「${f.label}」填了清單以外的值`);
+    }
   });
-  ['時間(起)', '時間(迄)'].forEach(k => { if (/[;；]/.test(String(row[k] ?? ''))) keys.add(k); });
-  return keys.size;
+  TIME_FIELDS.forEach(k => {
+    const why = DateTimeUtil.outOfRangeTimeReason(row[k]);
+    if (why) add(k, `「${toTimeDisplayValue(row[k])}」${why}。`, `「${k}」超出 00:00～23:59`);
+  });
+  return out;
 }
+function rowProblemCellCount(row, cat) { return cellProblems(row, cat).length; }
 
 function autoFixCellCount(fixes) { return fixes.reduce((n, f) => n + f.changes.length, 0); }
 
-function openAutoFixModal(projectId, catKey) {
+function openAutoFixModal(projectId, catKey, onlyKind) {
   const cat = CATEGORIES[catKey];
   const allRows = DataStore.getData(projectId, catKey);
   const scope = autoFixScopeRows(allRows, catKey);
-  const fixes = collectAutoFixes(scope, cat);
+  // v4.53：從錯誤分類區按「修正這類」時只列那一類
+  const fixes = collectAutoFixes(scope, cat).filter(f => !onlyKind || f.kind === onlyKind);
   if (fixes.length === 0) return;
   const byKind = {};
   fixes.forEach(f => { (byKind[f.kind] = byKind[f.kind] || []).push(f); });
@@ -1075,12 +1137,12 @@ function openAutoFixModal(projectId, catKey) {
   };
 
   const label = (row) => [row[cat.locationField], toDateDisplayValue(row['日期(起)']), row[cat.itemField]].filter(Boolean).join('　');
-  const show = (v) => (String(v ?? '') === '' ? '（空白）' : String(v));
+  const show = (v, key) => (String(v ?? '') === '' ? '（空白）' : TIME_FIELDS.includes(key) && /^\d{2}:\d{2}:00$/.test(String(v)) ? String(v).slice(0, 5) : DATE_FIELDS.includes(key) && /^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? String(v).replace(/-/g, '/') : String(v));
   const wrap = document.getElementById('autoFixWrap');
   wrap.innerHTML = AUTO_FIX_KINDS.filter(k => byKind[k.kind]).map(k => {
     const list = byKind[k.kind];
     const cells = autoFixCellCount(list);
-    const examples = list.slice(0, 6).map(f => `<li>${escapeHtml(label(f.row))}：${f.changes.map(c => `${escapeHtml(c.key)} ${escapeHtml(show(c.from))} → ${escapeHtml(show(c.to))}`).join('；')}</li>`).join('');
+    const examples = list.slice(0, 6).map(f => `<li>${escapeHtml(label(f.row))}：${f.changes.map(c => `${escapeHtml(c.key)} ${escapeHtml(show(c.from, c.key))} → ${escapeHtml(show(c.to, c.key))}`).join('；')}</li>`).join('');
     return `
       <div class="autofix-kind" style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin:8px 0">
         <label style="display:flex;flex-direction:row;gap:8px;align-items:flex-start;font-weight:600;margin-bottom:0">
@@ -1101,7 +1163,7 @@ function openAutoFixModal(projectId, catKey) {
     applyBtn.disabled = n === 0;
     const rem = remainingAfter(kinds);
     document.getElementById('autoFixRemaining').textContent = rem > 0
-      ? `套用後還有 ${rem} 格需要手動修正（程式猜不出正確答案的，例如代碼不在表內、數值為 0、噪音管制區填「無」、必填空白、比較關係與數值符號不一致）。可用工具列的「⚠️ 只看需要修正的」挑出來。`
+      ? `套用後還有 ${rem} 格需要手動修正（程式猜不出正確答案的，例如代碼不在表內、數值為 0、日期看不懂、必填空白）。它們會依錯誤原因列在表格上方的「錯誤分類」區，按「只看這類」逐類修正。`
       : '套用後，這個範圍內就沒有需要修正的格子了。';
   };
   wrap.querySelectorAll('[data-autofix-kind]').forEach(cb => cb.addEventListener('change', refresh));
@@ -1129,6 +1191,93 @@ function openAutoFixModal(projectId, catKey) {
     showToast(`🛠 已修正 ${cells} 格（${new Set(todo.map(f => f.row)).size} 筆資料）。可用「↩️ 復原上一步」還原。`, 7000);
   };
   modal.classList.remove('hidden');
+}
+
+
+/*
+ * ─────────────────────────────────────────────────────────────
+ * 錯誤分類區（v4.53，修正清單 #86；使用者 11/4 裁示③）
+ * ─────────────────────────────────────────────────────────────
+ * 以前錯誤原因只寫在格子的滑鼠提示裡，觸控裝置看不到、滑鼠也要一格一格移過去。
+ * 改成在表格上方常駐列出「錯誤分類」：分類名稱就是錯誤原因，後面寫幾格、幾筆。
+ *   ・能一鍵修正的分類（🛠）：可以單獨「修正這類」，也可以按「一鍵修正全部」
+ *   ・判斷不了的分類（✋）：按「只看這類」，表格只剩有這種錯誤的資料，
+ *     錯的那一格加上黃色外框，照著改就好
+ * 一格只歸一類：能自動修的格子歸自動修的那一類，其餘依錯誤原因歸類。
+ */
+function buildProblemGroups(entries, cat) {
+  const idxOf = new Map(entries.map(e => [e.row, e.idx]));
+  const show = (v) => (String(v ?? '') === '' ? '（空白）' : String(v));
+  const groups = new Map();
+  const get = (id, init) => {
+    if (!groups.has(id)) groups.set(id, { id, ...init, cells: [], rowSet: new Set() });
+    return groups.get(id);
+  };
+  const covered = new Set();
+  collectAutoFixes(entries.map(e => e.row), cat).forEach(f => {
+    const k = AUTO_FIX_KINDS.find(x => x.kind === f.kind);
+    const g = get('fix:' + f.kind, { label: k.label, why: k.why, kind: f.kind });
+    const idx = idxOf.get(f.row);
+    f.changes.forEach(c => {
+      g.cells.push({ idx, key: c.key, why: `「${c.key}」${show(c.from)} → ${show(c.to)}` });
+      covered.add(`${idx}|${c.key}`);
+    });
+    g.rowSet.add(idx);
+  });
+  entries.forEach(({ row, idx }) => {
+    cellProblems(row, cat).forEach(p => {
+      if (covered.has(`${idx}|${p.key}`)) return;
+      const g = get('m:' + p.group, { label: p.group, why: '', kind: null });
+      g.cells.push({ idx, key: p.key, why: p.why });
+      g.rowSet.add(idx);
+    });
+  });
+  const kindOrder = AUTO_FIX_KINDS.map(k => k.kind);
+  return [...groups.values()].sort((a, b) => {
+    if (!!a.kind !== !!b.kind) return a.kind ? -1 : 1;
+    if (a.kind) return kindOrder.indexOf(a.kind) - kindOrder.indexOf(b.kind);
+    return b.cells.length - a.cells.length;
+  });
+}
+
+function problemPanelHTML(groups, catKey) {
+  const total = groups.reduce((n, g) => n + g.cells.length, 0);
+  const activeId = state.problemFilter[catKey] || '';
+  const active = groups.find(g => g.id === activeId);
+  if (total === 0 && !activeId) return '<div class="problem-panel problem-panel-ok" id="problemPanel">✅ 這個範圍沒有需要修正的格子。</div>';
+  const fixable = groups.filter(g => g.kind);
+  const fixCells = fixable.reduce((n, g) => n + g.cells.length, 0);
+  const collapsed = !!state.problemPanelCollapsed[catKey];
+  const activeBar = activeId ? `
+    <div class="pp-active">🔎 目前只看：<b>${escapeHtml(active ? active.label : (activeId.replace(/^(m|fix):/, '')))}</b>
+      ${active ? `（${active.rowSet.size} 筆，錯的格子用黃色外框標出）` : '（這一類已經全部改好了）'}
+      <button class="btn btn-ghost btn-sm" data-pp-view="">顯示全部資料</button></div>` : '';
+  const items = groups.map((g, i) => {
+    const ex = g.cells[0];
+    const sample = g.kind ? g.why : (ex ? `例：第 ${ex.idx + 1} 筆　${ex.why}` : '');
+    return `<li class="pp-item${g.kind ? ' pp-fix' : ' pp-manual'}${g.id === activeId ? ' pp-active-item' : ''}">
+      <div class="pp-line">
+        <span class="pp-tag">${g.kind ? '🛠 可自動修' : '✋ 要手動改'}</span>
+        <span class="pp-label">${i + 1}. ${escapeHtml(g.label)}</span>
+        <span class="pp-count">${g.cells.length} 格（${g.rowSet.size} 筆）</span>
+        <span class="pp-actions">
+          <button class="btn btn-ghost btn-sm" data-pp-view="${escapeAttr(g.id)}">${g.id === activeId ? '✕ 取消只看這類' : '🔎 只看這類'}</button>
+          ${g.kind ? `<button class="btn btn-ghost btn-sm" data-pp-fix="${escapeAttr(g.kind)}">🛠 修正這類</button>` : ''}
+        </span>
+      </div>
+      <div class="pp-why">${escapeHtml(sample)}</div>
+    </li>`;
+  }).join('');
+  return `<div class="problem-panel" id="problemPanel">
+    <div class="pp-head">
+      <span class="pp-title">⚠️ 需要修正：<b>${total}</b> 格，分成 <b>${groups.length}</b> 類</span>
+      ${fixCells ? `<button class="btn btn-primary btn-sm" id="btnAutoFix">🛠 一鍵修正全部可自動修的（${fixCells} 格）</button>` : ''}
+      <button class="btn btn-ghost btn-sm" id="btnPpCollapse">${collapsed ? '展開分類 ▼' : '收合分類 ▲'}</button>
+    </div>
+    ${activeBar}
+    ${collapsed ? '' : `<p class="pp-hint">分類名稱就是錯誤原因。🛠 的可以直接修正；✋ 的按「只看這類」，表格只留下有這種錯誤的資料，照著黃色外框的格子改。只修正目前選的期別範圍。</p>
+    <ol class="pp-list">${items}</ol>`}
+  </div>`;
 }
 
 function renderCategoryTab(project, catKey) {
@@ -1172,6 +1321,9 @@ function renderCategoryTab(project, catKey) {
   }
 
   const displayRows = displayEntries.map(e => e.row);
+  // v4.53（#86）：錯誤分類——範圍和一鍵修正、匯出一樣，是目前篩選的期別
+  const problemGroups = buildProblemGroups(displayEntries, cat);
+  state.problemGroups[catKey] = problemGroups;
 
   body.innerHTML = `
     ${catKey === 'eco' ? `<div class="warning warning-strong" style="margin-bottom:10px">🌿 ${ECO_IMPORT_ONLY_NOTE}</div>` : ''}
@@ -1193,11 +1345,6 @@ function renderCategoryTab(project, catKey) {
         <input type="text" id="rowSearchInput" value="${escapeAttr(state.rowSearch[catKey] || '')}" placeholder="🔍 搜尋任何欄位內容（測站、測項、日期…）" title="輸入關鍵字即時篩選畫面顯示的資料列，方便檢查或修正特定資料；不影響匯出範圍（匯出仍依上方期別篩選）">
         <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除篩選</button>
         <button class="btn btn-ghost btn-sm" id="btnOnlyProblems" title="只顯示有紅框或橘框的資料列——必填沒填、值不符合官方格式規定、噪音振動連動規則對不起來的那幾筆。這只是畫面篩選，不影響匯出範圍。">⚠️ 只看需要修正的</button>
-        ${(() => {
-          // v4.51（#65）：座標四捨五入併進「一鍵修正」。只有真的有可以自動修的格子時才出現這顆。
-          const n = autoFixCellCount(collectAutoFixes(autoFixScopeRows(allRows, catKey), cat));
-          return n ? `<button class="btn btn-ghost btn-sm" id="btnAutoFix" title="把答案唯一的格式錯誤一次修好：檢測數值的 ND、「<0.1」拆開、千分位逗號、比較關係寫法、TWD97 座標小數、振動的管制標準／管制區、24:00、檢測極限非數字。套用前會逐類列出從什麼變成什麼，可以取消其中幾類。">🛠 一鍵修正（${n} 格）</button>` : '';
-        })()}
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）${activePeriod ? '（僅目前篩選期別）' : ''}</button>
         <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別${activePeriod ? '（僅目前篩選期別）' : ''}</button>
         ${(() => { const u = peekUndo(project.id, catKey); return u ? `<button class="btn btn-ghost btn-sm" id="btnUndo" title="復原：${escapeAttr(u.description)}">↩️ 復原上一步</button>` : ''; })()}
@@ -1205,6 +1352,7 @@ function renderCategoryTab(project, catKey) {
       </div>
       <div class="row-count" id="rowCountDisplay">共 ${displayRows.length} 筆資料${activePeriod ? `（篩選中，全部共 ${allRows.length} 筆）` : ''}</div>
     </div>
+    ${problemPanelHTML(problemGroups, catKey)}
     <div class="toolbar bulk-toolbar hidden" id="bulkToolbar">
       <span id="bulkSelCount">已選取 0 筆</span>
       <button class="btn btn-primary btn-sm" id="btnBulkEdit">✏️ 批次修改欄位</button>
@@ -1397,6 +1545,30 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
 
   const autoFixBtn = document.getElementById('btnAutoFix');
   if (autoFixBtn) autoFixBtn.addEventListener('click', () => openAutoFixModal(state.currentProjectId, catKey));
+  // v4.53（#86）：錯誤分類區
+  const panel = document.getElementById('problemPanel');
+  const groupById = (id) => (state.problemGroups[catKey] || []).find(g => g.id === id);
+  if (panel) {
+    panel.addEventListener('click', (e) => {
+      const fixBtn = e.target.closest('[data-pp-fix]');
+      if (fixBtn) { openAutoFixModal(state.currentProjectId, catKey, fixBtn.dataset.ppFix); return; }
+      const viewBtn = e.target.closest('[data-pp-view]');
+      if (viewBtn) {
+        const id = viewBtn.dataset.ppView;
+        state.problemFilter[catKey] = (id && state.problemFilter[catKey] !== id) ? id : '';
+        renderContentPreservingScroll();
+        if (state.problemFilter[catKey]) {
+          const first = document.querySelector('.cell-problem-focus');
+          if (first) first.scrollIntoView({ block: 'center', inline: 'center' });
+        }
+        return;
+      }
+      if (e.target.closest('#btnPpCollapse')) {
+        state.problemPanelCollapsed[catKey] = !state.problemPanelCollapsed[catKey];
+        renderContentPreservingScroll();
+      }
+    });
+  }
 
   const onlyBtn = document.getElementById('btnOnlyProblems');
   const problemCount = () => [...tbody.querySelectorAll('tr')].filter(rowNeedsFixInDom).length;
@@ -1407,11 +1579,23 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
     const colFilters = colFiltersForCat();
     const anyColFilter = Object.values(colFilters).some(s => s && s.size > 0);
     const onlyBad = !!state.onlyProblems[catKey];
+    const pid = state.problemFilter[catKey] || '';
+    const pg = pid ? groupById(pid) : null;
+    const pgRows = pid ? (pg ? pg.rowSet : new Set()) : null;
     clearBtn.classList.toggle('hidden', q === '' && !anyColFilter && !onlyBad);
+    tbody.querySelectorAll('.cell-problem-focus').forEach(el => el.classList.remove('cell-problem-focus'));
+    tbody.querySelectorAll('.td-problem-focus').forEach(el => el.classList.remove('td-problem-focus'));
+    if (pg) {
+      pg.cells.forEach(c => {
+        const el = tbody.querySelector(`[data-row="${c.idx}"][data-field="${CSS.escape(c.key)}"]`);
+        if (el) { el.classList.add('cell-problem-focus'); const td = el.closest('td'); if (td) td.classList.add('td-problem-focus'); }
+      });
+    }
     let visible = 0;
     const rows = tbody.querySelectorAll('tr');
     rows.forEach(tr => {
       let matches = !q || rowSearchText(tr).includes(q);
+      if (matches && pgRows) matches = pgRows.has(Number(tr.dataset.row));
       if (matches && onlyBad) matches = rowNeedsFixInDom(tr);
       if (matches && anyColFilter) {
         for (const [fieldKey, allowedSet] of Object.entries(colFilters)) {
@@ -1422,7 +1606,7 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
       tr.classList.toggle('row-hidden', !matches);
       if (matches) visible++;
     });
-    countEl.textContent = (q || anyColFilter || onlyBad) ? `符合篩選：${visible} / ${rows.length} 筆` : baseCountText;
+    countEl.textContent = (q || anyColFilter || onlyBad || pgRows) ? `符合篩選：${visible} / ${rows.length} 筆` : baseCountText;
   };
 
   if (onlyBtn) {
@@ -1913,7 +2097,9 @@ function rowHtml(cat, row, idx) {
    */
   // v4.43：官方格式規則（座標範圍與位數、生態的字數上限／學名中文名／數量寫法）
   // 走同一條路。同樣是「已經填錯」的檢查，來源多半是別家公司交來的檔案。
-  const ruleHere = new Map(allRuleViolations(row, cat).map(v => [v.key, v.why]));
+  // 同一格有兩條規則時，顯示第一條（和錯誤分類區 cellProblems 的取法一致）
+  const ruleHere = new Map();
+  allRuleViolations(row, cat).forEach(v => { if (!ruleHere.has(v.key)) ruleHere.set(v.key, v.why); });
   // v4.45：「請確認」的格子（紫色框＋格子旁的 ✔ 按鈕）。不算錯、也不是沒填，
   // 是程式先填了一個值、但需要使用者決定的地方（單位 127／142、補結束時間…）。
   const checkHere = row._checkFields || {};
@@ -2020,14 +2206,13 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
        * 用紅框標示，不會被默默改掉——和上面 select 遇到清單外的值同一個原則：
        * 值不能消失，但要看得見它是錯的。
        */
+      // v4.53：分號、看不懂、迄早於起這幾種走 ruleWhy（schema.js 的 dateTimeViolations）
       const rangeWhy = DateTimeUtil.outOfRangeTimeReason(value);
-      const semiWhy = !rangeWhy && /[;；]/.test(String(value ?? ''))
-        ? '用了分號，官方規定時間寫 hh:mm（勿用分號）。請改成冒號，或用「🛠 一鍵修正」' : '';
-      const badTime = rangeWhy || semiWhy;
+      const badTime = rangeWhy || ruleWhy;
       const cls = `time-input${badTime ? ' cell-invalid' : ''}${missCls}`;
       const tip = rangeWhy
         ? ` title="${escapeAttr(`「${toTimeDisplayValue(value)}」${rangeWhy}。請改成 23:59（一天的最後一分鐘）或正確的時間。`)}"`
-        : semiWhy ? ` title="${escapeAttr(`「${value}」${semiWhy}。`)}"` : missTip;
+        : ruleWhy ? ruleTip : missTip;
       return `<input type="text" ${base}${tip} value="${escapeAttr(toTimeDisplayValue(value))}" class="${cls}" placeholder="HH:MM" inputmode="numeric" maxlength="8">`;
     }
     case 'suggest': {
@@ -3608,6 +3793,144 @@ function renderAgencyRefTable(filterText) {
     ? entries.map(([code, name]) => `<tr><td>${escapeHtml(code)}</td><td>${escapeHtml(name)}</td></tr>`).join('')
     : '<tr><td colspan="2" class="hint">找不到符合的檢測機構</td></tr>';
 }
+
+/*
+ * ─────────────────────────────────────────────────────────────
+ * 座標轉換工具（v4.54，修正清單 #88、#90；使用者 11/4）
+ * ─────────────────────────────────────────────────────────────
+ * 在任一區輸入、按那一區的「轉換」，其餘格式全部填好；下方列出可複製的結果與「在 Google 地圖上看」。
+ * 換算本身在 js/coords.js（CoordUtil），表格的一鍵修正也用同一支，兩邊算出來一定一樣。
+ */
+function openCoordToolModal() {
+  document.getElementById('coordToolModal').classList.remove('hidden');
+  setTimeout(() => document.getElementById('ctPaste').focus(), 30);
+}
+function coordToolCopy(text, btn) {
+  const done = () => { const old = btn.textContent; btn.textContent = '✔ 已複製'; setTimeout(() => { btn.textContent = old; }, 1200); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => { fallback(); });
+  } else fallback();
+  function fallback() {
+    const ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) { alert('無法自動複製，請手動選取：' + text); }
+    document.body.removeChild(ta);
+  }
+}
+function wireCoordTool() {
+  const $ = (id) => document.getElementById(id);
+  const modal = $('coordToolModal');
+  const msg = $('ctMsg'), result = $('ctResult');
+  const ids = ['ctPaste', 'ctDdLat', 'ctDdLon', 'ctDmmLatD', 'ctDmmLatM', 'ctDmmLonD', 'ctDmmLonM',
+    'ctDmsLatD', 'ctDmsLatM', 'ctDmsLatS', 'ctDmsLonD', 'ctDmsLonM', 'ctDmsLonS', 'ctTmX', 'ctTmY'];
+  const val = (id) => CoordUtil._clean($(id).value);
+  const say = (text, kind) => { msg.textContent = text; msg.className = `ct-msg ${kind}`; };
+  const clear = () => {
+    ids.forEach(id => { $(id).value = ''; $(id).classList.remove('ct-filled'); });
+    msg.className = 'ct-msg hidden'; result.className = 'ct-result hidden'; result.innerHTML = '';
+  };
+  const num = (id, label) => {
+    const v = val(id);
+    if (v === '') return 0;
+    if (!/^-?\d+(\.\d+)?$/.test(v)) throw new Error(`「${label}」只能填數字（目前是「${$(id).value}」）`);
+    return +v;
+  };
+  const fromDM = (d, m, sec, label) => {
+    if (m >= 60 || sec >= 60) throw new Error(`${label}的分、秒要小於 60`);
+    return (d < 0 ? -1 : 1) * (Math.abs(d) + m / 60 + sec / 3600);
+  };
+
+  const fill = (lat, lon, source) => {
+    const tm = CoordUtil.toTM2(lat, lon);
+    const set = (id, v) => { $(id).value = v; $(id).classList.toggle('ct-filled', true); };
+    const dmmA = CoordUtil.toDMM(lat), dmmO = CoordUtil.toDMM(lon);
+    const dmsA = CoordUtil.toDMS(lat), dmsO = CoordUtil.toDMS(lon);
+    set('ctDdLat', lat.toFixed(6)); set('ctDdLon', lon.toFixed(6));
+    set('ctDmmLatD', dmmA.d); set('ctDmmLatM', dmmA.m.toFixed(4)); set('ctDmmLonD', dmmO.d); set('ctDmmLonM', dmmO.m.toFixed(4));
+    set('ctDmsLatD', dmsA.d); set('ctDmsLatM', dmsA.m); set('ctDmsLatS', dmsA.s.toFixed(2));
+    set('ctDmsLonD', dmsO.d); set('ctDmsLonM', dmsO.m); set('ctDmsLonS', dmsO.s.toFixed(2));
+    if (source !== 'tm2') { set('ctTmX', tm.x.toFixed(4)); set('ctTmY', tm.y.toFixed(4)); }
+    const X = source === 'tm2' ? +val('ctTmX') : tm.x, Y = source === 'tm2' ? +val('ctTmY') : tm.y;
+    const xi = Math.round(X), yi = Math.round(Y);
+    const warn = [];
+    if (!CoordUtil.inTaiwan(lat, lon)) warn.push('這個位置不在臺灣、澎湖、金門、馬祖的範圍內（經度 116～125、緯度 20～26），請確認座標有沒有寫錯或經緯度寫反。');
+    if (!/^\d{6}$/.test(String(xi)) || !/^\d{7}$/.test(String(yi))) warn.push(`TWD97 的經度 X 應為 6 位、緯度 Y 應為 7 位數字；這個點算出來是 ${xi}／${yi}。金門、馬祖用 121 度中央經線時 X 會是負數，這是環境部座標轉換網頁一樣的算法，申報前請和承辦確認。`);
+    if (warn.length) say(warn.join('\n'), 'ct-warn'); else msg.className = 'ct-msg hidden';
+    const row = (k, v, main) => `<tr${main ? ' class="ct-main"' : ''}><td class="ct-k">${k}</td><td class="ct-v">${escapeHtml(v)}</td><td class="ct-c"><button class="btn btn-ghost btn-sm" data-ct-copy="${escapeAttr(v)}">複製</button></td></tr>`;
+    result.innerHTML = `<div class="ct-title">轉換結果</div><table>
+      ${row('TWD97（申報用，座標系統填 3）', `${xi}, ${yi}`, true)}
+      ${row('TWD97 經度 X', String(xi))}${row('TWD97 緯度 Y', String(yi))}
+      ${row('經緯度十進位（座標系統填 2）', `${lat.toFixed(6)}, ${lon.toFixed(6)}`)}
+      ${row('度分', `${dmmA.d}°${dmmA.m.toFixed(4)}′, ${dmmO.d}°${dmmO.m.toFixed(4)}′`)}
+      ${row('度分秒', `${dmsA.d}°${String(dmsA.m).padStart(2, '0')}′${dmsA.s.toFixed(2).padStart(5, '0')}″, ${dmsO.d}°${String(dmsO.m).padStart(2, '0')}′${dmsO.s.toFixed(2).padStart(5, '0')}″`)}
+    </table>
+    <div class="ct-actions"><a class="btn btn-ghost btn-sm" href="https://www.google.com/maps?q=${lat.toFixed(6)},${lon.toFixed(6)}" target="_blank" rel="noopener">🗺 在 Google 地圖上看</a></div>`;
+    result.className = 'ct-result';
+    result.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+
+  const convert = (src) => {
+    try {
+      let lat, lon;
+      if (src === 'paste') {
+        const raw = $('ctPaste').value;
+        if (CoordUtil._clean(raw) === '') throw new Error('請先貼上或輸入一組座標。');
+        const p = CoordUtil.parsePair(raw);
+        if (!p) throw new Error(`看不懂「${raw}」。請寫成「緯度, 經度」或「X, Y」，例如 24.502389, 120.954111、24 30 08.6, 120 57 14.8、175345, 2591215。`);
+        if (p.fmt === 'TM2') {
+          $('ctTmX').value = p.x; $('ctTmY').value = p.y;
+          ({ lat, lon } = CoordUtil.fromTM2(p.x, p.y));
+          return fill(lat, lon, 'tm2');
+        }
+        ({ lat, lon } = p);
+      } else if (src === 'dd') {
+        if (val('ctDdLat') === '' || val('ctDdLon') === '') throw new Error('十進位的緯度、經度都要填。');
+        lat = num('ctDdLat', '緯度'); lon = num('ctDdLon', '經度');
+        if (Math.abs(lat) > 90 && Math.abs(lon) <= 90) { [lat, lon] = [lon, lat]; }
+      } else if (src === 'dmm') {
+        if (val('ctDmmLatD') === '' || val('ctDmmLonD') === '') throw new Error('度分的緯度、經度「度」都要填。');
+        lat = fromDM(num('ctDmmLatD', '緯度的度'), num('ctDmmLatM', '緯度的分'), 0, '緯度');
+        lon = fromDM(num('ctDmmLonD', '經度的度'), num('ctDmmLonM', '經度的分'), 0, '經度');
+      } else if (src === 'dms') {
+        if (val('ctDmsLatD') === '' || val('ctDmsLonD') === '') throw new Error('度分秒的緯度、經度「度」都要填。');
+        lat = fromDM(num('ctDmsLatD', '緯度的度'), num('ctDmsLatM', '緯度的分'), num('ctDmsLatS', '緯度的秒'), '緯度');
+        lon = fromDM(num('ctDmsLonD', '經度的度'), num('ctDmsLonM', '經度的分'), num('ctDmsLonS', '經度的秒'), '經度');
+      } else if (src === 'tm2') {
+        if (val('ctTmX') === '' || val('ctTmY') === '') throw new Error('TWD97 的 X、Y 都要填。');
+        let x = num('ctTmX', 'X'), y = num('ctTmY', 'Y');
+        if (Math.abs(x) > 1000000 && Math.abs(y) < 1000000) { [x, y] = [y, x]; $('ctTmX').value = x; $('ctTmY').value = y; }
+        ({ lat, lon } = CoordUtil.fromTM2(x, y));
+        return fill(lat, lon, 'tm2');
+      }
+      if (!(Math.abs(lat) <= 90 && Math.abs(lon) <= 180)) throw new Error('緯度要在 -90～90、經度要在 -180～180 之間。');
+      fill(lat, lon, src);
+    } catch (e) {
+      // 上一次算出來的值（綠底）一起清掉，免得被誤認為這一次的結果；使用者自己打的不動
+      ids.forEach(id => { if ($(id).classList.contains('ct-filled')) { $(id).value = ''; $(id).classList.remove('ct-filled'); } });
+      say(e.message, 'ct-err');
+      result.className = 'ct-result hidden';
+      msg.scrollIntoView({ block: 'nearest' });
+    }
+  };
+
+  modal.addEventListener('click', (e) => {
+    const c = e.target.closest('[data-ct-convert]');
+    if (c) { convert(c.dataset.ctConvert); return; }
+    const cp = e.target.closest('[data-ct-copy]');
+    if (cp) coordToolCopy(cp.dataset.ctCopy, cp);
+  });
+  // 使用者自己改過的格子就不再是「算出來的值」
+  modal.addEventListener('input', (e) => { if (e.target.classList) e.target.classList.remove('ct-filled'); });
+  modal.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.target.tagName !== 'INPUT') return;
+    const block = e.target.closest('.ct-block');
+    const btn = block && block.querySelector('[data-ct-convert]');
+    if (btn) { e.preventDefault(); convert(btn.dataset.ctConvert); }
+  });
+  $('btnCoordToolClear').addEventListener('click', clear);
+  $('btnCoordToolClose').addEventListener('click', () => modal.classList.add('hidden'));
+}
+
 function openAgencyRefModal() {
   document.getElementById('agencyRefSearch').value = '';
   renderAgencyRefTable('');
@@ -4194,7 +4517,7 @@ function confirmBasicInfoBeforeExport(projectId) {
   return confirm(
     (missing.length ? `「基本資料」頁還有官方必填欄位是空的：\n`
       + missing.map(m => `　・${m.label}（${m.why}）`).join('\n') + '\n\n' : '')
-    + (warn.length ? `「基本資料」頁有欄位格式要確認：\n`
+    + (warn.length ? `另外有${missing.length ? '' : '一項'}提醒（確認無誤的話不改也可以匯出）：\n`
       + warn.map(m => `　・${m.why}`).join('\n') + '\n\n' : '')
     + `這些欄位會寫進匯出檔的「監測點基本資料」工作表，可能導致上傳被退件。\n\n`
     + `按「確定」仍要照原樣匯出，按「取消」回去「基本資料」頁修改。`
@@ -6723,6 +7046,8 @@ function init() {
   document.getElementById('unitRefSearch').addEventListener('input', (e) => renderUnitRefTable(e.target.value));
 
   document.getElementById('btnAgencyCodeRef').addEventListener('click', openAgencyRefModal);
+  document.getElementById('btnCoordTool').addEventListener('click', openCoordToolModal);
+  wireCoordTool();
   document.getElementById('btnAgencyRefClose').addEventListener('click', () => document.getElementById('agencyRefModal').classList.add('hidden'));
   document.getElementById('agencyRefSearch').addEventListener('input', (e) => renderAgencyRefTable(e.target.value));
 

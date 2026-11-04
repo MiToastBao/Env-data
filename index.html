@@ -18,6 +18,7 @@
       <button id="btnTemplateDownload" class="btn btn-ghost" title="下載空白填寫範本" style="display:none">📥 範本下載</button>
       <button id="btnUnitCodeRef" class="btn btn-ghost" title="查詢單位代碼表">📖 單位代碼表</button>
       <button id="btnAgencyCodeRef" class="btn btn-ghost" title="查詢檢測機構代碼表">🏢 檢測機構代碼表</button>
+      <button id="btnCoordTool" class="btn btn-ghost" title="經緯度十進位、度分、度分秒與 TWD97 二度分帶互相轉換">🧭 座標轉換</button>
       <a id="btnEiasLink" class="btn btn-ghost" href="https://eias.moenv.gov.tw/" target="_blank" rel="noopener" title="開啟環評線上申報網站（另開新分頁）">🔗 環評申報網站</a>
       <button id="btnEiasLinkEdit" class="btn btn-ghost btn-sm" title="若網站網址未來變動，可在此手動修正">✏️</button>
       <button id="btnBackupExport" class="btn btn-ghost" title="將所有計畫資料匯出成一個備份檔（JSON），可用於換瀏覽器或分享">匯出備份</button>
@@ -322,6 +323,59 @@
   </div>
 </div>
 
+<!-- Coordinate Converter Modal (v4.54, #88) -->
+<div id="coordToolModal" class="modal-overlay hidden">
+  <div class="modal modal-wide coord-tool">
+    <h3>🧭 座標轉換</h3>
+    <p class="hint">在任何一區輸入座標後按該區的「轉換」，其他格式會全部算好。TWD97 二度分帶的中央經線一律為東經 121 度（和環境部座標轉換網頁相同）。</p>
+    <div class="ct-block ct-paste">
+      <div class="ct-title">📋 直接貼上（自動判斷格式）</div>
+      <div class="ct-row">
+        <input type="text" id="ctPaste" class="ct-wide" placeholder="例如 24.502389, 120.954111　或　24 30 08.6, 120 57 14.8　或　175345, 2591215">
+        <button class="btn btn-primary btn-sm" data-ct-convert="paste">轉換</button>
+      </div>
+    </div>
+    <div class="ct-block">
+      <div class="ct-title">經緯度十進位（DD）　<span class="hint">例 24.502389, 120.954111</span></div>
+      <div class="ct-row">
+        <label>緯度 <input type="text" id="ctDdLat" inputmode="decimal"></label>
+        <label>經度 <input type="text" id="ctDdLon" inputmode="decimal"></label>
+        <button class="btn btn-ghost btn-sm" data-ct-convert="dd">轉換</button>
+      </div>
+    </div>
+    <div class="ct-block">
+      <div class="ct-title">經緯度，度分（DMM）　<span class="hint">例 24°30.1433′, 120°57.2467′</span></div>
+      <div class="ct-row">
+        <span class="ct-grp"><span class="ct-lab">緯度</span><input type="text" id="ctDmmLatD" class="ct-num" inputmode="numeric" aria-label="緯度的度">度<input type="text" id="ctDmmLatM" class="ct-mid" inputmode="decimal" aria-label="緯度的分">分</span>
+        <span class="ct-grp"><span class="ct-lab">經度</span><input type="text" id="ctDmmLonD" class="ct-num" inputmode="numeric" aria-label="經度的度">度<input type="text" id="ctDmmLonM" class="ct-mid" inputmode="decimal" aria-label="經度的分">分</span>
+        <button class="btn btn-ghost btn-sm" data-ct-convert="dmm">轉換</button>
+      </div>
+    </div>
+    <div class="ct-block">
+      <div class="ct-title">經緯度，度分秒（DMS）　<span class="hint">例 24 30 08.6, 120 57 14.8</span></div>
+      <div class="ct-row">
+        <span class="ct-grp"><span class="ct-lab">緯度</span><input type="text" id="ctDmsLatD" class="ct-num" inputmode="numeric" aria-label="緯度的度">度<input type="text" id="ctDmsLatM" class="ct-num" inputmode="numeric" aria-label="緯度的分">分<input type="text" id="ctDmsLatS" class="ct-sec" inputmode="decimal" aria-label="緯度的秒">秒</span>
+        <span class="ct-grp"><span class="ct-lab">經度</span><input type="text" id="ctDmsLonD" class="ct-num" inputmode="numeric" aria-label="經度的度">度<input type="text" id="ctDmsLonM" class="ct-num" inputmode="numeric" aria-label="經度的分">分<input type="text" id="ctDmsLonS" class="ct-sec" inputmode="decimal" aria-label="經度的秒">秒</span>
+        <button class="btn btn-ghost btn-sm" data-ct-convert="dms">轉換</button>
+      </div>
+    </div>
+    <div class="ct-block">
+      <div class="ct-title">二度分帶座標（TWD97，中央經線 121°）　<span class="hint">例 175345, 2591215</span></div>
+      <div class="ct-row">
+        <label>X <input type="text" id="ctTmX" inputmode="decimal"></label>
+        <label>Y <input type="text" id="ctTmY" inputmode="decimal"></label>
+        <button class="btn btn-ghost btn-sm" data-ct-convert="tm2">轉換</button>
+      </div>
+    </div>
+    <div id="ctMsg" class="ct-msg hidden"></div>
+    <div id="ctResult" class="ct-result hidden"></div>
+    <div class="modal-actions">
+      <button id="btnCoordToolClear" class="btn btn-ghost">清除</button>
+      <button id="btnCoordToolClose" class="btn btn-primary">關閉</button>
+    </div>
+  </div>
+</div>
+
 <!-- Common Items Add Modal -->
 <div id="commonItemsModal" class="modal-overlay hidden">
   <div class="modal modal-wide">
@@ -408,6 +462,7 @@
 <script src="js/datetime.js"></script>
 <script src="js/schema.js"></script>
 <script src="js/codes.js"></script>
+<script src="js/coords.js"></script>
 <script src="js/storage.js"></script>
 <script src="js/import.js"></script>
 <script src="js/autodetect.js"></script>

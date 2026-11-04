@@ -692,7 +692,7 @@ function coordViolations(row, cat) {
       // v4.52（#70，使用者 11/4：只提醒不自動改）：填 2 但數字像 TWD97（經度 6 位、緯度 7 位整數）
       const twdLike = key === '採樣座標-緯度 Y' ? /^2\d{6}(\.\d+)?$/.test(raw) : /^[1-3]\d{5}(\.\d+)?$/.test(raw);
       if (twdLike) {
-        out.push({ key, label, value: raw,
+        out.push({ key, label, value: raw, group: '座標系統填 2（WGS84），但座標看起來是 TWD97——座標系統是否應填 3',
           why: `座標系統填 2（WGS84），但「${label}」的 ${raw} 看起來是 TWD97 座標（經度 6 位、緯度 7 位數字）——請確認座標系統是不是應該填 3` });
         return;
       }
@@ -705,7 +705,7 @@ function coordViolations(row, cat) {
       // v4.52（#70）：填 3 但數字像經緯度度數（經度 116～125、緯度 20～26，帶小數）
       const [dlo, dhi] = key === '採樣座標-緯度 Y' ? [20, 26] : [116, 125];
       if (raw.includes('.') && n >= dlo && n <= dhi) {
-        out.push({ key, label, value: raw,
+        out.push({ key, label, value: raw, group: '座標系統填 3（TWD97-TM2），但座標看起來是經緯度度數——座標系統是否應填 2',
           why: `座標系統填 3（TWD97-TM2），但「${label}」的 ${raw} 看起來是經緯度度數（WGS84）——請確認座標系統是不是應該填 2` });
         return;
       }
@@ -713,12 +713,12 @@ function coordViolations(row, cat) {
       if (new RegExp(`^\\d{${want}}$`).test(raw)) return; // 正好 want 位純整數，過
       if (raw.includes('.')) {
         // 最常見的一種：位數對，但後面多了小數。講清楚要怎麼改，不要只說「不合規」。
-        out.push({ key, label, value: raw,
+        out.push({ key, label, value: raw, group: `座標系統填 3 時，「${label}」要 ${want} 位整數（不含小數），位數不對`,
           why: `座標系統填 3（TWD97-TM2）時，官方規定「${label}」為 ${want} 位數字（辭典範例 ${example}），`
             + `不含小數。目前是「${raw}」——請把小數點以下四捨五入`
             + `${intDigits !== want ? `，而且整數部分只有 ${intDigits} 位、應為 ${want} 位` : `（改成 ${Math.round(n)}）`}` });
       } else {
-        out.push({ key, label, value: raw,
+        out.push({ key, label, value: raw, group: `座標系統填 3 時，「${label}」要 ${want} 位整數，位數不對`,
           why: `座標系統填 3（TWD97-TM2）時，官方規定「${label}」為 ${want} 位數字（辭典範例 ${example}）。`
             + `目前是「${raw}」，共 ${intDigits} 位` });
       }
@@ -737,7 +737,7 @@ function charLimitViolations(row, cat) {
     if (!cat.fields.some((f) => f.key === key)) return; // 這一類沒有這個欄位就跳過
     const v = String(row[key] ?? '').trim();
     if (v !== '' && charLen(v) > max) {
-      out.push({ key, label: key, value: v,
+      out.push({ key, label: key, value: v, group: `「${key}」超過 ${max} 字`,
         why: `官方規定「${key}」限 ${max} 字以內，目前 ${charLen(v)} 字` });
     }
   });
@@ -842,10 +842,14 @@ function valueAndCodeViolations(row, cat) {
     if (a !== '') {
       const bad = a.split(';').map((x) => x.trim()).filter((x) => !AGENCY_CODES[x]);
       if (bad.length) {
-        const full = /[；，,、]/.test(a);
+        // v4.54（#91）：用了分號以外的符號、空白、重複或多餘的分號 → 講「分隔符號不對」，不要講成「代碼表裡沒有」
+        const full = /[；，,、\/／+＋&＆\-－\s]|及|和|;;|^;|;$/.test(a);
+        const wide = /[０-９Ａ-Ｚａ-ｚ]/.test(a), lowerAA = /(^|;)\s*aa\s*(;|$)/i.test(a) && !/(^|;)\s*AA\s*(;|$)/.test(a);
         out.push({ key: '檢測機構許可證號', label: '檢測機構許可證號', value: a,
-          why: full
-            ? `多個機構代碼要用半形分號「;」分隔，例如 1;2（目前是「${a}」）`
+          why: (!full && wide) ? `機構代碼要用半形數字（目前是「${a}」）`
+            : (!full && lowerAA) ? `不在代碼表內的機構要填大寫「AA」（目前是「${a}」）`
+            : full
+            ? `多個機構代碼要用半形分號「;」分隔，例如 1;2，前後不要多打分號或空白（目前是「${a}」）`
             : `「檢測機構許可證號」要填檢測機構代碼表裡的代碼，不在表內的機構填 AA 並在「其他檢測機構名稱」寫公司名稱（目前「${bad.filter(Boolean).join('、') || '空的分段'}」代碼表裡沒有）` });
       }
     }
@@ -857,9 +861,64 @@ function valueAndCodeViolations(row, cat) {
  * 這一列有哪些格子不符合官方格式規定。
  * 給表格紅框、滑鼠提示、匯出前清點共用。
  */
+/*
+ * 日期、時間、起迄順序（v4.53，修正清單 #82～#84，使用者 11/4 裁示）
+ * ─────────────────────────────────────────────────────────────
+ * 官方規定日期填西元 yyyy/mm/dd、時間填 24 小時制 hh:mm（勿用分號、勿填 24:00）。
+ *   ・讀得懂但寫法不對的（民國 115/07/08、10時30分、08;30）→ 一鍵修正處理，這裡只抓分號
+ *   ・讀不懂的（「七月初」「上午」「連續24小時」）→ 這裡紅框，請使用者照報告手動改
+ *   ・迄早於起 → 這裡紅框（不知道是起還是迄寫錯，不自動改）
+ * 24:00 等超出 00:00～23:59 的值由表格的時間格與匯出前「時間超出範圍」那一道處理，這裡不重複。
+ */
+const DATE_FIELDS = ['日期(起)', '日期(迄)'];
+const TIME_FIELDS = ['時間(起)', '時間(迄)'];
+function dateTimeViolations(row, cat) {
+  if (typeof DateTimeUtil === 'undefined') return [];
+  const has = (k) => cat.fields.some((f) => f.key === k);
+  const out = [];
+  const isoOf = (k) => { const v = DateTimeUtil.toISODate(row[k]); return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : ''; };
+  const hmsOf = (k) => { const v = DateTimeUtil.toHMS(row[k]); return /^\d{2}:\d{2}:\d{2}$/.test(v) && !DateTimeUtil.outOfRangeTimeReason(v) ? v : ''; };
+  DATE_FIELDS.filter(has).forEach((k) => {
+    const raw = String(row[k] ?? '').trim();
+    if (raw !== '' && !isoOf(k)) {
+      out.push({ key: k, label: k, value: raw, group: '日期看不懂是哪一天（要填西元 yyyy/mm/dd）',
+        why: `「${k}」看不懂是哪一天（目前是「${raw}」）。官方規定日期填西元 yyyy/mm/dd，例如 2026/07/08，請對照報告修改` });
+    }
+  });
+  TIME_FIELDS.filter(has).forEach((k) => {
+    const raw = String(row[k] ?? '').trim();
+    if (raw === '') return;
+    if (/[;；]/.test(raw)) {
+      out.push({ key: k, label: k, value: raw, group: '時間用了分號（要寫 hh:mm）',
+        why: `「${k}」用了分號（目前是「${raw}」）。官方規定時間寫 24 小時制 hh:mm，勿用分號` });
+      return;
+    }
+    if (DateTimeUtil.outOfRangeTimeReason(raw) || DateTimeUtil.outOfRangeTimeReason(DateTimeUtil.toHMS(raw))) return;
+    if (!hmsOf(k)) {
+      out.push({ key: k, label: k, value: raw, group: '時間看不懂（要填 24 小時制 hh:mm）',
+        why: `「${k}」看不懂是幾點（目前是「${raw}」）。官方規定時間填 24 小時制 hh:mm，例如 08:30，請對照報告修改` });
+    }
+  });
+  if (has('日期(起)') && has('日期(迄)')) {
+    const ds = isoOf('日期(起)'), de = isoOf('日期(迄)');
+    if (ds && de && de < ds) {
+      out.push({ key: '日期(迄)', label: '日期(迄)', value: row['日期(迄)'], group: '迄（結束）日期早於起（開始）日期',
+        why: `日期(迄) ${de.replace(/-/g, '/')} 早於日期(起) ${ds.replace(/-/g, '/')}。請對照報告確認是哪一個寫錯` });
+    } else if (ds && de && ds === de && has('時間(起)') && has('時間(迄)')) {
+      const ts = hmsOf('時間(起)'), te = hmsOf('時間(迄)');
+      if (ts && te && te < ts) {
+        out.push({ key: '時間(迄)', label: '時間(迄)', value: row['時間(迄)'], group: '同一天裡，迄（結束）時間早於起（開始）時間',
+          why: `同一天（${ds.replace(/-/g, '/')}）的時間(迄) ${te.slice(0, 5)} 早於時間(起) ${ts.slice(0, 5)}。請確認是時間寫錯，還是日期(迄)應該是隔天` });
+      }
+    }
+  }
+  return out;
+}
+
 function fieldFormatViolations(row, cat) {
   if (!cat) return [];
   const out = coordViolations(row, cat);
+  out.push(...dateTimeViolations(row, cat));
   out.push(...charLimitViolations(row, cat));
   if (cat.key === 'eco') out.push(...ecoFormatViolations(row));
   out.push(...valueAndCodeViolations(row, cat));
@@ -895,7 +954,7 @@ function basicInfoFormatWarnings(info) {
   const code = String((info || {})['計畫代碼'] ?? '').trim();
   if (/^[A-Za-z]+-\d{3}(\.\d+)?$/.test(code)) {
     out.push({ key: '計畫代碼', label: '計畫代碼',
-      why: `「${code}」是舊版三碼格式，官方要「英文代碼-四碼流水號」（例如 E-0001）。請到環評書件系統確認正確的計畫代碼` });
+      why: `提醒：「${code}」是舊版三碼格式，官方說明寫「英文代碼-四碼流水號」（例如 E-0001）。請到環評書件系統確認正確的計畫代碼；確認無誤的話不改也可以匯出` });
   }
   return out;
 }
