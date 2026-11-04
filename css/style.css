@@ -529,3 +529,5 @@ input.cell-soft-warn, select.cell-soft-warn, textarea.cell-soft-warn { border: 2
 .brand { white-space: nowrap; }
 .topbar-actions { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
 .topbar-actions .btn { white-space: nowrap; }
+/* v4.57：「版本號 開/關」是設定開關，開的時候用主色綠，不用紅色（紅色是警示） */
+.content .btn-ghost.btn-toggle.btn-active { background: var(--primary); color: #fff; }

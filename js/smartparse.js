@@ -309,11 +309,21 @@ const SmartParse = {
   extractMethodCode(text) {
     if (!text) return '';
     const s = String(text).trim();
-    const m = s.match(/NIEA\s*([A-Z]?\d+)/i);
-    if (m) return `NIEA ${m[1]}`;
+    // v4.57（#95）：「版本號 開」時保留版本號（NIEA W217.52A），關（預設）時只留前半段（NIEA W217）
+    const m = s.match(/NIEA\s*([A-Z]?\d+)(\.\d+[A-Z]?)?/i);
+    if (m) return `NIEA ${m[1].toUpperCase()}${this.keepMethodVersion() && m[2] ? m[2].toUpperCase() : ''}`;
     const other = s.match(/\b(?:CNS|EPA|ASTM|APHA|ISO)\s*[A-Z]?\d[\w.-]*/i);
     if (other) return other[0].replace(/\s+/g, ' ').trim();
     return s.length > 10 ? '' : s;
+  },
+  /** 由 app.js 設定：目前（匯入中的）計畫是否打開「版本號」。沒設定時一律不帶版本號。 */
+  methodVersionResolver: null,
+  keepMethodVersion() {
+    try { return typeof this.methodVersionResolver === 'function' && !!this.methodVersionResolver(); } catch (e) { return false; }
+  },
+  /** 方法比對用：只看版本號以前的部分（NIEA W217.52A → NIEA W217）。 */
+  methodBase(text) {
+    return String(text ?? '').trim().replace(/^(NIEA\s*[A-Z]?\d+)\.\d+[A-Z]?$/i, '$1').replace(/^NIEA\s*/i, 'NIEA ').toUpperCase();
   },
   /** "噪音管制區第二類" / "第2類" -> "第2類" */
   extractZone(text) {
@@ -1193,9 +1203,9 @@ const SmartParse = {
     const methodMap = {};
     if (methodNoteHit) {
       const noteText = this.cellStr(grid[methodNoteHit.r][methodNoteHit.c]);
-      const re = /([A-Za-z0-9.]+):NIEA\s*([A-Z]?\d+)/g;
+      const re = /([A-Za-z0-9.]+):NIEA\s*([A-Z]?\d+(?:\.\d+[A-Z]?)?)/g;
       let m;
-      while ((m = re.exec(noteText))) methodMap[m[1].toUpperCase()] = `NIEA ${m[2]}`;
+      while ((m = re.exec(noteText))) methodMap[m[1].toUpperCase()] = this.extractMethodCode(`NIEA ${m[2]}`);
     }
     const pm25Method = this.extractMethodCode(this.cellStr(grid[unitRow]?.[cols.method])) || 'NIEA A205';
 
@@ -1404,9 +1414,9 @@ const SmartParse = {
     const methodNoteHit = this.findCell(grid, /檢測方法[:：].*NIEA/);
     if (methodNoteHit) {
       const noteText = this.cellStr(grid[methodNoteHit.r][methodNoteHit.c]);
-      const re = /([A-Za-z0-9.]+)\s*[:：]\s*NIEA\s*([A-Z]?\d+)/g;
+      const re = /([A-Za-z0-9.]+)\s*[:：]\s*NIEA\s*([A-Z]?\d+(?:\.\d+[A-Z]?)?)/g;
       let m;
-      while ((m = re.exec(noteText))) methodMap[m[1].toUpperCase()] = `NIEA ${m[2]}`;
+      while ((m = re.exec(noteText))) methodMap[m[1].toUpperCase()] = this.extractMethodCode(`NIEA ${m[2]}`);
     }
     const agencyCode = this.reverseAgencyLookup(this.labelValueSameCell(grid, /採樣單位[:：]/) || this.labelValue(grid, /採樣單位[:：]/));
 

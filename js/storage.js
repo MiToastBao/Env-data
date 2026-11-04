@@ -100,6 +100,16 @@ const DataStore = {
   _decimalKey(projectId) {
     return `envapp_decimal_settings_v1_${projectId}`;
   },
+  // v4.57（#95）：「版本號 開/關」——匯入時檢測方法要不要帶版本號（NIEA W217.52A／NIEA W217）。每個計畫各一份，預設關。
+  _methodVerKey(projectId) {
+    return `envapp_method_version_v1_${projectId}`;
+  },
+  getMethodVersion(projectId) {
+    try { return localStorage.getItem(this._methodVerKey(projectId)) === '1'; } catch (e) { return false; }
+  },
+  setMethodVersion(projectId, on) {
+    this._setItem(this._methodVerKey(projectId), on ? '1' : '0');
+  },
 
   /**
    * v4.46 一次性轉換（冪等，每次開啟都跑也安全）：
@@ -229,7 +239,7 @@ const DataStore = {
     return [DECIMAL_SETTINGS_KEY, ...CATEGORY_ORDER.map(c => `envapp_itemPresets_${c}`)];
   },
   _projectSettings(projectId) {
-    const out = { decimal: localStorage.getItem(this._decimalKey(projectId)), presets: {} };
+    const out = { decimal: localStorage.getItem(this._decimalKey(projectId)), methodVersion: localStorage.getItem(this._methodVerKey(projectId)), presets: {} };
     CATEGORY_ORDER.forEach(c => { out.presets[c] = localStorage.getItem(this._presetKey(projectId, c)); });
     return out;
   },
@@ -286,6 +296,7 @@ const DataStore = {
         const bs = (payload.browserSettings && typeof payload.browserSettings === 'object') ? payload.browserSettings : {};
         const dec = typeof st.decimal === 'string' ? st.decimal : bs[DECIMAL_SETTINGS_KEY];
         if (typeof dec === 'string') this._setItem(this._decimalKey(newId), dec);
+        if (typeof st.methodVersion === 'string') this._setItem(this._methodVerKey(newId), st.methodVersion);
         CATEGORY_ORDER.forEach(c => {
           const pr = (st.presets && typeof st.presets[c] === 'string') ? st.presets[c] : bs[`envapp_itemPresets_${c}`];
           if (typeof pr === 'string') this._setItem(this._presetKey(newId, c), pr);
@@ -317,6 +328,7 @@ const DataStore = {
       localStorage.removeItem(this._presetKey(projectId, cat));
     });
     localStorage.removeItem(this._decimalKey(projectId));
+    localStorage.removeItem(this._methodVerKey(projectId));
     // v4.30 的一次性轉換旗標。它不是每個類別各一把，而是整份 JSON 一個物件，
     // 所以要挑掉這個專案的那一項，不能整把刪掉（會影響其他專案）。
     try {

@@ -3,9 +3,24 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.56';
+const APP_VERSION = 'v4.58';
 
 const CHANGELOG = [
+  {
+    version: 'v4.58',
+    date: '2026-11-04',
+    notes: [
+      '【新增】一鍵修正：生態「特有性」的簡寫改成官方寫法——特有、臺灣特有種、E → 特有種；特亞、特有亞、Es → 特有亞種。「外來」這類官方選項裡沒有的不改，只紅框。',
+    ],
+  },
+  {
+    version: 'v4.57',
+    date: '2026-11-04',
+    notes: [
+      '【新增】<strong>「版本號 開/關」按鈕</strong>（在「🧪 檢測方法管理」右邊）：開＝匯入時保留報告上的完整檢測方法（例如 NIEA W217.52A），關（預設）＝只留前半段（NIEA W217）。每個計畫各自設定，五類共用；備份檔也會帶上這個設定。',
+      '【調整】和上一季比對檢測方法時只看前半段：版本號不同（.51A → .52A）不再提醒，前半段不同才提醒。',
+    ],
+  },
   {
     version: 'v4.56',
     date: '2026-11-04',

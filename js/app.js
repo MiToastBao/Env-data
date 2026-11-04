@@ -499,6 +499,26 @@ function getImportProject() {
   return DataStore.getProjects().find(p => p.id === state.importProjectId) || null;
 }
 
+/*
+ * v4.57（#95、#96）：「版本號 開/關」
+ *   開：匯入的檢測方法保留報告上的版本號（NIEA W217.52A）；關（預設）：只留前半段（NIEA W217）。
+ *   每個計畫各一份。匯入中的計畫優先（匯入途中切換側欄計畫也不會用錯設定）。
+ *   方法比對（和上一季／記憶比較）一律只看前半段：版本號不同不提醒（使用者 11/4 裁示）。
+ */
+function methodVersionOn() {
+  const p = state.importProjectId ? getImportProject() : null;
+  const id = p ? p.id : state.currentProjectId;
+  return id ? DataStore.getMethodVersion(id) : false;
+}
+SmartParse.methodVersionResolver = methodVersionOn;
+/** 依目前開關整理一個方法字串：關的時候把 NIEA 的版本號拿掉；其他寫法不動。 */
+function methodForPref(m) {
+  if (!m || methodVersionOn()) return m;
+  const mm = String(m).trim().match(/^NIEA\s*([A-Z]?\d+)\.\d+[A-Z]?$/i);
+  return mm ? `NIEA ${mm[1].toUpperCase()}` : m;
+}
+function sameMethodBase(a, b) { return SmartParse.methodBase(a) === SmartParse.methodBase(b); }
+
 // ---------- project list ----------
 function renderProjectList() {
   const list = document.getElementById('projectList');
@@ -845,6 +865,8 @@ const AUTO_FIX_KINDS = [
   { kind: 'timesep', label: '時間寫法不對（08;30、10時30分、1030） → hh:mm', why: '時間為 24 小時制 hh:mm，勿用分號（辭典、說明會 p.15）。只改讀得懂是幾點的；看不懂的（例如「上午」）不改，會列在「時間看不懂」那一類。' },
   { kind: 'date', label: '日期不是西元格式（例如民國 115/07/08） → 西元 2026/07/08', why: '日期一律填西元 yyyy/mm/dd，勿用民國年（辭典、說明會 p.15）。畫面上雖然已經顯示成西元，存的值還是原樣。' },
   { kind: 'cons', label: '保育分類寫法不一致（一級、Ⅱ、3、珍貴稀有…） → I／II／III', why: '保育分類只能填英文大寫 I 組成的 I、II、III（勿填數字、國字、羅馬數字符號）。第一級＝瀕臨絕種＝I、第二級＝珍貴稀有＝II、第三級＝其他應予保育＝III。EX、CR、LC 等 IUCN 等級對不上，不改。' },
+  // v4.58（#97，使用者 11/4）
+  { kind: 'endemic', label: '特有性寫成簡寫（特有、特亞、E、Es） → 特有種／特有亞種', why: '特有性只能填「特有種」「特有亞種」（辭典）。特有、臺灣特有種、E → 特有種；特亞、特有亞、Es → 特有亞種。「外來」「特」這類對不上的不改。' },
   { kind: 'qty', label: '生態數量寫成「5隻」「12株」 → 5、12', why: '數量只能填數字或「-」。單位欄空白時，把「隻」「株」這些字搬到單位欄；單位欄已經填了別的字的不改。「約10」「10+」「>5」意思不確定，不改。' },
 ];
 
@@ -868,6 +890,15 @@ function normalizeConservation(v) {
   s = s.replace(/Ⅰ|ⅰ/g, 'I').replace(/Ⅱ|ⅱ/g, 'II').replace(/Ⅲ|ⅲ/g, 'III');
   const map = { 'I': 'I', 'II': 'II', 'III': 'III', '1': 'I', '2': 'II', '3': 'III', '一': 'I', '二': 'II', '三': 'III' };
   return map[s.toUpperCase()] || map[s] || '';
+}
+
+/** 生態特有性的各種寫法 → 特有種／特有亞種；認不得回傳 ''。 */
+function normalizeEndemic(v) {
+  const s = toHalfWidth(v).replace(/[\s\u3000()（）［］\[\]]/g, '').replace(/^(臺灣|台灣)/, '');
+  if (s === '') return '';
+  if (/^(特有|特有種|E)$/i.test(s)) return '特有種';
+  if (/^(特亞|特有亞|特有亞種|ES)$/i.test(s)) return '特有亞種';
+  return '';
 }
 
 /** 單位文字 → 代碼：只認代碼表裡寫法完全相同而且只有一個的。 */
@@ -1033,6 +1064,11 @@ function collectAutoFixes(rows, cat) {
       const raw = String(row['保育分類'] ?? '');
       const to = normalizeConservation(raw);
       if (to && to !== raw) push('cons', [{ key: '保育分類', from: raw, to }]);
+    }
+    if (has('特有性')) {
+      const raw = String(row['特有性'] ?? '');
+      const to = normalizeEndemic(raw);
+      if (to && to !== raw) push('endemic', [{ key: '特有性', from: raw, to }]);
     }
     if (has('數量')) {
       const q = toHalfWidth(row['數量']);
@@ -1336,6 +1372,7 @@ function renderCategoryTab(project, catKey) {
         <button class="btn btn-ghost btn-sm" id="btnAddCommonItems">☑️ 常用測項新增</button>
         <button class="btn btn-ghost btn-sm" id="btnCoordManager">📍 測站座標管理</button>
         ${cat.methodField ? `<button class="btn btn-ghost btn-sm" id="btnMethodManager">🧪 檢測方法管理</button>` : ''}
+        ${cat.methodField ? (() => { const on = DataStore.getMethodVersion(project.id); return `<button class="btn btn-ghost btn-sm btn-toggle${on ? ' btn-active' : ''}" id="btnMethodVersion" aria-pressed="${on}" title="匯入時檢測方法是否保留版本號（例：NIEA W217.52A／NIEA W217）。每個計畫各自設定、五類共用。">版本號 ${on ? '開' : '關'}</button>`; })() : ''}
         <button class="btn btn-ghost btn-sm" id="btnDecimalSettings" title="設定各類別的數值欄位要顯示幾位小數，以及要用補零還是四捨五入。只影響畫面與匯出，不會改動存起來的原始值。">🔢 小數位數設定</button>
         <button class="btn btn-ghost btn-sm" id="btnBatchHistory">📜 匯入紀錄${batches.length ? ` (${batches.length})` : ''}</button>
         ${showPeriodUI ? `
@@ -1405,6 +1442,10 @@ function renderCategoryTab(project, catKey) {
   document.getElementById('btnCoordManager').addEventListener('click', () => openCoordModal(project, catKey));
   if (cat.methodField) {
     document.getElementById('btnMethodManager').addEventListener('click', () => openMethodModal(project, catKey));
+    document.getElementById('btnMethodVersion').addEventListener('click', () => {
+      DataStore.setMethodVersion(project.id, !DataStore.getMethodVersion(project.id));
+      renderContentPreservingScroll();
+    });
   }
   document.getElementById('btnBatchHistory').addEventListener('click', () => openBatchHistoryModal(project, catKey));
   document.getElementById('btnDecimalSettings').addEventListener('click', () => openDecimalSettingsModal(catKey));
@@ -5386,6 +5427,7 @@ function renderMappingStep() {
     const currentMapping = {};
     tbody.querySelectorAll('select[data-target-field]').forEach(sel => { currentMapping[sel.dataset.targetField] = sel.value || null; });
     const mappedRows = ImportEngine.applyMapping(rows, currentMapping, cat.fields);
+    if (cat.methodField) mappedRows.forEach(r => { if (r[cat.methodField]) r[cat.methodField] = methodForPref(r[cat.methodField]); });
     mappedRows.forEach((r, i) => { r._rowUid = i; });
     const itemFilteredRows = state.itemSelection
       ? mappedRows.filter(r => state.itemSelection.has((r[cat.itemField] || '').trim() || '（未標示）'))
@@ -5408,7 +5450,7 @@ function renderMappingStep() {
       const diffsByItem = {};
       mappedRows.forEach(row => {
         const mem = memory[row[cat.itemField]];
-        if (mem && mem.method && row[cat.methodField] && row[cat.methodField] !== mem.method) {
+        if (mem && mem.method && row[cat.methodField] && !sameMethodBase(row[cat.methodField], mem.method)) {
           diffsByItem[row[cat.itemField]] = { reportMethod: row[cat.methodField], memoryMethod: mem.method };
         }
       });
@@ -5492,8 +5534,8 @@ function renderSmartImportPreview() {
       const mem = memory[row[cat.itemField]];
       if (mem) {
         if (cat.methodField && !row[cat.methodField] && mem.method) {
-          row[cat.methodField] = mem.method; row._methodFromMemory = true;
-        } else if (cat.methodField && row[cat.methodField] && mem.method && row[cat.methodField] !== mem.method) {
+          row[cat.methodField] = methodForPref(mem.method); row._methodFromMemory = true;
+        } else if (cat.methodField && row[cat.methodField] && mem.method && !sameMethodBase(row[cat.methodField], mem.method)) {
           methodDiffsByItem[row[cat.itemField]] = { reportMethod: row[cat.methodField], memoryMethod: mem.method };
         }
         if (cat.unitField && !row[cat.unitField] && mem.unitCode) {
@@ -5504,7 +5546,7 @@ function renderSmartImportPreview() {
       if (loc) {
         const histEntry = (siteHistory[loc] || {})[itemIdentityKey(row, cat)];
         if (histEntry && histEntry.snapshot) {
-          Object.entries(histEntry.snapshot).forEach(([k, v]) => { if (v && !row[k]) row[k] = v; });
+          Object.entries(histEntry.snapshot).forEach(([k, v]) => { if (v && !row[k]) row[k] = (k === cat.methodField ? methodForPref(v) : v); });
         }
       }
       // No history to fall back on doesn't have to mean typing the unit code by
@@ -6553,7 +6595,7 @@ function buildSuggestedRows(project, catKey, cat, result) {
       .forEach(k => { if (k in newRow) newRow[k] = ''; });
     const mem = itemMemory[itemName];
     if (mem) {
-      if (cat.methodField && !newRow[cat.methodField] && mem.method) newRow[cat.methodField] = mem.method;
+      if (cat.methodField && !newRow[cat.methodField] && mem.method) newRow[cat.methodField] = methodForPref(mem.method);
       if (cat.unitField && !newRow[cat.unitField] && mem.unitCode) newRow[cat.unitField] = mem.unitCode;
     }
     perItemRows.push({ template: newRow, copiesToAdd });
@@ -6831,6 +6873,7 @@ function confirmImport() {
   });
 
   const newRows = ImportEngine.applyMapping(state.importParsed.rows, mapping, cat.fields);
+  if (cat.methodField) newRows.forEach(r => { if (r[cat.methodField]) r[cat.methodField] = methodForPref(r[cat.methodField]); });
   newRows.forEach((r, i) => { r._rowUid = i; });
   /*
    * v4.51（#66，使用者裁示）：檢測數值寫成 ND 的，匯入時就轉成「比較關係 ND、檢測數值空白」。
@@ -6867,14 +6910,14 @@ function confirmImport() {
   newRows.forEach(row => {
     const mem = memory[row[cat.itemField]];
     if (mem) {
-      if (cat.methodField && !row[cat.methodField] && mem.method) row[cat.methodField] = mem.method;
+      if (cat.methodField && !row[cat.methodField] && mem.method) row[cat.methodField] = methodForPref(mem.method);
       if (cat.unitField && !row[cat.unitField] && mem.unitCode) row[cat.unitField] = mem.unitCode;
     }
     const loc = row[cat.locationField];
     if (loc) {
       const histEntry = (siteHistoryForFill[loc] || {})[itemIdentityKey(row, cat)];
       if (histEntry && histEntry.snapshot) {
-        Object.entries(histEntry.snapshot).forEach(([k, v]) => { if (v && !row[k]) row[k] = v; });
+        Object.entries(histEntry.snapshot).forEach(([k, v]) => { if (v && !row[k]) row[k] = (k === cat.methodField ? methodForPref(v) : v); });
       }
     }
     // No history to fall back on (brand-new project, or this item's first
