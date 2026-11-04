@@ -107,6 +107,7 @@
         </table>
       </div>
       <p class="hint" id="importRowCount"></p>
+      <div id="importStructureWarning" class="import-structure-warn hidden"></div>
       <div id="genericPeriodWrap" class="period-picker"></div>
       <div id="genericImportItemsWrap"></div>
       <div id="genericImportRowDetailWrap"></div>
@@ -372,6 +373,29 @@
     <div class="modal-actions">
       <button id="btnCoordToolClear" class="btn btn-ghost">清除</button>
       <button id="btnCoordToolClose" class="btn btn-primary">關閉</button>
+    </div>
+  </div>
+</div>
+
+<!-- Build next period from previous period (v4.59, #100 #101) -->
+<div id="prevPeriodModal" class="modal-overlay hidden">
+  <div class="modal modal-wide prev-period">
+    <h3>📋 用上一季建立本季</h3>
+    <p class="hint">照上一季的資料一筆一筆建立本季：地點、測項、單位等直接帶過來；<b>檢測機構、座標、檢測方法、檢測極限</b>先帶上一季的值並標紫色「請確認」；<b>日期時間起迄、比較關係、數值、備註</b>留空讓您輸入。</p>
+    <div class="pp-form">
+      <label class="pp-field">來源季別<select id="ppSource"></select></label>
+      <label class="pp-field">新的季別<input type="text" id="ppTarget" placeholder="例：115年第3季"></label>
+    </div>
+    <div class="pp-cols">
+      <div class="pp-col"><div class="pp-col-head"><b>測站</b><span><button class="btn btn-ghost btn-sm" data-pp-all="loc">全選</button><button class="btn btn-ghost btn-sm" data-pp-none="loc">全不選</button></span></div><div class="pp-list-box" id="ppLocList"></div></div>
+      <div class="pp-col"><div class="pp-col-head"><b>測項</b><span><button class="btn btn-ghost btn-sm" data-pp-all="item">全選</button><button class="btn btn-ghost btn-sm" data-pp-none="item">全不選</button></span></div><div class="pp-list-box" id="ppItemList"></div></div>
+    </div>
+    <p id="ppSummary" class="pp-summary"></p>
+    <p id="ppWarn" class="pp-warn hidden"></p>
+    <div class="modal-actions">
+      <button id="btnPpCancel" class="btn btn-ghost">取消</button>
+      <button id="btnPpExcel" class="btn btn-ghost">📥 下載成 Excel 填寫</button>
+      <button id="btnPpTable" class="btn btn-primary">📋 在表格中建立空白列</button>
     </div>
   </div>
 </div>

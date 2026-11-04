@@ -306,7 +306,8 @@ const CATEGORIES = {
        */
       { key: '單位', label: '單位', type: 'text',
         help: '選填。若不可數可填單位（例如：批、群），或覆蓋度（%）。這一欄填文字，不是單位代碼。' },
-      { key: '特有性', label: '特有性', type: 'select', options: ['', '特有種', '特有亞種'] },
+      // v4.59（#98，使用者 11/4）：辭典 24 只寫「特有種、特有亞種」、沒有要擋；填「外來」官方不會阻擋 → 也接受「外來種」
+      { key: '特有性', label: '特有性', type: 'select', options: ['', '特有種', '特有亞種', '外來種'] },
       { key: '保育分類', label: '保育分類', type: 'select', options: ['', 'I', 'II', 'III'] },
       { key: '調查方法描述', label: '調查方法描述', type: 'textarea', required: true },
       { key: '檢測機構許可證號', label: '檢測機構許可證號', type: 'agencycode', required: true },

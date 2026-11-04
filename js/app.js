@@ -17,6 +17,7 @@ const state = {
   // re-render (a sort click, an accepted sync, a column filter) can't silently clear
   // the search box while the ▾ filters still look active. That mismatch made
   // "select all visible + delete" act on far more rows than the person could see.
+  alienFixChoice: 'alien', // v4.59：一鍵修正「外來」→ 'alien'＝改成外來種、'clear'＝清空
   problemFilter: {}, // v4.53：{ [catKey]: 錯誤分類 id } — 「只看這類」
   problemGroups: {}, // v4.53：{ [catKey]: 這次畫面算出的錯誤分類 }
   problemPanelCollapsed: {},
@@ -289,13 +290,15 @@ function renderPeriodPicker(containerId, rows, onPeriodChange) {
   container.innerHTML = `
     <label class="period-picker-label">
       本批資料屬於哪一期？
-      <input type="number" id="periodRocYearInput" min="1" max="200" placeholder="民國年" value="${escapeAttr(parsed.rocYear || '')}" style="width:64px">
-      年第
-      <select id="periodQuarterInput" style="width:56px">
-        <option value="">-</option>
-        ${[1, 2, 3, 4].map(q => `<option value="${q}" ${String(q) === parsed.quarter ? 'selected' : ''}>${q}</option>`).join('')}
-      </select>
-      季
+      <span class="period-picker-row">
+        <input type="number" id="periodRocYearInput" min="1" max="200" placeholder="民國年" value="${escapeAttr(parsed.rocYear || '')}" style="width:72px">
+        <span>年第</span>
+        <select id="periodQuarterInput" style="width:56px">
+          <option value="">-</option>
+          ${[1, 2, 3, 4].map(q => `<option value="${q}" ${String(q) === parsed.quarter ? 'selected' : ''}>${q}</option>`).join('')}
+        </select>
+        <span>季</span>
+      </span>
     </label>
     <label class="period-picker-label">
       或直接輸入：
@@ -866,7 +869,9 @@ const AUTO_FIX_KINDS = [
   { kind: 'date', label: '日期不是西元格式（例如民國 115/07/08） → 西元 2026/07/08', why: '日期一律填西元 yyyy/mm/dd，勿用民國年（辭典、說明會 p.15）。畫面上雖然已經顯示成西元，存的值還是原樣。' },
   { kind: 'cons', label: '保育分類寫法不一致（一級、Ⅱ、3、珍貴稀有…） → I／II／III', why: '保育分類只能填英文大寫 I 組成的 I、II、III（勿填數字、國字、羅馬數字符號）。第一級＝瀕臨絕種＝I、第二級＝珍貴稀有＝II、第三級＝其他應予保育＝III。EX、CR、LC 等 IUCN 等級對不上，不改。' },
   // v4.58（#97，使用者 11/4）
-  { kind: 'endemic', label: '特有性寫成簡寫（特有、特亞、E、Es） → 特有種／特有亞種', why: '特有性只能填「特有種」「特有亞種」（辭典）。特有、臺灣特有種、E → 特有種；特亞、特有亞、Es → 特有亞種。「外來」「特」這類對不上的不改。' },
+  { kind: 'endemic', label: '特有性寫成簡寫（特有、特亞、E、Es…） → 特有種／特有亞種', why: '特有性填特有種、特有亞種（辭典），v4.59 起也接受外來種（使用者裁示）。明顯指特有種或特有亞種的寫法都會改，例如特有、特有種(E)、臺灣特有、E → 特有種；特亞、特亞種、特有亞種(Es)、Es → 特有亞種。「特」一個字、同一格寫了兩種的不改。' },
+  { kind: 'alien', label: '特有性寫成「外來」等寫法 → ', why: '特有性是選填，官方不會擋「外來」（使用者裁示）。可以統一改成「外來種」，或清空這一格，在標題的選單選一種。', choice: true },
+  { kind: 'endclear', label: '特有性填了特有種、特有亞種、外來種以外的值 → 清空', why: '特有性是選填欄位，填其他寫法（例如「-」「原生」「非特有種」）申報時可能被退件；清空不影響申報。不想清空可以取消這一類，自己改。' },
   { kind: 'qty', label: '生態數量寫成「5隻」「12株」 → 5、12', why: '數量只能填數字或「-」。單位欄空白時，把「隻」「株」這些字搬到單位欄；單位欄已經填了別的字的不改。「約10」「10+」「>5」意思不確定，不改。' },
 ];
 
@@ -892,13 +897,33 @@ function normalizeConservation(v) {
   return map[s.toUpperCase()] || map[s] || '';
 }
 
-/** 生態特有性的各種寫法 → 特有種／特有亞種；認不得回傳 ''。 */
-function normalizeEndemic(v) {
-  const s = toHalfWidth(v).replace(/[\s\u3000()（）［］\[\]]/g, '').replace(/^(臺灣|台灣)/, '');
+/*
+ * 生態特有性的寫法分類（v4.58 #97、v4.59 #98）
+ *   回傳：'特有種'｜'特有亞種'｜'alien'（外來、引進、歸化、入侵）｜'other'（其他寫法，例如「-」「原生」「非特有種」）｜''（判斷不了，不動）
+ *   ・明顯指特有種／特有亞種的寫法都認：特有、特有種(E)、臺灣特有、E；特亞、特亞種、特有亞種(Es)、Es
+ *   ・「非特有」「不是特有種」這種否定寫法歸 other，不會被誤改成特有種
+ *   ・同一格寫了兩種（特有種/特有亞種）、或只寫一個「特」→ 判斷不了，不動
+ */
+function classifyEndemic(v) {
+  const s = toHalfWidth(v).toUpperCase().replace(/[\s　]/g, '');
   if (s === '') return '';
-  if (/^(特有|特有種|E)$/i.test(s)) return '特有種';
-  if (/^(特亞|特有亞|特有亞種|ES)$/i.test(s)) return '特有亞種';
-  return '';
+  const one = (p) => {
+    const t = p.replace(/[()（）［］\[\]【】「」]/g, '').replace(/^(臺灣|台灣)/, '');
+    if (t === '') return '';
+    if (/非|不是|否|無/.test(t)) return 'other';
+    if (/外來|引進|歸化|入侵/.test(t)) return 'alien';
+    if (/^ES$/.test(t) || (/特/.test(t) && /亞/.test(t))) return '特有亞種';
+    if (/^E$/.test(t) || /特有/.test(t)) return '特有種';
+    if (/特/.test(t)) return '';
+    return 'other';
+  };
+  const kinds = new Set(s.split(/[\/、,，;；]|或|及|和/).filter(Boolean).map(one));
+  if (kinds.size !== 1) return '';
+  return [...kinds][0];
+}
+function normalizeEndemic(v) {
+  const k = classifyEndemic(v);
+  return k === '特有種' || k === '特有亞種' ? k : '';
 }
 
 /** 單位文字 → 代碼：只認代碼表裡寫法完全相同而且只有一個的。 */
@@ -1067,8 +1092,10 @@ function collectAutoFixes(rows, cat) {
     }
     if (has('特有性')) {
       const raw = String(row['特有性'] ?? '');
-      const to = normalizeEndemic(raw);
-      if (to && to !== raw) push('endemic', [{ key: '特有性', from: raw, to }]);
+      const k = classifyEndemic(raw);
+      if ((k === '特有種' || k === '特有亞種') && k !== raw) push('endemic', [{ key: '特有性', from: raw, to: k }]);
+      else if (k === 'alien' && raw !== '外來種') push('alien', [{ key: '特有性', from: raw, to: state.alienFixChoice === 'clear' ? '' : '外來種' }]);
+      else if (k === 'other') push('endclear', [{ key: '特有性', from: raw, to: '' }]);
     }
     if (has('數量')) {
       const q = toHalfWidth(row['數量']);
@@ -1151,6 +1178,12 @@ function cellProblems(row, cat) {
 }
 function rowProblemCellCount(row, cat) { return cellProblems(row, cat).length; }
 
+/** 一鍵修正類別的顯示名稱；「外來」那一類依目前選的做法顯示結果。 */
+function autoFixLabel(k) {
+  if (k.kind === 'alien') return k.label + (state.alienFixChoice === 'clear' ? '清空' : '外來種');
+  return k.label;
+}
+
 function autoFixCellCount(fixes) { return fixes.reduce((n, f) => n + f.changes.length, 0); }
 
 function openAutoFixModal(projectId, catKey, onlyKind) {
@@ -1185,7 +1218,9 @@ function openAutoFixModal(projectId, catKey, onlyKind) {
       <div class="autofix-kind" style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin:8px 0">
         <label style="display:flex;flex-direction:row;gap:8px;align-items:flex-start;font-weight:600;margin-bottom:0">
           <input type="checkbox" data-autofix-kind="${k.kind}" checked style="margin-top:3px">
-          <span>${escapeHtml(k.label)}<span class="hint" style="font-weight:400">　${list.length} 筆、${cells} 格</span></span>
+          <span>${k.choice
+            ? `${escapeHtml(k.label)}<select data-alien-choice style="margin-left:4px;padding:2px 6px;font-weight:600"><option value="alien"${state.alienFixChoice !== 'clear' ? ' selected' : ''}>改成「外來種」</option><option value="clear"${state.alienFixChoice === 'clear' ? ' selected' : ''}>清空</option></select>`
+            : escapeHtml(autoFixLabel(k))}<span class="hint" style="font-weight:400">　${list.length} 筆、${cells} 格</span></span>
         </label>
         <p class="hint" style="margin:4px 0 4px 24px">${escapeHtml(k.why)}</p>
         <ul class="hint" style="margin:0 0 0 24px;padding-left:16px">${examples}${list.length > 6 ? `<li>…另有 ${list.length - 6} 筆</li>` : ''}</ul>
@@ -1205,6 +1240,18 @@ function openAutoFixModal(projectId, catKey, onlyKind) {
       : '套用後，這個範圍內就沒有需要修正的格子了。';
   };
   wrap.querySelectorAll('[data-autofix-kind]').forEach(cb => cb.addEventListener('change', refresh));
+  // v4.59：「外來」那一類可以選改成外來種或清空——就地改掉要套用的值，例子跟著重畫
+  const alienSel = wrap.querySelector('[data-alien-choice]');
+  if (alienSel) {
+    alienSel.addEventListener('change', () => {
+      state.alienFixChoice = alienSel.value;
+      const to = alienSel.value === 'clear' ? '' : '外來種';
+      fixes.filter(f => f.kind === 'alien').forEach(f => f.changes.forEach(c => { c.to = to; }));
+      const ul = alienSel.closest('.autofix-kind').querySelector('ul');
+      ul.innerHTML = (byKind.alien || []).slice(0, 6).map(f => `<li>${escapeHtml(label(f.row))}：${f.changes.map(c => `${escapeHtml(c.key)} ${escapeHtml(show(c.from, c.key))} → ${escapeHtml(show(c.to, c.key))}`).join('；')}</li>`).join('') + ((byKind.alien || []).length > 6 ? `<li>…另有 ${(byKind.alien || []).length - 6} 筆</li>` : '');
+      refresh();
+    });
+  }
   const scopeText = state.periodFilter && state.periodFilter[catKey]
     ? `範圍：目前篩選的「${state.periodFilter[catKey] === '__none__' ? '未標示期別' : state.periodFilter[catKey]}」`
     : '範圍：這個類別的全部資料';
@@ -1254,7 +1301,7 @@ function buildProblemGroups(entries, cat) {
   const covered = new Set();
   collectAutoFixes(entries.map(e => e.row), cat).forEach(f => {
     const k = AUTO_FIX_KINDS.find(x => x.kind === f.kind);
-    const g = get('fix:' + f.kind, { label: k.label, why: k.why, kind: f.kind });
+    const g = get('fix:' + f.kind, { label: autoFixLabel(k), why: k.why, kind: f.kind });
     const idx = idxOf.get(f.row);
     f.changes.forEach(c => {
       g.cells.push({ idx, key: c.key, why: `「${c.key}」${show(c.from)} → ${show(c.to)}` });
@@ -1318,6 +1365,129 @@ function problemPanelHTML(groups, catKey) {
   </div>`;
 }
 
+
+/*
+ * ─────────────────────────────────────────────────────────────
+ * 用上一季建立本季（v4.59，修正清單 #100、#101；使用者 11/4 裁示）
+ * ─────────────────────────────────────────────────────────────
+ * 這一季由別家公司採樣、報告是掃描 PDF（程式讀不到）時用：照上一季的資料一筆一筆建立本季。
+ *   ・帶過來：地點、測項、檢測類別、單位、其他固定欄位（噪音：管制標準、管制區、頻率範圍、音源特性、監測時段…）
+ *   ・帶過來＋紫色「請確認」：檢測機構（含其他名稱）、座標系統與座標、檢測方法、檢測極限（換公司可能不同）
+ *   ・留空：日期／時間起迄、比較關係、檢測數值（監測數值）、備註
+ *   ・照上一季的筆數（一季採三次就建三列）；可勾選測站、測項（預設全選）
+ *   ・兩種做法：在表格中建立空白列，或下載成 Excel 填寫（填完用原本的「匯入資料」匯回）
+ * 不會帶任何上一季的日期與數值，所以不會有「忘了改、舊值混進本季」的問題。
+ */
+const PREV_PERIOD_CATS = ['air', 'water', 'geo', 'noise'];
+function nextPeriodLabel(label) {
+  const m = String(label || '').match(/^(\d+)年第([1-4])季$/);
+  if (!m) return '';
+  const y = +m[1], q = +m[2];
+  return q === 4 ? `${y + 1}年第1季` : `${y}年第${q + 1}季`;
+}
+function prevPeriodClearFields(cat) {
+  const vf = cat.fields.some(f => f.key === '檢測數值') ? '檢測數值' : '監測數值';
+  return new Set(['日期(起)', '時間(起)', '日期(迄)', '時間(迄)', '比較關係', vf, '備註']);
+}
+function prevPeriodConfirmFields(cat) {
+  return ['檢測機構許可證號', '其他檢測機構名稱', '座標系統', '採樣座標-經度 X', '採樣座標-緯度 Y', cat.methodField, '檢測極限']
+    .filter(k => k && cat.fields.some(f => f.key === k));
+}
+function buildRowsFromPrevPeriod(srcRows, cat, srcLabel, targetLabel, batchId) {
+  const clear = prevPeriodClearFields(cat);
+  const confirmKeys = prevPeriodConfirmFields(cat);
+  return srcRows.map(src => {
+    const nr = {};
+    cat.fields.forEach(f => { nr[f.key] = clear.has(f.key) ? '' : (src[f.key] ?? ''); });
+    nr._period = targetLabel;
+    if (batchId) nr._batchId = batchId;
+    const chk = {};
+    confirmKeys.forEach(k => { if (String(nr[k] ?? '').trim() !== '') chk[k] = `沿用「${srcLabel}」的值，請確認本季是否相同（換了採樣或檢測公司時常會不同）`; });
+    if (Object.keys(chk).length) nr._checkFields = chk;
+    return nr;
+  });
+}
+function openPrevPeriodModal(project, catKey) {
+  const cat = CATEGORIES[catKey];
+  const $ = (id) => document.getElementById(id);
+  const all = DataStore.getData(project.id, catKey);
+  const periods = getKnownPeriods(project, catKey).slice().reverse(); // 新的在前
+  if (periods.length === 0) { alert(`「${cat.label}」目前沒有標了期別的資料，沒有「上一季」可以用。請先匯入上一季的資料。`); return; }
+  const modal = $('prevPeriodModal');
+  const srcSel = $('ppSource'), tgtIn = $('ppTarget');
+  srcSel.innerHTML = periods.map(p => `<option value="${escapeAttr(p)}">${escapeHtml(p)}（${all.filter(r => r._period === p).length} 筆）</option>`).join('');
+  srcSel.value = periods[0];
+  tgtIn.value = nextPeriodLabel(periods[0]);
+  const srcRows = () => all.filter(r => r._period === srcSel.value);
+  const fillLists = () => {
+    const rows = srcRows();
+    const count = (key) => { const m = new Map(); rows.forEach(r => { const v = String(r[key] ?? '').trim() || '（空白）'; m.set(v, (m.get(v) || 0) + 1); }); return m; };
+    const box = (el, m, type) => {
+      el.innerHTML = [...m.entries()].map(([v, n]) => `<label><input type="checkbox" data-pp-${type}="${escapeAttr(v)}" checked><span>${escapeHtml(v)}</span><span class="hint">${n} 筆</span></label>`).join('');
+    };
+    box($('ppLocList'), count(cat.locationField), 'loc');
+    box($('ppItemList'), count(cat.itemField), 'item');
+  };
+  const picked = () => {
+    const locs = new Set([...modal.querySelectorAll('[data-pp-loc]:checked')].map(c => c.dataset.ppLoc));
+    const items = new Set([...modal.querySelectorAll('[data-pp-item]:checked')].map(c => c.dataset.ppItem));
+    return srcRows().filter(r => locs.has(String(r[cat.locationField] ?? '').trim() || '（空白）') && items.has(String(r[cat.itemField] ?? '').trim() || '（空白）'));
+  };
+  const refresh = () => {
+    const n = picked().length;
+    const tgt = normalizePeriodShorthand(tgtIn.value.trim());
+    $('ppSummary').textContent = `將建立 ${n} 筆「${tgt || '（請填新的季別）'}」的資料（來源「${srcSel.value}」共 ${srcRows().length} 筆）。`;
+    const warn = $('ppWarn');
+    const msgs = [];
+    if (tgt && tgt === srcSel.value) msgs.push('新的季別和來源季別一樣，請確認。');
+    const existing = tgt ? all.filter(r => r._period === tgt).length : 0;
+    if (existing) msgs.push(`「${tgt}」已經有 ${existing} 筆資料，建立後會再多 ${n} 筆，請確認不是重複建立。`);
+    warn.textContent = msgs.join(' ');
+    warn.classList.toggle('hidden', msgs.length === 0);
+    const ok = n > 0 && !!tgt;
+    $('btnPpTable').disabled = !ok; $('btnPpExcel').disabled = !ok;
+  };
+  fillLists(); refresh();
+  srcSel.onchange = () => { tgtIn.value = nextPeriodLabel(srcSel.value) || tgtIn.value; fillLists(); refresh(); };
+  tgtIn.oninput = refresh;
+  modal.onchange = (e) => { if (e.target.matches('[data-pp-loc],[data-pp-item]')) refresh(); };
+  modal.onclick = (e) => {
+    const a = e.target.closest('[data-pp-all]'), z = e.target.closest('[data-pp-none]');
+    if (a || z) {
+      const type = (a || z).dataset.ppAll || (a || z).dataset.ppNone;
+      modal.querySelectorAll(`[data-pp-${type}]`).forEach(c => { c.checked = !!a; });
+      refresh();
+    }
+  };
+  const close = () => { modal.classList.add('hidden'); };
+  $('btnPpCancel').onclick = close;
+  $('btnPpTable').onclick = () => {
+    const tgt = normalizePeriodShorthand(tgtIn.value.trim());
+    const src = picked();
+    const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    const newRows = buildRowsFromPrevPeriod(src, cat, srcSel.value, tgt, batchId);
+    const rows = DataStore.getData(project.id, catKey);
+    pushUndoSnapshot(project.id, catKey, `用上一季建立（${srcSel.value}→${tgt}，${newRows.length} 筆）`);
+    DataStore.saveData(project.id, catKey, rows.concat(newRows));
+    DataStore.addImportBatch(project.id, catKey, {
+      id: batchId, timestamp: new Date().toISOString(), sourceLabel: `用「${srcSel.value}」建立`,
+      mode: 'prev', rowCount: newRows.length, period: tgt,
+    });
+    state.periodFilter[catKey] = tgt;
+    close();
+    renderContent();
+    showToast(`📋 已建立「${tgt}」${newRows.length} 筆。請填日期時間、數值；紫色框是沿用上一季的值，確認無誤按 ✔。要填的空白格可在上方「錯誤分類」按「只看這類」逐一補上。`, 9000);
+  };
+  $('btnPpExcel').onclick = () => {
+    const tgt = normalizePeriodShorthand(tgtIn.value.trim());
+    const newRows = buildRowsFromPrevPeriod(picked(), cat, srcSel.value, tgt, null);
+    ExportEngine.downloadCategory(project, DataStore.getBasicInfo(project.id), catKey, newRows, `${tgt}_填寫用`);
+    close();
+    showToast(`📥 已下載「${tgt}」填寫用 Excel（${newRows.length} 筆）。填好日期時間、數值，並確認檢測機構、座標、檢測方法、檢測極限（這幾欄是上一季的值）後，用「📥 匯入資料」匯回，期別選「${tgt}」。`, 10000);
+  };
+  modal.classList.remove('hidden');
+}
+
 function renderCategoryTab(project, catKey) {
   const cat = CATEGORIES[catKey];
   const allRows = DataStore.getData(project.id, catKey);
@@ -1370,6 +1540,7 @@ function renderCategoryTab(project, catKey) {
         <button class="btn btn-primary btn-sm" id="btnImport">📥 匯入資料（Excel/PDF）</button>
         <button class="btn btn-ghost btn-sm" id="btnAddRow">＋ 新增一筆</button>
         <button class="btn btn-ghost btn-sm" id="btnAddCommonItems">☑️ 常用測項新增</button>
+        ${PREV_PERIOD_CATS.includes(catKey) ? `<button class="btn btn-ghost btn-sm" id="btnPrevPeriod" title="這一季的報告程式讀不到（例如掃描 PDF）時，照上一季的資料建立本季，只要填日期時間和數值">📋 用上一季建立本季</button>` : ''}
         <button class="btn btn-ghost btn-sm" id="btnCoordManager">📍 測站座標管理</button>
         ${cat.methodField ? `<button class="btn btn-ghost btn-sm" id="btnMethodManager">🧪 檢測方法管理</button>` : ''}
         ${cat.methodField ? (() => { const on = DataStore.getMethodVersion(project.id); return `<button class="btn btn-ghost btn-sm btn-toggle${on ? ' btn-active' : ''}" id="btnMethodVersion" aria-pressed="${on}" title="匯入時檢測方法是否保留版本號（例：NIEA W217.52A／NIEA W217）。每個計畫各自設定、五類共用。">版本號 ${on ? '開' : '關'}</button>`; })() : ''}
@@ -1439,6 +1610,7 @@ function renderCategoryTab(project, catKey) {
   document.getElementById('btnImport').addEventListener('click', () => openImportModal(catKey));
   document.getElementById('btnAddRow').addEventListener('click', () => addEmptyRow(project, catKey));
   document.getElementById('btnAddCommonItems').addEventListener('click', () => openCommonItemsModal(project, catKey));
+  if (PREV_PERIOD_CATS.includes(catKey)) document.getElementById('btnPrevPeriod').addEventListener('click', () => openPrevPeriodModal(project, catKey));
   document.getElementById('btnCoordManager').addEventListener('click', () => openCoordModal(project, catKey));
   if (cat.methodField) {
     document.getElementById('btnMethodManager').addEventListener('click', () => openMethodModal(project, catKey));
@@ -2065,7 +2237,7 @@ function openBatchHistoryModal(project, catKey) {
             <td>${escapeHtml(b.period || '（未標示）')}</td>
             <td>${new Date(b.timestamp).toLocaleString('zh-TW')}</td>
             <td>${escapeHtml(b.sourceLabel)}</td>
-            <td>${b.mode === 'smart' ? '智慧解析' : '一般欄位比對'}</td>
+            <td>${b.mode === 'smart' ? '智慧解析' : b.mode === 'prev' ? '用上一季建立' : '一般欄位比對'}</td>
             <td>${b.rowCount}</td>
             <td><button class="btn btn-danger btn-sm btn-delete-batch" data-batch-id="${escapeAttr(b.id)}">🗑 刪除此批次</button></td>
           </tr>
@@ -5157,6 +5329,7 @@ function openImportModal(catKey) {
   state.importParsed = null;
   state.importMode = null;
   state.smartResult = null;
+  { const w = document.getElementById('importStructureWarning'); if (w) { w.classList.add('hidden'); w.innerHTML = ''; } }
   state.itemSelection = null;
   state.statSelection = null;
   state.excludedRowIndices = null;
@@ -5375,6 +5548,50 @@ async function handleImportFile(fileOrFiles) {
   }
 }
 
+
+/*
+ * 官方格式檔的欄位結構檢查（v4.59，修正清單 #102）
+ * ─────────────────────────────────────────────────────────────
+ * 實例：生態調查資料填寫_115Q3.xlsx 少了「單位」欄（官方 21 欄、這份 20 欄），之後每一欄左移一格。
+ * 本程式照「欄名」讀，資料讀得正確；但環境部照「欄位位置」讀，Q 欄（保育分類）讀到調查方法描述、
+ * S 欄（機構許可證號）讀到其他機構名稱，整份被擋。所以匯入時要明白告訴使用者：這份檔案不能直接上傳。
+ * 只在「看起來是官方格式」的檔案（欄名有一半以上和官方相同）才檢查，自己整理的其他格式不吵。
+ */
+function officialStructureIssues(headers, cat) {
+  const norm = (h) => String(h ?? '').replace(/\s+/g, '').replace(/[（）]/g, (c) => (c === '（' ? '(' : ')'));
+  const official = cat.fields.map(f => f.key);
+  const offN = official.map(norm);
+  const fileH = (headers || []).filter(h => !/^（未命名欄位 \d+）$/.test(h));
+  const fileN = fileH.map(norm);
+  const matched = offN.filter(k => fileN.includes(k)).length;
+  if (matched < Math.ceil(official.length / 2)) return null; // 不是官方格式，不檢查
+  const missing = official.filter((k, i) => !fileN.includes(offN[i]));
+  const extra = fileH.filter((h, i) => !offN.includes(fileN[i]));
+  const common = fileN.filter(k => offN.includes(k));
+  const expectOrder = offN.filter(k => fileN.includes(k));
+  const orderWrong = common.join('|') !== expectOrder.join('|');
+  if (!missing.length && !extra.length && !orderWrong) return null;
+  // 只少最後面的欄位：檔案裡每一欄都還在官方的同一個位置上，環境部不會讀錯位
+  const tailOnly = !extra.length && !orderWrong && fileN.every((k, i) => k === offN[i]);
+  return { missing, extra, orderWrong, tailOnly, officialCount: official.length, fileCount: fileH.length };
+}
+function renderStructureWarning(el, headers, cat) {
+  if (!el) return;
+  const st = officialStructureIssues(headers, cat);
+  if (!st) { el.classList.add('hidden'); el.innerHTML = ''; return; }
+  const parts = [];
+  if (st.missing.length) parts.push(`少了 <b>${st.missing.map(k => `「${escapeHtml(k)}」`).join('、')}</b>`);
+  if (st.extra.length) parts.push(`多了 ${st.extra.map(k => `「${escapeHtml(k)}」`).join('、')}`);
+  if (st.orderWrong) parts.push('欄位順序和官方表單不同');
+  const head = `⚠️ 這份檔案的欄位和官方「${escapeHtml(cat.label)}」表單不一致：${parts.join('；')}（官方 ${st.officialCount} 欄，這份 ${st.fileCount} 欄）。<br>`;
+  el.innerHTML = st.tailOnly
+    ? head + `少的是最後面的欄位，其他欄位的位置都和官方相同。資料會照欄名正確讀進本程式；上傳時建議用本程式「匯出此類別」產生的檔案，欄位以官方表單為準。`
+    : head + `資料會照欄名正確讀進本程式，但<b>請不要把這份檔案直接上傳</b>——環境部是照欄位位置讀的，從不一致的地方開始，後面的欄位會全部錯位而被退件。`
+      + `請在本程式匯入後，用「匯出此類別」產生的檔案上傳。`;
+  el.classList.toggle('import-structure-soft', !!st.tailOnly);
+  el.classList.remove('hidden');
+}
+
 function renderMappingStep() {
   const project = getImportProject();
   const cat = CATEGORIES[state.importCatKey];
@@ -5398,6 +5615,7 @@ function renderMappingStep() {
   }).join('');
 
   document.getElementById('importRowCount').textContent = `檔案共讀取到 ${rows.length} 筆資料列${state.importParsed.usedSheet ? `（工作表：${state.importParsed.usedSheet}）` : ''}。`;
+  renderStructureWarning(document.getElementById('importStructureWarning'), state.importParsed.headers, cat);
   document.getElementById('importStep1').classList.add('hidden');
   document.getElementById('importStep2').classList.remove('hidden');
   document.getElementById('importStep3').classList.add('hidden');

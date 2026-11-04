@@ -531,3 +531,28 @@ input.cell-soft-warn, select.cell-soft-warn, textarea.cell-soft-warn { border: 2
 .topbar-actions .btn { white-space: nowrap; }
 /* v4.57：「版本號 開/關」是設定開關，開的時候用主色綠，不用紅色（紅色是警示） */
 .content .btn-ghost.btn-toggle.btn-active { background: var(--primary); color: #fff; }
+
+/* ── v4.59 用上一季建立本季（#100、#101）── */
+.prev-period .pp-form { display: flex; flex-wrap: wrap; gap: 10px 24px; margin: 8px 0; }
+.prev-period .pp-field { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; }
+.prev-period .pp-field select, .prev-period .pp-field input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; min-width: 150px; }
+.prev-period .pp-cols { display: flex; flex-wrap: wrap; gap: 12px; }
+.prev-period .pp-col { flex: 1 1 300px; min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; background: #fff; }
+.prev-period .pp-col-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; margin-bottom: 4px; }
+.prev-period .pp-col-head span { display: inline-flex; gap: 4px; }
+.prev-period .pp-list-box { max-height: 240px; overflow-y: auto; }
+.prev-period .pp-list-box label { display: flex; flex-direction: row; align-items: center; gap: 6px; margin: 2px 0; font-size: 13.5px; font-weight: 400; }
+.prev-period .pp-list-box label .hint { margin-left: auto; white-space: nowrap; }
+.prev-period .pp-summary { font-weight: 600; margin: 10px 0 4px; }
+.prev-period .pp-warn { background: #fff8e6; color: #7a4a0c; border: 1px solid #e8c9a0; border-radius: 6px; padding: 6px 10px; margin: 6px 0; line-height: 1.6; }
+
+/* v4.59（#102）：匯入的官方格式檔欄位和官方表單不一致 */
+.import-structure-warn { background: #fdecea; border: 1px solid #f1b8b1; color: #7f1d14; border-radius: 6px; padding: 8px 12px; margin: 8px 0; line-height: 1.65; font-size: 13.5px; }
+.import-structure-warn b { color: #a5281b; }
+.import-structure-warn.import-structure-soft { background: #fff8e6; border-color: #e8c9a0; color: #7a4a0c; }
+.import-structure-warn.import-structure-soft b { color: #7a4a0c; }
+/* v4.59：期別選擇的「115 年第 3 季」原本被 .modal label 的直排拆成四行，改成同一行 */
+.period-picker-row { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; white-space: nowrap; font-weight: 400; }
+/* v4.59：.modal label（直排）的優先權比 .item-check／.period-picker-label 高，橫排設定被蓋掉，
+   測項勾選變成「勾選框在上、名稱在下」——加上 .modal 讓優先權足夠 */
+.modal label.item-check, .modal label.period-picker-label { flex-direction: row; align-items: center; }

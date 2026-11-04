@@ -111,10 +111,13 @@ const ExportEngine = {
     return wb;
   },
 
-  downloadCategory(project, basicInfo, categoryKey, rowsOverride) {
+  downloadCategory(project, basicInfo, categoryKey, rowsOverride, fileSuffix) {
     const cat = CATEGORIES[categoryKey];
     const wb = this.buildWorkbook(project, basicInfo, categoryKey, rowsOverride);
-    const fname = `${project.code}_${cat.sourceFile}`;
+    // v4.59（#101）：「用上一季建立本季」下載的填寫用檔案，檔名加上季別，免得和正式匯出的檔案搞混
+    const fname = fileSuffix
+      ? `${project.code}_${cat.sourceFile.replace(/\.xlsx$/i, '')}_${fileSuffix}.xlsx`
+      : `${project.code}_${cat.sourceFile}`;
     XLSX.writeFile(wb, fname);
   },
 
