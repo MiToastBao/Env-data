@@ -689,12 +689,26 @@ function coordViolations(row, cat) {
     const intDigits = raw.replace(/^-/, '').split('.')[0].length;
     if (sys === '2') {
       const [lo, hi] = key === '採樣座標-緯度 Y' ? [20, 26] : [116, 125];
+      // v4.52（#70，使用者 11/4：只提醒不自動改）：填 2 但數字像 TWD97（經度 6 位、緯度 7 位整數）
+      const twdLike = key === '採樣座標-緯度 Y' ? /^2\d{6}(\.\d+)?$/.test(raw) : /^[1-3]\d{5}(\.\d+)?$/.test(raw);
+      if (twdLike) {
+        out.push({ key, label, value: raw,
+          why: `座標系統填 2（WGS84），但「${label}」的 ${raw} 看起來是 TWD97 座標（經度 6 位、緯度 7 位數字）——請確認座標系統是不是應該填 3` });
+        return;
+      }
       if (!(n >= lo && n <= hi)) {
         out.push({ key, label, value: raw,
           why: `座標系統填 2（WGS84）時，「${label}」應為 ${lo}~${hi} 之間的數值（目前是 ${raw}）` });
       }
     } else if (sys === '3') {
       const want = key === '採樣座標-緯度 Y' ? 7 : 6;
+      // v4.52（#70）：填 3 但數字像經緯度度數（經度 116～125、緯度 20～26，帶小數）
+      const [dlo, dhi] = key === '採樣座標-緯度 Y' ? [20, 26] : [116, 125];
+      if (raw.includes('.') && n >= dlo && n <= dhi) {
+        out.push({ key, label, value: raw,
+          why: `座標系統填 3（TWD97-TM2），但「${label}」的 ${raw} 看起來是經緯度度數（WGS84）——請確認座標系統是不是應該填 2` });
+        return;
+      }
       const example = key === '採樣座標-緯度 Y' ? '2543818' : '179159';
       if (new RegExp(`^\\d{${want}}$`).test(raw)) return; // 正好 want 位純整數，過
       if (raw.includes('.')) {
@@ -793,7 +807,12 @@ function valueAndCodeViolations(row, cat) {
   if (vf) {
     const v = String(row[vf] ?? '').trim();
     if (v !== '') {
-      if (!PLAIN_DECIMAL.test(v)) {
+      if (/^[+-]?(\d+(\.\d+)?|\.\d+)\s*[(（][^()（）]*[)）]$/.test(v)) {
+        // v4.52（#71，使用者 11/4）：常見寫法是「<10(8)」；前面沒有 < 的「1(0.3)」不是常見格式，
+        // 不知道該取哪個數字，不自動改，請使用者確認
+        out.push({ key: vf, label: vf, value: v,
+          why: `「${vf}」帶括號，但前面沒有「<」（目前是「${v}」）。常見的寫法是「<10(8)」（申報 < 與 10）；這一格請對照報告確認數值後手動改，數值欄不可以有括號` });
+      } else if (!PLAIN_DECIMAL.test(v)) {
         out.push({ key: vf, label: vf, value: v,
           why: `「${vf}」只能填數字，不可以有符號、括號、單位或文字（目前是「${v}」）`
             + (has('比較關係') ? `。「<0.1」請拆成比較關係「<」＋數值「0.1」；ND 請寫在比較關係、數值留空` : '') });
@@ -866,6 +885,21 @@ function rowNeedsFix(row, cat) {
  *
  * 給基本資料頁的橘框與匯出前的提醒共用——同一份判斷，不寫兩遍。
  */
+/**
+ * 「監測點基本資料」頁填了但格式要確認的欄位（v4.52，修正清單 #78）。
+ * 計畫代碼舊版三碼（E-001）：官方要四碼流水號（E-0001），但補一個 0 是不是正確代碼
+ * 要使用者自己確認，所以只提醒、不自動改（使用者 11/4 裁示）。
+ */
+function basicInfoFormatWarnings(info) {
+  const out = [];
+  const code = String((info || {})['計畫代碼'] ?? '').trim();
+  if (/^[A-Za-z]+-\d{3}(\.\d+)?$/.test(code)) {
+    out.push({ key: '計畫代碼', label: '計畫代碼',
+      why: `「${code}」是舊版三碼格式，官方要「英文代碼-四碼流水號」（例如 E-0001）。請到環評書件系統確認正確的計畫代碼` });
+  }
+  return out;
+}
+
 function missingBasicInfoFields(info) {
   const status = String((info || {})['執行現況'] ?? '').trim();
   const blank = (k) => String((info || {})[k] ?? '').trim() === '';

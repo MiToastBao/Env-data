@@ -709,6 +709,7 @@ function renderBasicTab(project) {
   // 缺哪些必填（含「執行現況選了什麼才必填」的三個日期）——一次算好，
   // 和匯出前的提醒用同一支 missingBasicInfoFields，不會兩邊講不一樣。
   const missingBasic = missingBasicInfoFields(info);
+  const basicWarn = basicInfoFormatWarnings(info);
   const fieldsHtml = BASIC_INFO_FIELDS.map(f => {
     const val = info[f.key] ?? '';
     /*
@@ -719,8 +720,10 @@ function renderBasicTab(project) {
      * 用的是表格那邊同一個 cell-required-missing（橘色虛線框）。
      */
     const missWhy = (missingBasic.find(m => m.key === f.key) || {}).why;
-    const miss = missWhy ? ' cell-required-missing' : '';
-    const missTip = missWhy ? ` title="${escapeAttr(`「${f.label}」${missWhy}，目前是空的。`)}"` : '';
+    const fmtWhy = (basicWarn.find(m => m.key === f.key) || {}).why;
+    const miss = missWhy ? ' cell-required-missing' : fmtWhy ? ' cell-invalid' : '';
+    const missTip = missWhy ? ` title="${escapeAttr(`「${f.label}」${missWhy}，目前是空的。`)}"`
+      : fmtWhy ? ` title="${escapeAttr(fmtWhy)}"` : '';
     let control;
     if (f.type === 'select') {
       control = `<select data-field="${f.key}"${miss ? ` class="${miss.trim()}"` : ''}${missTip}>${f.options.map(o => `<option value="${escapeAttr(o)}" ${o === val ? 'selected' : ''}>${o || '（未選擇）'}</option>`).join('')}</select>`;
@@ -740,6 +743,7 @@ function renderBasicTab(project) {
       || (Array.isArray(f.requiredWhenStatus) && f.requiredWhenStatus.includes(String(info['執行現況'] ?? '').trim()));
     return `<label class="${wide}"><span class="basic-label">${f.label}${showStar ? '<span class="req">＊</span>' : ''}</span>
       ${control}
+      ${fmtWhy ? `<span class="field-help" style="color:var(--danger)">⚠️ ${escapeHtml(fmtWhy)}</span>` : ''}
       ${f.help ? `<span class="field-help">${escapeHtml(f.help)}</span>` : ''}
     </label>`;
   }).join('');
@@ -805,37 +809,326 @@ function roundableCoordCells(rows) {
   return out;
 }
 
-function runRoundCoords(projectId, catKey) {
-  const cat = CATEGORIES[catKey];
-  const rows = DataStore.getData(projectId, catKey);
-  const cells = roundableCoordCells(rows);
-  if (cells.length === 0) return;
-  const byRow = new Map();
-  cells.forEach((c) => {
-    const label = `${String(c.row[cat.locationField] ?? '').trim() || '（未填地點）'}　${toDateDisplayValue(c.row['日期(起)']) || ''}`;
-    if (!byRow.has(c.row)) byRow.set(c.row, { label, changes: [] });
-    byRow.get(c.row).changes.push(c);
-  });
-  // 逐筆列出「哪一筆、從什麼變成什麼」——只講「會改 N 格」使用者沒辦法判斷該不該按。
-  const lines = [...byRow.values()].slice(0, 12).map((r, i) =>
-    `${String(i + 1).padStart(2)}. ${r.label}\n` +
-    r.changes.map(c => `      ${c.key}：${c.from} → ${c.to}`).join('\n')
-  ).join('\n');
-  const more = byRow.size > 12 ? `\n　…另有 ${byRow.size - 12} 筆\n` : '';
-  if (!confirm(
-    `要把 ${byRow.size} 筆資料、共 ${cells.length} 格的 TWD97 座標四捨五入成整數嗎？\n\n`
-    + `${lines}${more}\n`
-    + `官方規定座標系統填 3（TWD97-TM2）時，經度 X 為 6 位數字、緯度 Y 為 7 位數字，不含小數\n`
-    + `（辭典範例 179159 / 2543818）。四捨五入的差距不到 1 公尺，不影響測站位置。\n\n`
-    + `改完之後可以用「↩️ 復原上一步」還原。`
-  )) return;
 
-  pushUndoSnapshot(projectId, catKey, `座標四捨五入（${cells.length} 格）`, rows);
-  cells.forEach((c) => { c.row[c.key] = c.to; });
-  DataStore.saveData(projectId, catKey, rows);
-  // 留在原地，不要跳回表格最上方（v4.41 的原則）。
-  renderContentPreservingScroll();
-  showToast(`📐 已把 ${cells.length} 格座標四捨五入成整數（${byRow.size} 筆資料）。可用「↩️ 復原上一步」還原。`, 7000);
+/*
+ * ─────────────────────────────────────────────────────────────
+ * 一鍵修正（v4.51，修正清單 #65；使用者裁示 a～h 全部放）
+ * ─────────────────────────────────────────────────────────────
+ * 只收「答案只有一個」的錯：程式改完一定是對的、而且看得出從什麼改成什麼。
+ * 猜不出正確答案的（代碼不在表內、數值 0、噪音管制區填「無」、必填空白…）
+ * 不在這裡，只在對話框最下面講還剩幾格要手動改。
+ * 套用前逐類列出「哪一筆、從什麼變成什麼」，每一類可以取消；套用後可「↩️ 復原上一步」。
+ * 之後新增的格式規則，若也是答案唯一的，加一個 kind 進來即可（五類共用）。
+ */
+const AUTO_FIX_KINDS = [
+  { kind: 'nd', label: '檢測數值寫成 ND → 比較關係填 ND、檢測數值清空', why: '官方規定 ND 寫在比較關係、檢測數值留空。比較關係原本是「<」「>」的，以檢測數值的 ND 為主（使用者裁示）。' },
+  { kind: 'split', label: '檢測數值寫成「<0.1」「>2400」 → 拆成比較關係＋數值', why: '「<0.1」不可整個寫在檢測數值欄（說明會 p.23）。≦≤ 當成 <、≧≥ 當成 >。比較關係原本已填、而且和符號不同的不改，留給您判斷。' },
+  { kind: 'comma', label: '數值有千分位逗號 → 去掉逗號', why: '數值欄只能填數字（100,000 → 100000）。' },
+  { kind: 'ndcase', label: '比較關係寫成小寫 nd 等寫法 → ND', why: '比較關係只能填 <、>、ND。' },
+  { kind: 'coord', label: 'TWD97 座標帶小數 → 四捨五入成整數', why: '座標系統填 3 時，經度 X 為 6 位、緯度 Y 為 7 位數字，不含小數；差距不到 1 公尺。整數位數不對的不改。' },
+  { kind: 'vib', label: '振動列的管制標準、管制區不是「無」 → 改成「無」', why: '官方規定檢測類別是振動時，管制標準、管制區必須填「無」（說明會 p.19）。' },
+  { kind: 'time', label: '時間寫 24:00 → 23:59', why: '時間只能填 00:00～23:59，勿填 24:00。' },
+  { kind: 'limit', label: '檢測極限不是純數字（例如「<0.1」） → 清成空白', why: '檢測極限只能填數值、可以不填；清成空白和匯入時的預設處理一致（使用者裁示）。' },
+  // ── v4.52 追加（修正清單 #67～#77，使用者 11/4 裁示）──
+  { kind: 'paren', label: '檢測數值帶括號「<10(8)」 → 比較關係 <、檢測數值 10', why: '括號內是低於方法偵測極限的參考值（不一定準確），申報以前面的「<10」為準；數值欄不可有括號（說明會 p.23）。比較關係原本已填、而且和符號不同的不改。' },
+  { kind: 'width', label: '數字欄位有全形字或前後空白 → 改成半形、去掉空白', why: '「０．５」「 3.2 」這類寫法看起來對，但數值欄只能填半形數字，上傳時會被當成文字。只改「改完就是正確數字或代碼」的格子。' },
+  { kind: 'unit', label: '單位寫成文字（例如 mg/L） → 換成單位代碼', why: '單位欄要填代碼 1～161。只換代碼表裡寫法完全相同、而且只有一個代碼對得上的；對不上或有兩個以上可能的不動。' },
+  { kind: 'agency', label: '機構代碼用全形分號、逗號、頓號分隔 → 半形分號', why: '兩個以上的機構代碼要用半形分號分隔，例如 1;2（辭典）。分隔後每個代碼都在代碼表裡才改。' },
+  { kind: 'sys', label: '座標系統寫成文字（WGS84／TWD97） → 2／3', why: '座標系統只能填代碼 2（WGS84）或 3（TWD97-TM2）。' },
+  { kind: 'swap', label: '經度、緯度明顯寫反 → 對調', why: '代碼 2：經度 X 應在 116～125、緯度 Y 應在 20～26；代碼 3：經度 X 為 6 位、緯度 Y 為 7 位。只對調「兩格都剛好落在對方範圍」的；對調後若還有小數，會在下一次一鍵修正四捨五入。' },
+  { kind: 'timesep', label: '時間用分號或全形冒號（08;30） → 08:30', why: '時間為 24 小時制 hh:mm，勿用分號（辭典、說明會 p.15）。' },
+  { kind: 'date', label: '日期不是西元格式（例如民國 115/07/08） → 西元 2026/07/08', why: '日期一律填西元 yyyy/mm/dd，勿用民國年（辭典、說明會 p.15）。畫面上雖然已經顯示成西元，存的值還是原樣。' },
+  { kind: 'cons', label: '保育分類寫法不一致（一級、Ⅱ、3、珍貴稀有…） → I／II／III', why: '保育分類只能填英文大寫 I 組成的 I、II、III（勿填數字、國字、羅馬數字符號）。第一級＝瀕臨絕種＝I、第二級＝珍貴稀有＝II、第三級＝其他應予保育＝III。EX、CR、LC 等 IUCN 等級對不上，不改。' },
+  { kind: 'qty', label: '生態數量寫成「5隻」「12株」 → 5、12', why: '數量只能填數字或「-」。單位欄空白時，把「隻」「株」這些字搬到單位欄；單位欄已經填了別的字的不改。「約10」「10+」「>5」意思不確定，不改。' },
+];
+
+/** 全形數字、小數點、正負號、括號、冒號 → 半形，去掉前後空白（含全形空白）。 */
+function toHalfWidth(v) {
+  return String(v ?? '')
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+    .replace(/[．。]/g, '.').replace(/[－−]/g, '-').replace(/＋/g, '+')
+    .replace(/（/g, '(').replace(/）/g, ')').replace(/：/g, ':')
+    .replace(/^[\s\u3000]+|[\s\u3000]+$/g, '');
+}
+
+/** 保育分類的各種寫法 → I／II／III；認不得回傳 ''。 */
+function normalizeConservation(v) {
+  let s = toHalfWidth(v).replace(/[\s\u3000]/g, '');
+  if (s === '') return '';
+  s = s.replace(/保育類|野生動物|保育/g, '');
+  const byName = { '瀕臨絕種': 'I', '珍貴稀有': 'II', '其他應予保育': 'III', '其他應予': 'III' };
+  if (byName[s]) return byName[s];
+  s = s.replace(/^第/, '').replace(/級$/, '').replace(/類$/, '');
+  s = s.replace(/Ⅰ|ⅰ/g, 'I').replace(/Ⅱ|ⅱ/g, 'II').replace(/Ⅲ|ⅲ/g, 'III');
+  const map = { 'I': 'I', 'II': 'II', 'III': 'III', '1': 'I', '2': 'II', '3': 'III', '一': 'I', '二': 'II', '三': 'III' };
+  return map[s.toUpperCase()] || map[s] || '';
+}
+
+/** 單位文字 → 代碼：只認代碼表裡寫法完全相同而且只有一個的。 */
+function exactUnitCode(text) {
+  const t = toHalfWidth(text);
+  if (t === '' || typeof UNIT_CODES === 'undefined') return '';
+  const hits = Object.entries(UNIT_CODES).filter(([, name]) => String(name).trim() === t);
+  return hits.length === 1 ? hits[0][0] : '';
+}
+
+function isNDText(v) {
+  const s = String(v ?? '').trim().replace(/[Ｎｎ]/g, 'N').replace(/[Ｄｄ]/g, 'D').replace(/[．]/g, '.');
+  return /^N\.?D\.?$/i.test(s);
+}
+
+/** 這些列裡，每一類可以自動修的格子。回傳 [{ kind, row, changes:[{key, from, to}] }]。 */
+function collectAutoFixes(rows, cat) {
+  const out = [];
+  const has = (k) => cat.fields.some(f => f.key === k);
+  const hasCmp = has('比較關係');
+  const vf = has('檢測數值') ? '檢測數值' : has('監測數值') ? '監測數值' : null;
+  const coordCells = roundableCoordCells(rows);
+  const coordByRow = new Map();
+  coordCells.forEach(c => { if (!coordByRow.has(c.row)) coordByRow.set(c.row, []); coordByRow.get(c.row).push({ key: c.key, from: c.from, to: c.to }); });
+  const SYM = { '<': '<', '＜': '<', '≦': '<', '≤': '<', '>': '>', '＞': '>', '≧': '>', '≥': '>' };
+  const NUM = /^[+-]?(\d+(\.\d+)?|\.\d+)$/;
+  const NUMERIC_FIELDS = ['檢測極限', '採樣座標-經度 X', '採樣座標-緯度 Y', '數量',
+    '採樣深度(公尺)', '採樣水深(公尺)', '污染物採樣高度(公尺)', '採樣地點高度(公尺)'];
+  (rows || []).forEach(row => {
+    const touched = new Set();
+    const push = (kind, changes) => { if (!changes.length) return; changes.forEach(c => touched.add(c.key)); out.push({ kind, row, changes }); };
+    const vRaw = vf ? String(row[vf] ?? '') : '';
+    const v = vf ? toHalfWidth(vRaw) : '';
+    const cmpRaw = hasCmp ? String(row['比較關係'] ?? '') : '';
+    const cmp = cmpRaw.trim();
+    const cmpNorm = SYM[cmp] || cmp;
+    // 比較關係＋數值的寫法：先 ND、再括號、再「<0.1」、再千分位
+    if (vf && hasCmp && v !== '' && isNDText(v)) {
+      const ch = [{ key: vf, from: row[vf], to: '' }];
+      if (cmp !== 'ND') ch.push({ key: '比較關係', from: cmpRaw, to: 'ND' });
+      push('nd', ch);
+    } else if (vf && hasCmp && v !== '') {
+      const NUMPART = '(\\d[\\d,]*(?:\\.\\d+)?|\\.\\d+)';
+      const mp = v.match(new RegExp(`^([<>＜＞≦≤≧≥])\\s*${NUMPART}\\s*\\([^()]*\\)$`));
+      const ms = mp ? null : v.match(new RegExp(`^([<>＜＞≦≤≧≥])\\s*${NUMPART}$`));
+      const m = mp || ms;
+      if (m) {
+        const sym = SYM[m[1]];
+        const num = m[2].replace(/,/g, '');
+        if (cmp === '' || cmpNorm === sym) {
+          const ch = [{ key: vf, from: row[vf], to: num }];
+          if (cmp !== sym) ch.push({ key: '比較關係', from: cmpRaw, to: sym });
+          push(mp ? 'paren' : 'split', ch);
+        } else {
+          touched.add(vf); // 符號和比較關係衝突：留給人判斷，不交給其他類別
+        }
+      } else if (/^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$/.test(v)) {
+        push('comma', [{ key: vf, from: row[vf], to: v.replace(/,/g, '') }]);
+      }
+    } else if (vf && !hasCmp && /^[+-]?\d{1,3}(,\d{3})+(\.\d+)?$/.test(v)) {
+      push('comma', [{ key: vf, from: row[vf], to: v.replace(/,/g, '') }]);
+    }
+    // 小寫 nd、N.D.、全形ＮＤ：數值那一格已經由 nd 那一類處理比較關係的，不重複
+    if (hasCmp && cmp !== '' && cmp !== 'ND' && isNDText(cmp) && !touched.has('比較關係')) {
+      push('ndcase', [{ key: '比較關係', from: cmpRaw, to: 'ND' }]);
+    }
+    // 座標系統文字 → 代碼
+    let sys = has('座標系統') ? toHalfWidth(row['座標系統']) : '';
+    if (has('座標系統')) {
+      const t = sys.toUpperCase().replace(/[\s\-_()]/g, '');
+      const code = /^WGS/.test(t) ? '2' : /^(TWD97|TWD|TM2)/.test(t) ? '3' : '';
+      if (code) { push('sys', [{ key: '座標系統', from: row['座標系統'], to: code }]); sys = code; }
+    }
+    // 經緯度寫反 → 對調
+    if (has('採樣座標-經度 X')) {
+      const X = '採樣座標-經度 X', Y = '採樣座標-緯度 Y';
+      const xs = toHalfWidth(row[X]), ys = toHalfWidth(row[Y]);
+      let swap = false;
+      if (sys === '2' && NUM.test(xs) && NUM.test(ys)) {
+        const x = +xs, y = +ys;
+        swap = x >= 20 && x <= 26 && y >= 116 && y <= 125;
+      } else if (sys === '3') {
+        swap = /^\d{7}(\.\d+)?$/.test(xs) && /^\d{6}(\.\d+)?$/.test(ys);
+      }
+      if (swap) push('swap', [{ key: X, from: row[X], to: ys }, { key: Y, from: row[Y], to: xs }]);
+    }
+    if (coordByRow.has(row) && !touched.has('採樣座標-經度 X') && !touched.has('採樣座標-緯度 Y')) push('coord', coordByRow.get(row));
+    if (cat.key === 'noise' && String(row['檢測類別'] ?? '').trim() === '振動') {
+      push('vib', ['管制標準', '管制區'].filter(k => String(row[k] ?? '').trim() !== '無')
+        .map(k => ({ key: k, from: row[k] ?? '', to: '無' })));
+    }
+    // 時間：分號／全形冒號，以及 24:00
+    const sepCh = [], dayEndCh = [];
+    ['時間(起)', '時間(迄)'].filter(has).forEach(k => {
+      const t = toHalfWidth(row[k]);
+      const m = t.match(/^(\d{1,2})\s*[;；:]\s*(\d{2})$/);
+      if (m && /[;；：]/.test(String(row[k])) && +m[1] <= 23 && +m[2] <= 59) {
+        sepCh.push({ key: k, from: row[k], to: `${String(+m[1]).padStart(2, '0')}:${m[2]}:00` });
+      } else if (DateTimeUtil.canClampToDayEnd(row[k])) {
+        dayEndCh.push({ key: k, from: row[k], to: '23:59:00' });
+      }
+    });
+    push('timesep', sepCh);
+    push('time', dayEndCh);
+    // 日期：存的不是西元 ISO、但讀得懂（民國年、2026/07/08…） → 西元
+    push('date', ['日期(起)', '日期(迄)'].filter(has).map(k => {
+      const raw = String(row[k] ?? '').trim();
+      if (raw === '' || /^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+      const iso = DateTimeUtil.toISODate(raw);
+      return /^\d{4}-\d{2}-\d{2}$/.test(iso) ? { key: k, from: row[k], to: iso } : null;
+    }).filter(Boolean));
+    if (has('檢測極限') && !touched.has('檢測極限')) {
+      const lim = toHalfWidth(row['檢測極限']);
+      if (lim !== '' && !isPlainNumber(lim)) push('limit', [{ key: '檢測極限', from: row['檢測極限'], to: '' }]);
+    }
+    // 單位：全形代碼交給 width；文字 → 代碼
+    if (cat.unitField) {
+      const raw = String(row[cat.unitField] ?? '');
+      const half = toHalfWidth(raw);
+      if (half !== '' && !UNIT_CODES[raw.trim()] && !UNIT_CODES[half]) {
+        const code = exactUnitCode(half);
+        if (code) push('unit', [{ key: cat.unitField, from: raw, to: code }]);
+      }
+    }
+    // 機構代碼：全形、分隔符號
+    if (has('檢測機構許可證號') && typeof AGENCY_CODES !== 'undefined') {
+      const raw = String(row['檢測機構許可證號'] ?? '');
+      const norm = toHalfWidth(raw).replace(/\s*[；;，,、]\s*/g, ';').replace(/[\s　]+/g, ';').toUpperCase();
+      if (norm !== raw && norm.split(';').every(c => c !== '' && AGENCY_CODES[c])) {
+        push(/[；，,、]/.test(raw) ? 'agency' : 'width', [{ key: '檢測機構許可證號', from: raw, to: norm }]);
+      }
+    }
+    // 生態：保育分類、數量
+    if (has('保育分類')) {
+      const raw = String(row['保育分類'] ?? '');
+      const to = normalizeConservation(raw);
+      if (to && to !== raw) push('cons', [{ key: '保育分類', from: raw, to }]);
+    }
+    if (has('數量')) {
+      const q = toHalfWidth(row['數量']);
+      const m = q.match(/^(\d+(?:\.\d+)?)\s*([隻株棵尾個只頭叢群對顆朵枚粒片])$/);
+      if (m) {
+        const unitNow = String(row['單位'] ?? '').trim();
+        if (unitNow === '' || unitNow === m[2]) {
+          const ch = [{ key: '數量', from: row['數量'], to: m[1] }];
+          if (unitNow === '' && has('單位')) ch.push({ key: '單位', from: row['單位'] ?? '', to: m[2] });
+          push('qty', ch);
+        }
+      }
+    }
+    // 最後：其他數字欄位的全形字、前後空白（前面各類沒碰過的格子才處理）
+    const widthCh = [];
+    [vf, ...NUMERIC_FIELDS].filter(k => k && has(k) && !touched.has(k)).forEach(k => {
+      const raw = String(row[k] ?? '');
+      const half = toHalfWidth(raw);
+      if (half !== raw && NUM.test(half)) widthCh.push({ key: k, from: raw, to: half });
+    });
+    if (has('座標系統') && !touched.has('座標系統')) {
+      const raw = String(row['座標系統'] ?? ''); const half = toHalfWidth(raw);
+      if (half !== raw && (half === '2' || half === '3')) widthCh.push({ key: '座標系統', from: raw, to: half });
+    }
+    if (cat.unitField && !touched.has(cat.unitField)) {
+      const raw = String(row[cat.unitField] ?? ''); const half = toHalfWidth(raw);
+      if (half !== raw && UNIT_CODES[half]) widthCh.push({ key: cat.unitField, from: raw, to: half });
+    }
+    push('width', widthCh);
+  });
+  return out;
+}
+
+/** 一鍵修正處理的範圍：目前篩選的期別（沒篩選就是整個類別），和匯出範圍一致。 */
+function autoFixScopeRows(rows, catKey) {
+  const p = state.periodFilter ? state.periodFilter[catKey] : '';
+  if (!p) return rows;
+  if (p === '__none__') return rows.filter(r => !r._period);
+  return rows.filter(r => r._period === p);
+}
+
+/** 一列裡需要修正的格子數：格式規則＋必填未填＋下拉欄位的值不在清單裡（表格上同樣是紅框）。 */
+function rowProblemCellCount(row, cat) {
+  const keys = new Set([...allRuleViolations(row, cat), ...missingRequiredFields(row, cat)].map(v => v.key));
+  cat.fields.forEach(f => {
+    if (f.type !== 'select' || !Array.isArray(f.options)) return;
+    const v = String(row[f.key] ?? '');
+    if (v !== '' && !f.options.includes(v)) keys.add(f.key);
+  });
+  ['時間(起)', '時間(迄)'].forEach(k => { if (/[;；]/.test(String(row[k] ?? ''))) keys.add(k); });
+  return keys.size;
+}
+
+function autoFixCellCount(fixes) { return fixes.reduce((n, f) => n + f.changes.length, 0); }
+
+function openAutoFixModal(projectId, catKey) {
+  const cat = CATEGORIES[catKey];
+  const allRows = DataStore.getData(projectId, catKey);
+  const scope = autoFixScopeRows(allRows, catKey);
+  const fixes = collectAutoFixes(scope, cat);
+  if (fixes.length === 0) return;
+  const byKind = {};
+  fixes.forEach(f => { (byKind[f.kind] = byKind[f.kind] || []).push(f); });
+
+  // 修完之後還剩幾格要手動改（在副本上試算，不動原資料）
+  const remainingAfter = (kinds) => {
+    let n = 0;
+    scope.forEach(r => {
+      const copy = { ...r };
+      fixes.filter(f => f.row === r && kinds.has(f.kind)).forEach(f => f.changes.forEach(c => { copy[c.key] = c.to; }));
+      n += rowProblemCellCount(copy, cat);
+    });
+    return n;
+  };
+
+  const label = (row) => [row[cat.locationField], toDateDisplayValue(row['日期(起)']), row[cat.itemField]].filter(Boolean).join('　');
+  const show = (v) => (String(v ?? '') === '' ? '（空白）' : String(v));
+  const wrap = document.getElementById('autoFixWrap');
+  wrap.innerHTML = AUTO_FIX_KINDS.filter(k => byKind[k.kind]).map(k => {
+    const list = byKind[k.kind];
+    const cells = autoFixCellCount(list);
+    const examples = list.slice(0, 6).map(f => `<li>${escapeHtml(label(f.row))}：${f.changes.map(c => `${escapeHtml(c.key)} ${escapeHtml(show(c.from))} → ${escapeHtml(show(c.to))}`).join('；')}</li>`).join('');
+    return `
+      <div class="autofix-kind" style="border:1px solid var(--border);border-radius:6px;padding:8px 10px;margin:8px 0">
+        <label style="display:flex;flex-direction:row;gap:8px;align-items:flex-start;font-weight:600;margin-bottom:0">
+          <input type="checkbox" data-autofix-kind="${k.kind}" checked style="margin-top:3px">
+          <span>${escapeHtml(k.label)}<span class="hint" style="font-weight:400">　${list.length} 筆、${cells} 格</span></span>
+        </label>
+        <p class="hint" style="margin:4px 0 4px 24px">${escapeHtml(k.why)}</p>
+        <ul class="hint" style="margin:0 0 0 24px;padding-left:16px">${examples}${list.length > 6 ? `<li>…另有 ${list.length - 6} 筆</li>` : ''}</ul>
+      </div>`;
+  }).join('') + `<p class="hint" id="autoFixRemaining" style="margin-top:10px"></p>`;
+
+  const chosen = () => new Set([...wrap.querySelectorAll('[data-autofix-kind]:checked')].map(cb => cb.dataset.autofixKind));
+  const refresh = () => {
+    const kinds = chosen();
+    const n = autoFixCellCount(fixes.filter(f => kinds.has(f.kind)));
+    const applyBtn = document.getElementById('btnAutoFixApply');
+    applyBtn.textContent = `套用修正（${n} 格）`;
+    applyBtn.disabled = n === 0;
+    const rem = remainingAfter(kinds);
+    document.getElementById('autoFixRemaining').textContent = rem > 0
+      ? `套用後還有 ${rem} 格需要手動修正（程式猜不出正確答案的，例如代碼不在表內、數值為 0、噪音管制區填「無」、必填空白、比較關係與數值符號不一致）。可用工具列的「⚠️ 只看需要修正的」挑出來。`
+      : '套用後，這個範圍內就沒有需要修正的格子了。';
+  };
+  wrap.querySelectorAll('[data-autofix-kind]').forEach(cb => cb.addEventListener('change', refresh));
+  const scopeText = state.periodFilter && state.periodFilter[catKey]
+    ? `範圍：目前篩選的「${state.periodFilter[catKey] === '__none__' ? '未標示期別' : state.periodFilter[catKey]}」`
+    : '範圍：這個類別的全部資料';
+  document.getElementById('autoFixScope').textContent = `${cat.label}　${scopeText}。只改答案唯一的格子，套用後可用「↩️ 復原上一步」還原。`;
+  refresh();
+
+  const modal = document.getElementById('autoFixModal');
+  const applyBtn = document.getElementById('btnAutoFixApply');
+  const cancelBtn = document.getElementById('btnAutoFixCancel');
+  const close = () => { modal.classList.add('hidden'); applyBtn.onclick = null; cancelBtn.onclick = null; };
+  cancelBtn.onclick = close;
+  applyBtn.onclick = () => {
+    const kinds = chosen();
+    const todo = fixes.filter(f => kinds.has(f.kind));
+    if (todo.length === 0) { close(); return; }
+    const cells = autoFixCellCount(todo);
+    pushUndoSnapshot(projectId, catKey, `一鍵修正（${cells} 格）`, allRows);
+    todo.forEach(f => f.changes.forEach(c => { f.row[c.key] = c.to; }));
+    DataStore.saveData(projectId, catKey, allRows);
+    close();
+    renderContentPreservingScroll();
+    showToast(`🛠 已修正 ${cells} 格（${new Set(todo.map(f => f.row)).size} 筆資料）。可用「↩️ 復原上一步」還原。`, 7000);
+  };
+  modal.classList.remove('hidden');
 }
 
 function renderCategoryTab(project, catKey) {
@@ -901,9 +1194,9 @@ function renderCategoryTab(project, catKey) {
         <button class="btn btn-ghost btn-sm hidden" id="btnClearSearch">✕ 清除篩選</button>
         <button class="btn btn-ghost btn-sm" id="btnOnlyProblems" title="只顯示有紅框或橘框的資料列——必填沒填、值不符合官方格式規定、噪音振動連動規則對不起來的那幾筆。這只是畫面篩選，不影響匯出範圍。">⚠️ 只看需要修正的</button>
         ${(() => {
-          // 只有真的有可以四捨五入的座標時才出現這顆——沒事的時候工具列不該多一顆按鈕。
-          const n = roundableCoordCells(displayRows).length;
-          return n ? `<button class="btn btn-ghost btn-sm" id="btnRoundCoords" title="官方規定座標系統填 3（TWD97）時，座標是 6 位／7 位整數，不含小數。這裡把帶小數的座標一次四捨五入成整數，套用前會先逐筆列出「從什麼變成什麼」讓您確認。">📐 座標四捨五入（${n} 格）</button>` : '';
+          // v4.51（#65）：座標四捨五入併進「一鍵修正」。只有真的有可以自動修的格子時才出現這顆。
+          const n = autoFixCellCount(collectAutoFixes(autoFixScopeRows(allRows, catKey), cat));
+          return n ? `<button class="btn btn-ghost btn-sm" id="btnAutoFix" title="把答案唯一的格式錯誤一次修好：檢測數值的 ND、「<0.1」拆開、千分位逗號、比較關係寫法、TWD97 座標小數、振動的管制標準／管制區、24:00、檢測極限非數字。套用前會逐類列出從什麼變成什麼，可以取消其中幾類。">🛠 一鍵修正（${n} 格）</button>` : '';
         })()}
         <button class="btn btn-ghost btn-sm" id="btnExportCat">匯出此類別（${cat.sourceFile}）${activePeriod ? '（僅目前篩選期別）' : ''}</button>
         <button class="btn btn-danger btn-sm" id="btnClearCat" ${allRows.length === 0 ? 'disabled' : ''}>🗑 清空此類別${activePeriod ? '（僅目前篩選期別）' : ''}</button>
@@ -1102,8 +1395,8 @@ function wireRowSearch(catKey, cat, displayCount, totalCount, activePeriod) {
    */
   const rowNeedsFixInDom = (tr) => !!tr.querySelector('.cell-invalid, .cell-required-missing, .cell-check-wrap');
 
-  const roundBtn = document.getElementById('btnRoundCoords');
-  if (roundBtn) roundBtn.addEventListener('click', () => runRoundCoords(state.currentProjectId, catKey));
+  const autoFixBtn = document.getElementById('btnAutoFix');
+  if (autoFixBtn) autoFixBtn.addEventListener('click', () => openAutoFixModal(state.currentProjectId, catKey));
 
   const onlyBtn = document.getElementById('btnOnlyProblems');
   const problemCount = () => [...tbody.querySelectorAll('tr')].filter(rowNeedsFixInDom).length;
@@ -1727,11 +2020,14 @@ function fieldControlHTML(field, value, rowAttr, missingWhy, catKey, ruleWhy) {
        * 用紅框標示，不會被默默改掉——和上面 select 遇到清單外的值同一個原則：
        * 值不能消失，但要看得見它是錯的。
        */
-      const badTime = DateTimeUtil.outOfRangeTimeReason(value);
+      const rangeWhy = DateTimeUtil.outOfRangeTimeReason(value);
+      const semiWhy = !rangeWhy && /[;；]/.test(String(value ?? ''))
+        ? '用了分號，官方規定時間寫 hh:mm（勿用分號）。請改成冒號，或用「🛠 一鍵修正」' : '';
+      const badTime = rangeWhy || semiWhy;
       const cls = `time-input${badTime ? ' cell-invalid' : ''}${missCls}`;
-      const tip = badTime
-        ? ` title="${escapeAttr(`「${toTimeDisplayValue(value)}」${badTime}。請改成 23:59（一天的最後一分鐘）或正確的時間。`)}"`
-        : missTip;
+      const tip = rangeWhy
+        ? ` title="${escapeAttr(`「${toTimeDisplayValue(value)}」${rangeWhy}。請改成 23:59（一天的最後一分鐘）或正確的時間。`)}"`
+        : semiWhy ? ` title="${escapeAttr(`「${value}」${semiWhy}。`)}"` : missTip;
       return `<input type="text" ${base}${tip} value="${escapeAttr(toTimeDisplayValue(value))}" class="${cls}" placeholder="HH:MM" inputmode="numeric" maxlength="8">`;
     }
     case 'suggest': {
@@ -1879,7 +2175,14 @@ function wireGridEvents(project, catKey, cat) {
     // now has a real number typed in). Silent, not a sync-prompt: this is
     // maintaining internal consistency WITHIN one row, not propagating a change to
     // OTHER rows, so there's nothing to ask permission for.
-    if ((fieldKey === '檢測數值' || fieldKey === '監測數值') && '比較關係' in rows[rowIdx]) {
+    /*
+     * v4.51（#64）：把數值清空、而比較關係是 ND 的時候，ND 要留著——
+     * 「比較關係 ND、檢測數值空白」正是官方要的寫法。以前清空數值會把比較關係一起清掉，
+     * 使用者照紅框指示把數值欄的 ND 刪掉，結果連比較關係的 ND 也不見了。
+     * 真的要拿掉 ND，直接清比較關係那一格。
+     */
+    const keepND = String(value ?? '').trim() === '' && isNDText(rows[rowIdx]['比較關係']);
+    if ((fieldKey === '檢測數值' || fieldKey === '監測數值') && '比較關係' in rows[rowIdx] && !keepND) {
       const derived = deriveComparisonRelation(value);
       if (derived) {
         rows[rowIdx]['比較關係'] = derived.cmp;
@@ -3886,12 +4189,15 @@ function confirmFormatBeforeExport(rows, cat) {
 function confirmBasicInfoBeforeExport(projectId) {
   const info = DataStore.getBasicInfo(projectId) || {};
   const missing = missingBasicInfoFields(info);
-  if (missing.length === 0) return true;
+  const warn = basicInfoFormatWarnings(info);
+  if (missing.length === 0 && warn.length === 0) return true;
   return confirm(
-    `「基本資料」頁還有官方必填欄位是空的：\n`
-    + missing.map(m => `　・${m.label}（${m.why}）`).join('\n')
-    + `\n\n這些欄位會寫進匯出檔的「監測點基本資料」工作表，空白可能導致上傳被退件。\n\n`
-    + `按「確定」仍要照原樣匯出，按「取消」回去「基本資料」頁補填。`
+    (missing.length ? `「基本資料」頁還有官方必填欄位是空的：\n`
+      + missing.map(m => `　・${m.label}（${m.why}）`).join('\n') + '\n\n' : '')
+    + (warn.length ? `「基本資料」頁有欄位格式要確認：\n`
+      + warn.map(m => `　・${m.why}`).join('\n') + '\n\n' : '')
+    + `這些欄位會寫進匯出檔的「監測點基本資料」工作表，可能導致上傳被退件。\n\n`
+    + `按「確定」仍要照原樣匯出，按「取消」回去「基本資料」頁修改。`
   );
 }
 
@@ -5570,6 +5876,9 @@ function deriveComparisonRelation(rawValue) {
   if (/^ND$/i.test(s)) return { cmp: 'ND', val: '', note: '' };
   // NA/未檢測: neither 比較關係 nor 檢測數值 carries this — it belongs in 備註.
   if (/^(NA|未檢測|N\.A\.?)$/i.test(s)) return { cmp: '', val: '', note: '未檢測' };
+  // v4.52（#71）：「<10(8)」——括號內是低於方法偵測極限的參考值，申報以「<10」為準（和 parseValueCell 一致）
+  const mp = s.replace(/（/g, '(').replace(/）/g, ')').match(/^([<>＜＞])\s*([\d.]+)\s*\(\s*[\d.]+\s*\)$/);
+  if (mp) return { cmp: mp[1].replace('＜', '<').replace('＞', '>'), val: mp[2], note: '' };
   const m = s.match(/^([<>])\s*([\d.]+)$/);
   if (m) return { cmp: m[1], val: m[2], note: '' };
   return { cmp: '', val: s, note: '' };
@@ -6198,6 +6507,20 @@ function confirmImport() {
 
   const newRows = ImportEngine.applyMapping(state.importParsed.rows, mapping, cat.fields);
   newRows.forEach((r, i) => { r._rowUid = i; });
+  /*
+   * v4.51（#66，使用者裁示）：檢測數值寫成 ND 的，匯入時就轉成「比較關係 ND、檢測數值空白」。
+   * 比較關係原本是「<」「>」的，以檢測數值的 ND 為主，一起改成 ND。
+   */
+  let ndNormalized = 0;
+  if (cat.fields.some(f => f.key === '比較關係') && cat.fields.some(f => f.key === '檢測數值')) {
+    newRows.forEach(r => {
+      if (String(r['檢測數值'] ?? '').trim() !== '' && isNDText(r['檢測數值'])) {
+        r['檢測數值'] = '';
+        r['比較關係'] = 'ND';
+        r._ndNormalized = true;
+      }
+    });
+  }
   // 匯入已是官方格式的檔案（上一季的完成版、別家交來的填好檔）走的是這條路徑。
   // 那些檔案一樣可能只有噪音那一半有座標，所以這裡也要帶一次。
   const filledFromNoise = fillVibrationSharedFromNoise(newRows, catKey);
@@ -6244,6 +6567,13 @@ function confirmImport() {
     }
   });
   const selectedRows = filterRowsBySelection(newRows, cat.itemField);
+  ndNormalized = selectedRows.filter(r => r._ndNormalized).length;
+  selectedRows.forEach(r => { delete r._ndNormalized; });
+  if (ndNormalized > 0) {
+    state.filledFromNoiseNote = (state.filledFromNoiseNote ? state.filledFromNoiseNote + '\n\n' : '')
+      + `ℹ️ 有 ${ndNormalized} 筆的檢測數值寫成 ND，已依官方規定改成「比較關係 ND、檢測數值空白」`
+      + `（比較關係原本是 < 或 > 的，也以 ND 為主一起改）。`;
+  }
   applyLimitFixMode(selectedRows, cat); // 檢測極限 must be a bare number — see renderLimitWarning
   if (selectedRows.length === 0) { alert('目前沒有勾選任何監測項目，請至少勾選一項再匯入。'); return; }
   // 對應欄位這條路徑同樣要問——完成版申報檔重新匯入時也可能帶著晚間的振動列

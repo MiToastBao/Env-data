@@ -13,7 +13,10 @@
 const ExportEngine = {
   /** "YYYY-MM-DD" -> a SheetJS date cell object, or '' passthrough if not a valid date. */
   _dateCell(isoStr) {
-    const m = String(isoStr || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    // v4.52（#79）：畫面上的日期格用 DateTimeUtil 轉成西元顯示，匯出也要用同一套轉換——
+    // 以前存的值若是民國 115/07/08，畫面顯示 2026/07/08、檔案裡卻寫原樣的 115/07/08。
+    const conv = (typeof DateTimeUtil !== 'undefined') ? DateTimeUtil.toISODate(isoStr) : isoStr;
+    const m = String(conv || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return isoStr || '';
     // Compute the Excel date SERIAL NUMBER directly (days since the 1900 date
     // system's epoch) instead of handing SheetJS a JS Date object. Confirmed as a

@@ -3,6 +3,18 @@
 一個純前端（HTML/CSS/JavaScript）小工具，用來管理多個環評計畫、輸入/匯入各類監測資料，
 並匯出成符合「環境監測填寫範本」欄位格式的 Excel 檔。可直接發布在 GitHub Pages 上使用。
 
+## v4.52（2026-11-04）本版重點
+
+- 🛠 一鍵修正新增 10 種：「<10(8)」拆成 < 與 10、全形數字與前後空白、單位文字換代碼（只換唯一對得上的）、機構代碼分隔改半形分號、座標系統文字改 2／3、經緯度寫反對調、時間分號改冒號、民國年日期改西元、保育分類統一 I／II／III、生態數量「5隻」改 5。
+- 只提醒不自動改：座標系統和座標數字對不起來、檢測數值「1(0.3)」沒有 <、計畫代碼舊版三碼、時間用分號。
+- 修正：存成民國年的日期匯出時轉成西元（以前畫面顯示西元、檔案寫民國）；表格中輸入「<10(8)」也會拆開。
+
+## v4.51（2026-11-04）本版重點
+
+1. **清空檢測數值時保留比較關係 ND**（表格編輯 `deriveComparisonRelation` 前加 `keepND` 判斷）。
+2. **欄位對應匯入時把檢測數值 ND 轉成比較關係 ND、數值空白**（`confirmImport`，比較關係 < > 也以 ND 為主），完成訊息附筆數。
+3. **一鍵修正**（`collectAutoFixes`／`openAutoFixModal`／`AUTO_FIX_KINDS`，index.html `#autoFixModal`）：nd、split、comma、ndcase、coord、vib、time、limit 八類；範圍＝目前期別篩選（`autoFixScopeRows`）；套用前逐類預覽、可取消；套用前拍復原快照；對話框試算套用後剩餘的手動修正格數。取代 `runRoundCoords`（`roundableCoordCells` 保留給 coord 類）。新增規則時加一個 kind 即可。
+
 ## v4.50（2026-11-03）本版重點
 
 1. **測項數字＝實際會匯入的筆數**（`refreshItemChecklistCounts`）：扣掉 `excludedRowIndices`（預設不匯入的非本期、手動取消的列）；確認按鈕更新時一併更新。欄位對應路徑的測項清單 shim rows 補上 `_rowUid`。
