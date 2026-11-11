@@ -3,6 +3,14 @@
 一個純前端（HTML/CSS/JavaScript）小工具，用來管理多個環評計畫、輸入/匯入各類監測資料，
 並匯出成符合「環境監測填寫範本」欄位格式的 Excel 檔。可直接發布在 GitHub Pages 上使用。
 
+## v4.62（2026-11-11）本版重點
+
+- 度分寫法的分固定兩位（CoordUtil.fmtDMM：23°05.5243′），單筆、多筆、匯出一致。
+
+## v4.61（2026-11-11）本版重點
+
+- 座標轉換新增「多筆轉換」分頁（wireCoordBatch）：貼上多行或匯入 Excel（範本由程式產生，工作表「座標輸入」）；結果表格、複製全部、匯出 Excel。判讀與換算在 js/coords.js（parseBatchLine／describe／convertBatch），和單筆同一套公式；名稱像方位字母（S1、N2）時取落在臺灣範圍內的解讀。
+
 ## v4.60（2026-11-04）本版重點
 
 - 「用上一季建立本季」下載的 Excel：沿用上一季、標「請確認」的格子改成紅字（ExportEngine.downloadCategoryMarked → _applyRedFont，直接改 xlsx 內的 styles.xml／sheet2.xml；失敗時退回一般匯出）。

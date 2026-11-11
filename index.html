@@ -328,6 +328,11 @@
 <div id="coordToolModal" class="modal-overlay hidden">
   <div class="modal modal-wide coord-tool">
     <h3>🧭 座標轉換</h3>
+    <div class="ct-tabs" role="tablist">
+      <button type="button" class="ct-tab active" data-ct-tab="one" role="tab">單筆轉換</button>
+      <button type="button" class="ct-tab" data-ct-tab="batch" role="tab">多筆轉換（貼上多筆或匯入 Excel）</button>
+    </div>
+    <div id="ctPaneOne">
     <p class="hint">在任何一區輸入座標後按該區的「轉換」，其他格式會全部算好。TWD97 二度分帶的中央經線一律為東經 121 度（和環境部座標轉換網頁相同）。</p>
     <div class="ct-block ct-paste">
       <div class="ct-title">📋 直接貼上（自動判斷格式）</div>
@@ -370,6 +375,28 @@
     </div>
     <div id="ctMsg" class="ct-msg hidden"></div>
     <div id="ctResult" class="ct-result hidden"></div>
+    </div>
+    <div id="ctPaneBatch" class="hidden">
+      <p class="hint">一行一組座標，格式可以混用（十進位、度分、度分秒、TWD97 都可以），前面可以加名稱，例如「S1, 24.502389, 120.954111」。也可以從 Excel 直接複製「名稱、緯度、經度」或「名稱、X、Y」三欄貼上。座標很多時，下載範本填好後按「匯入 Excel」。TWD97 中央經線一律為東經 121 度。</p>
+      <textarea id="ctBatchText" class="ct-batch-text" rows="7" spellcheck="false" placeholder="S1, 24.502389, 120.954111&#10;S2, 24 30 08.6, 120 57 14.8&#10;S3, 175345, 2591215&#10;24°30.1433′, 120°57.2467′"></textarea>
+      <div class="ct-actions">
+        <button id="btnCtBatchConvert" class="btn btn-primary btn-sm">轉換</button>
+        <button id="btnCtBatchImport" class="btn btn-ghost btn-sm">📥 匯入 Excel</button>
+        <button id="btnCtBatchTemplate" class="btn btn-ghost btn-sm">📄 下載 Excel 範本</button>
+        <input type="file" id="ctBatchFile" accept=".xlsx,.xls,.csv" class="hidden">
+      </div>
+      <div id="ctBatchMsg" class="ct-msg hidden"></div>
+      <div id="ctBatchResult" class="hidden">
+        <div class="ct-batch-head">
+          <span id="ctBatchSum" class="ct-batch-sum"></span>
+          <span class="ct-batch-btns">
+            <button id="btnCtBatchCopy" class="btn btn-ghost btn-sm">複製全部結果</button>
+            <button id="btnCtBatchExport" class="btn btn-primary btn-sm">📤 匯出 Excel</button>
+          </span>
+        </div>
+        <div class="ct-batch-wrap"><table id="ctBatchTable" class="ct-batch-table"></table></div>
+      </div>
+    </div>
     <div class="modal-actions">
       <button id="btnCoordToolClear" class="btn btn-ghost">清除</button>
       <button id="btnCoordToolClose" class="btn btn-primary">關閉</button>

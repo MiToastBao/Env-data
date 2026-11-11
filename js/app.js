@@ -4079,7 +4079,7 @@ function wireCoordTool() {
       ${row('TWD97（申報用，座標系統填 3）', `${xi}, ${yi}`, true)}
       ${row('TWD97 經度 X', String(xi))}${row('TWD97 緯度 Y', String(yi))}
       ${row('經緯度十進位（座標系統填 2）', `${lat.toFixed(6)}, ${lon.toFixed(6)}`)}
-      ${row('度分', `${dmmA.d}°${dmmA.m.toFixed(4)}′, ${dmmO.d}°${dmmO.m.toFixed(4)}′`)}
+      ${row('度分', `${CoordUtil.fmtDMM(dmmA)}, ${CoordUtil.fmtDMM(dmmO)}`)}
       ${row('度分秒', `${dmsA.d}°${String(dmsA.m).padStart(2, '0')}′${dmsA.s.toFixed(2).padStart(5, '0')}″, ${dmsO.d}°${String(dmsO.m).padStart(2, '0')}′${dmsO.s.toFixed(2).padStart(5, '0')}″`)}
     </table>
     <div class="ct-actions"><a class="btn btn-ghost btn-sm" href="https://www.google.com/maps?q=${lat.toFixed(6)},${lon.toFixed(6)}" target="_blank" rel="noopener">🗺 在 Google 地圖上看</a></div>`;
@@ -4145,8 +4145,156 @@ function wireCoordTool() {
     const btn = block && block.querySelector('[data-ct-convert]');
     if (btn) { e.preventDefault(); convert(btn.dataset.ctConvert); }
   });
-  $('btnCoordToolClear').addEventListener('click', clear);
+  $('btnCoordToolClear').addEventListener('click', () => { if (batch.active()) batch.clear(); else clear(); });
   $('btnCoordToolClose').addEventListener('click', () => modal.classList.add('hidden'));
+  const batch = wireCoordBatch();
+}
+
+/*
+ * 多筆轉換（v4.61，修正清單 #106；使用者 11/11）
+ * 貼上多行，或匯入 Excel（範本由這裡產生），結果列在畫面上，可複製或匯出 Excel。
+ * 判讀與換算都在 CoordUtil（parseBatchLine／describe／convertBatch），和單筆用同一套公式。
+ */
+const CT_BATCH_SHOW = 2000;   // 畫面最多列出幾筆（匯出 Excel 一律全部）
+const CT_BATCH_MAX = 20000;   // 一次最多轉換幾筆
+function wireCoordBatch() {
+  const $ = (id) => document.getElementById(id);
+  const modal = $('coordToolModal'), box = modal.querySelector('.modal');
+  const msg = $('ctBatchMsg'), res = $('ctBatchResult');
+  let recs = [], srcLabel = '列';
+  const say = (text, kind) => { msg.textContent = text; msg.className = text ? `ct-msg ${kind}` : 'ct-msg hidden'; };
+
+  const showTab = (tab) => {
+    modal.querySelectorAll('.ct-tab').forEach(b => b.classList.toggle('active', b.dataset.ctTab === tab));
+    $('ctPaneOne').classList.toggle('hidden', tab !== 'one');
+    $('ctPaneBatch').classList.toggle('hidden', tab !== 'batch');
+    box.classList.toggle('ct-wide-mode', tab === 'batch');
+    setTimeout(() => (tab === 'batch' ? $('ctBatchText') : $('ctPaste')).focus(), 30);
+  };
+  modal.querySelectorAll('.ct-tab').forEach(b => b.addEventListener('click', () => showTab(b.dataset.ctTab)));
+
+  const clear = () => { $('ctBatchText').value = ''; recs = []; say(''); res.classList.add('hidden'); $('ctBatchTable').innerHTML = ''; };
+
+  const render = (from) => {
+    const ok = recs.filter(r => r.r && !r.r.warn.length).length;
+    const wn = recs.filter(r => r.r && r.r.warn.length).length;
+    const bad = recs.filter(r => !r.r).length;
+    $('ctBatchSum').innerHTML = `${escapeHtml(from)}共 ${recs.length} 筆：成功 ${ok}`
+      + (wn ? `、<span class="warn">需確認 ${wn}</span>` : '') + (bad ? `、<span class="bad">無法轉換 ${bad}</span>` : '');
+    const head = `<tr><th>#</th><th>${srcLabel}</th><th>名稱</th><th>輸入的座標</th><th>判讀為</th><th>TWD97 X</th><th>TWD97 Y</th><th>提醒</th>`
+      + `<th>緯度（十進位）</th><th>經度（十進位）</th><th>緯度（度分）</th><th>經度（度分）</th><th>緯度（度分秒）</th><th>經度（度分秒）</th></tr>`;
+    const body = recs.slice(0, CT_BATCH_SHOW).map(x => {
+      const r = x.r, cls = !r ? 'err' : (r.warn.length ? 'wn' : '');
+      const td = (v, c = 'mono') => `<td class="${c}">${escapeHtml(v)}</td>`;
+      return `<tr class="${cls}"><td>${x.no}</td><td>${x.src}</td>${td(x.name, '')}${td(x.input, 'in')}${td(x.fmt ? CoordUtil.FMT_NAME[x.fmt] : '', '')}`
+        + (r ? `${td(String(r.xi), 'mono tw')}${td(String(r.yi), 'mono tw')}${td(r.warn.join('；'), 'note')}${td(r.latDD)}${td(r.lonDD)}${td(r.latDMM)}${td(r.lonDMM)}${td(r.latDMS)}${td(r.lonDMS)}`
+          : `<td colspan="2"></td>${td(x.err + '（請寫成「緯度, 經度」或「X, Y」）', 'note')}<td colspan="6"></td>`) + '</tr>';
+    }).join('');
+    $('ctBatchTable').innerHTML = `<thead>${head}</thead><tbody>${body}</tbody>`;
+    res.classList.remove('hidden');
+    say(recs.length > CT_BATCH_SHOW ? `畫面只列出前 ${CT_BATCH_SHOW} 筆；「匯出 Excel」和「複製全部結果」包含全部 ${recs.length} 筆。` : '', 'ct-warn');
+    res.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  };
+
+  const run = (lines, from, label) => {
+    const n = lines.filter(l => String(l ?? '').trim() !== '').length;
+    if (n === 0) { res.classList.add('hidden'); recs = []; say(from ? `「${from.replace(/：$/, '')}」裡沒有座標。` : '請先貼上或輸入座標，一行一組。', 'ct-err'); return; }
+    if (n > CT_BATCH_MAX) { res.classList.add('hidden'); recs = []; say(`一次最多轉換 ${CT_BATCH_MAX} 筆（這次有 ${n} 行），請分成幾次。`, 'ct-err'); return; }
+    srcLabel = label;
+    recs = CoordUtil.convertBatch(lines);
+    if (!recs.length) { res.classList.add('hidden'); say('只有表頭、沒有座標。', 'ct-err'); return; }
+    render(from);
+  };
+
+  $('btnCtBatchConvert').addEventListener('click', () => run($('ctBatchText').value.split('\n'), '', '行'));
+
+  // ── 匯入 Excel ──
+  $('btnCtBatchImport').addEventListener('click', () => { $('ctBatchFile').value = ''; $('ctBatchFile').click(); });
+  $('ctBatchFile').addEventListener('change', async (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+      const name = wb.SheetNames.find(n => n === '座標輸入') || wb.SheetNames.find(n => {
+        const ws = wb.Sheets[n]; return ws && ws['!ref'] && n !== '填寫說明';
+      }) || wb.SheetNames[0];
+      const ws = wb.Sheets[name];
+      const lines = [];
+      if (ws && ws['!ref']) {
+        const rg = XLSX.utils.decode_range(ws['!ref']);
+        for (let r = 0; r <= rg.e.r; r++) {
+          const cells = [];
+          for (let c = rg.s.c; c <= rg.e.c; c++) {
+            const cell = ws[XLSX.utils.encode_cell({ r, c })];
+            if (!cell || cell.v === undefined || cell.v === null) continue;
+            // 數字用原值（不受儲存格顯示幾位小數影響），文字照原樣
+            const v = cell.t === 'n' ? String(cell.v) : String(cell.w ?? cell.v);
+            if (v.trim() !== '') cells.push(v.replace(/[\t\r\n]+/g, ' ').trim());
+          }
+          lines.push(cells.join('\t'));
+        }
+      }
+      run(lines, `${f.name}（工作表「${name}」）：`, 'Excel 列');
+    } catch (err) {
+      res.classList.add('hidden'); recs = [];
+      say(`讀不到「${f.name}」：${err.message}。請確認是 Excel 檔（.xlsx／.xls）或 .csv。`, 'ct-err');
+    }
+  });
+
+  // ── 下載範本 ──
+  $('btnCtBatchTemplate').addEventListener('click', () => {
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([['名稱（可空白）', '緯度 或 TWD97 X', '經度 或 TWD97 Y']]);
+    ws['!cols'] = [{ wch: 18 }, { wch: 22 }, { wch: 22 }];
+    XLSX.utils.book_append_sheet(wb, ws, '座標輸入');
+    const help = XLSX.utils.aoa_to_sheet([
+      ['座標轉換範本：填寫說明'],
+      [''],
+      ['1. 在「座標輸入」工作表從第 2 列開始，一列一組座標；第 1 列是表頭，請不要刪。'],
+      ['2. 名稱可以空白；緯度、經度（或 X、Y）分兩格填。也可以把一整組座標（例如 24.502389, 120.954111）填在 B 欄、C 欄空白。'],
+      ['3. 各列格式可以混用，程式會自動判斷；經緯度順序寫反、X 和 Y 寫反都會自動對調。'],
+      ['4. 填好後回到網頁「座標轉換」→「多筆轉換」→「📥 匯入 Excel」，結果可以在網頁上看，也可以匯出成 Excel。'],
+      ['5. TWD97 二度分帶的中央經線一律為東經 121 度（和環境部座標轉換網頁相同）。'],
+      [''],
+      ['寫法範例', '名稱', '緯度 或 TWD97 X', '經度 或 TWD97 Y'],
+      ['十進位', 'S1', '24.502389', '120.954111'],
+      ['度分', 'S2', '24°30.1433′', '120°57.2467′'],
+      ['度分秒', 'S3', '24 30 08.6', '120 57 14.8'],
+      ['度分秒（符號）', 'S4', '24°30\'08.6"', '120°57\'14.8"'],
+      ['TWD97 二度分帶', 'S5', '175345', '2591215'],
+    ]);
+    help['!cols'] = [{ wch: 18 }, { wch: 10 }, { wch: 20 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, help, '填寫說明');
+    XLSX.writeFile(wb, '座標轉換範本.xlsx');
+  });
+
+  // ── 結果：複製、匯出 ──
+  const HEAD = ['序號', srcLabel, '名稱', '輸入的座標', '判讀為', 'TWD97 X（申報用整數）', 'TWD97 Y（申報用整數）',
+    '緯度（十進位）', '經度（十進位）', '緯度（度分）', '經度（度分）', '緯度（度分秒）', '經度（度分秒）', 'TWD97 X（小數 4 位）', 'TWD97 Y（小數 4 位）', '提醒'];
+  const rowsOf = (asNum) => recs.map(x => {
+    const r = x.r, n = (v) => (asNum ? v : String(v));
+    return r ? [x.no, x.src, x.name, x.input, CoordUtil.FMT_NAME[x.fmt], n(r.xi), n(r.yi), n(+r.latDD), n(+r.lonDD), r.latDMM, r.lonDMM, r.latDMS, r.lonDMS,
+      n(+r.x.toFixed(4)), n(+r.y.toFixed(4)), r.warn.join('；')]
+      : [x.no, x.src, x.name, x.input, x.fmt ? CoordUtil.FMT_NAME[x.fmt] : '', '', '', '', '', '', '', '', '', '', '', x.err];
+  });
+  const head = () => { const h = HEAD.slice(); h[1] = srcLabel; return h; };
+  $('btnCtBatchCopy').addEventListener('click', (e) => {
+    const lines = [head(), ...rowsOf(false)].map(r => r.map(v => String(v).replace(/[\t\n]/g, ' ')).join('\t'));
+    coordToolCopy(lines.join('\n'), e.currentTarget);
+  });
+  $('btnCtBatchExport').addEventListener('click', () => {
+    if (!recs.length) return;
+    const ws = XLSX.utils.aoa_to_sheet([head(), ...rowsOf(true)]);
+    ws['!cols'] = [6, 8, 14, 30, 9, 12, 12, 13, 13, 15, 15, 17, 17, 15, 15, 40].map(wch => ({ wch }));
+    ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: recs.length, c: HEAD.length - 1 } }) };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '座標轉換結果');
+    const d = new Date(), z = (v) => String(v).padStart(2, '0');
+    XLSX.writeFile(wb, `座標轉換結果_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}.xlsx`);
+  });
+
+  $('ctBatchText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('btnCtBatchConvert').click(); } });
+  return { active: () => !$('ctPaneBatch').classList.contains('hidden'), clear };
 }
 
 function openAgencyRefModal() {

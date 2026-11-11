@@ -3,9 +3,23 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.60';
+const APP_VERSION = 'v4.62';
 
 const CHANGELOG = [
+  {
+    version: 'v4.62',
+    date: '2026-11-11',
+    notes: [
+      '【調整】座標轉換的「度分」寫法，分固定寫兩位（23°5.5243′ → 23°05.5243′），和度分秒一致；單筆結果、多筆表格、匯出的 Excel 一起改，數值不變。輸入時補不補 0 都可以。',
+    ],
+  },
+  {
+    version: 'v4.61',
+    date: '2026-11-11',
+    notes: [
+      '【新增】<strong>🧭 座標轉換：多筆轉換</strong>——座標轉換視窗上方切到「多筆轉換」：一行一組座標直接貼上（格式可混用，前面可加名稱，也可從 Excel 複製「名稱、緯度、經度」三欄貼上），或下載 Excel 範本填好後「📥 匯入 Excel」；結果在網頁上逐筆列出（TWD97、十進位、度分、度分秒），看不懂或需要確認的那一筆用紅底／黃底標出、其他照常轉換；可「複製全部結果」或「📤 匯出 Excel」。換算和單筆轉換是同一套公式。',
+    ],
+  },
   {
     version: 'v4.60',
     date: '2026-11-04',

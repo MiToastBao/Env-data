@@ -103,6 +103,8 @@ const CoordUtil = {
     if (m >= 60) { d += 1; m = 0; }
     return { d, m };
   },
+  /** 度分的文字寫法，分固定兩位整數（23°05.5243′；v4.62 #107）。 */
+  fmtDMM(v) { return `${v.d}°${v.m.toFixed(4).padStart(7, '0')}′`; },
   toDMS(deg) {
     const a = Math.abs(deg); let d = Math.floor(a); const mf = (a - d) * 60; let m = Math.floor(mf); let s = +((mf - m) * 60).toFixed(2);
     if (s >= 60) { s = 0; m += 1; }
@@ -137,5 +139,100 @@ const CoordUtil = {
     const upA = this._clean(a).toUpperCase(), upB = this._clean(b).toUpperCase();
     if (/[EW]/.test(upA) || /[NS]/.test(upB) || (Math.abs(lat) > 90 && Math.abs(lon) <= 90)) [lat, lon] = [lon, lat];
     return { lat, lon, fmt: pa.fmt === pb.fmt ? pa.fmt : 'DD' };
+  },
+  // ───────────── 多筆轉換（v4.61，修正清單 #106） ─────────────
+
+  /** 判讀結果的格式名稱。 */
+  FMT_NAME: { DD: '十進位', DMM: '度分', DMS: '度分秒', TM2: 'TWD97' },
+
+  /** 只有數字、空白隔開的一串（例如「24.5 120.9」「24 30 08.6 120 57 14.8」）→ 對半切成一組；不是就回傳 null。 */
+  _pairBySpaces(text) {
+    const t = this._clean(text).split(/\s+/).filter(Boolean);
+    if (![2, 4, 6].includes(t.length) || !t.every((x) => /^-?\d+(\.\d+)?$/.test(x))) return null;
+    const h = t.length / 2;
+    return this.parsePair(t.slice(0, h).join(' ') + ', ' + t.slice(h).join(' '));
+  },
+  _tryPair(text) {
+    if (this._clean(text) === '') return null;
+    return this.parsePair(text) || this._pairBySpaces(text);
+  },
+  /** 一組判讀結果 → { lat, lon }（TWD97 先換回經緯度），經緯度超出範圍回傳 null。 */
+  _latLon(p) {
+    const ll = p.fmt === 'TM2' ? this.fromTM2(p.x, p.y) : { lat: p.lat, lon: p.lon };
+    return (Math.abs(ll.lat) <= 90 && Math.abs(ll.lon) <= 180) ? ll : null;
+  },
+
+  /**
+   * 多筆轉換的一行（或 Excel 的一列，各格以 Tab 連起來）→ { name, pair } 或 null。
+   * 可以寫：「座標」、「名稱, 座標」、「名稱<Tab>緯度<Tab>經度」、「名稱 座標」。
+   * 名稱也可能長得像方位字母（例如 S1、N2），所以「整行都當座標」和「第一段當名稱」兩種都試，
+   * 取落在臺灣範圍內的那一種；都不在臺灣時以整行當座標為先。
+   */
+  parseBatchLine(line) {
+    const s = String(line ?? '').replace(/\r/g, '');
+    if (s.trim() === '') return null;
+    const cands = [];
+    const push = (name, text) => { const p = this._tryPair(text); if (p) cands.push({ name: name.trim(), pair: p }); };
+    const cells = s.split('\t').map((c) => c.trim()).filter((c) => c !== '');
+    if (cells.length >= 2) {
+      push('', cells.join(', '));
+      push(cells[0], cells.slice(1).join(', '));
+      if (cells.length === 2) push(cells[0], cells[1]);
+    } else {
+      const one = cells[0] || '';
+      push('', one);
+      const m = one.match(/^(.+?)\s*[,，;；:：]\s*(.+)$/);
+      if (m) push(m[1], m[2]);
+      const sp = one.match(/^(\S+)\s+(.+)$/);
+      if (sp) push(sp[1], sp[2]);
+    }
+    if (!cands.length) return null;
+    const ok = cands.map((c) => ({ c, ll: this._latLon(c.pair) })).filter((o) => o.ll);
+    const tw = ok.find((o) => this.inTaiwan(o.ll.lat, o.ll.lon));
+    return (tw || ok[0] || { c: cands[0] }).c;
+  },
+
+  /** 看起來像表頭（名稱、緯度、經度、X、Y、座標…）而且讀不出座標的一行。 */
+  isHeaderLine(line) {
+    return !this.parseBatchLine(line) && /名稱|測站|地點|編號|緯度|經度|座標|lat|lon|^\s*x\s*[\t,]|[\t,]\s*y\s*$/i.test(String(line));
+  },
+
+  /**
+   * 一組判讀結果 → 各種寫法（和單筆轉換的格式一樣）。TWD97 輸入時 X、Y 用原值，不再繞一圈。
+   * 回傳 { lat, lon, x, y, xi, yi, dd, dmm, dms, warn: [] }，經緯度超出範圍時回傳 null。
+   */
+  describe(p) {
+    const ll = this._latLon(p);
+    if (!ll) return null;
+    const { lat, lon } = ll;
+    const tm = p.fmt === 'TM2' ? { x: p.x, y: p.y } : this.toTM2(lat, lon);
+    const xi = Math.round(tm.x), yi = Math.round(tm.y);
+    const a = this.toDMM(lat), o = this.toDMM(lon), A = this.toDMS(lat), O = this.toDMS(lon);
+    const dms = (v) => `${v.d}°${String(v.m).padStart(2, '0')}′${v.s.toFixed(2).padStart(5, '0')}″`;
+    const warn = [];
+    if (!this.inTaiwan(lat, lon)) warn.push('不在臺灣、澎湖、金門、馬祖範圍內（經度 116～125、緯度 20～26），請確認有沒有寫錯或經緯度寫反');
+    if (!/^\d{6}$/.test(String(xi)) || !/^\d{7}$/.test(String(yi))) warn.push(`TWD97 的 X 應為 6 位、Y 應為 7 位數字（這個點是 ${xi}／${yi}）`);
+    return {
+      lat, lon, x: tm.x, y: tm.y, xi, yi,
+      latDD: lat.toFixed(6), lonDD: lon.toFixed(6),
+      latDMM: this.fmtDMM(a), lonDMM: this.fmtDMM(o),
+      latDMS: dms(A), lonDMS: dms(O), warn,
+    };
+  },
+
+  /** 多行文字或 Excel 各列 → 轉換結果陣列 [{ no, name, input, fmt, r, err }]；空白行略過，第一行是表頭時略過。 */
+  convertBatch(lines) {
+    const out = [];
+    lines.forEach((line, i) => {
+      if (String(line ?? '').trim() === '') return;
+      if (out.length === 0 && this.isHeaderLine(line)) return;
+      const input = String(line).replace(/\t+/g, '　').trim();
+      const b = this.parseBatchLine(line);
+      const rec = { no: out.length + 1, src: i + 1, name: b ? b.name : '', input, fmt: b ? b.pair.fmt : '', r: null, err: '' };
+      if (!b) rec.err = '看不懂這組座標';
+      else if (!(rec.r = this.describe(b.pair))) rec.err = '緯度要在 -90～90、經度要在 -180～180 之間';
+      out.push(rec);
+    });
+    return out;
   },
 };

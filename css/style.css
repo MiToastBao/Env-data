@@ -524,6 +524,29 @@ input.cell-soft-warn, select.cell-soft-warn, textarea.cell-soft-warn { border: 2
 .coord-tool .ct-lab { margin-right: 2px; }
 .coord-tool .ct-row input.ct-mid { width: 100px; }
 .coord-tool .ct-row input.ct-sec { width: 76px; }
+/* 多筆轉換（v4.61，#106） */
+.modal.coord-tool.ct-wide-mode { width: min(1180px, calc(100vw - 32px)); max-width: none; }
+.coord-tool .ct-tabs { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 2px solid #1e6b52; margin: 4px 0 10px; }
+.coord-tool .ct-tab { border: 1px solid var(--border); border-bottom: none; background: #f4f6f5; color: var(--text-muted); padding: 7px 14px; border-radius: 6px 6px 0 0; cursor: pointer; font-size: 14px; margin-bottom: -2px; }
+.coord-tool .ct-tab.active { background: #1e6b52; color: #fff; border-color: #1e6b52; font-weight: 600; }
+.coord-tool .ct-batch-text { width: 100%; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-family: Consolas, "Courier New", monospace; font-size: 14px; line-height: 1.5; resize: vertical; }
+.coord-tool .ct-batch-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 6px; }
+.coord-tool .ct-batch-sum { font-weight: 600; color: #144a39; }
+.coord-tool .ct-batch-sum .bad { color: #a5281b; }
+.coord-tool .ct-batch-sum .warn { color: #7a4a0c; }
+.coord-tool .ct-batch-btns { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.coord-tool .ct-batch-wrap { max-height: 42vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.coord-tool .ct-batch-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.coord-tool .ct-batch-table th { position: sticky; top: 0; z-index: 1; background: #e6f0eb; color: #144a39; text-align: left; padding: 6px 8px; border-bottom: 1px solid #c7d6ce; white-space: nowrap; }
+.coord-tool .ct-batch-table td { padding: 5px 8px; border-bottom: 1px solid #e3e8e5; vertical-align: top; white-space: nowrap; }
+.coord-tool .ct-batch-table td.mono { font-family: Consolas, "Courier New", monospace; }
+.coord-tool .ct-batch-table td.in { white-space: normal; min-width: 170px; max-width: 260px; overflow-wrap: break-word; color: #333; }
+.coord-tool .ct-batch-table td.note { white-space: normal; min-width: 200px; max-width: 320px; }
+.coord-tool .ct-batch-table td.tw { font-weight: 700; color: #144a39; }
+.coord-tool .ct-batch-table tr.err td { background: #fdecea; }
+.coord-tool .ct-batch-table tr.err td.note { color: #a5281b; font-weight: 600; }
+.coord-tool .ct-batch-table tr.wn td { background: #fff8e6; }
+.coord-tool .ct-batch-table tr.wn td.note { color: #7a4a0c; }
 /* v4.54：按鈕變多後，窄視窗時文字會在按鈕裡斷成兩行——改成整顆按鈕換到下一排，字不斷行 */
 .topbar { gap: 10px; }
 .brand { white-space: nowrap; }
