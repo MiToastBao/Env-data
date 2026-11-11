@@ -601,9 +601,11 @@ input.cell-soft-warn, select.cell-soft-warn, textarea.cell-soft-warn { border: 2
   .coord-tool .ct-pop td { border: none; padding: 1px 2px; min-width: 0; }
   .coord-tool .ct-pop td.ct-k { grid-column: 1; }
   .coord-tool .ct-pop td.ct-v { grid-column: 1; }
-  .coord-tool .ct-pop td.ct-c { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+  .coord-tool .ct-pop td.ct-c { grid-column: 2; grid-row: 1 / span 2; align-self: center; width: auto; }
 }
 @media (min-width: 521px) {
   .coord-tool .ct-pop { width: 580px; }
   .coord-tool .ct-pop td.ct-v { white-space: nowrap; }
 }
+.coord-tool .ct-batch-btns { align-items: center; }
+.coord-tool .ct-batch-tip { font-size: 12.5px; color: #4b5b54; }

@@ -3,9 +3,18 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.64';
+const APP_VERSION = 'v4.65';
 
 const CHANGELOG = [
+  {
+    version: 'v4.65',
+    date: '2026-11-11',
+    notes: [
+      '【調整】馬祖（緯度 26～27）不再被提醒「不在臺灣範圍內」，表格的一鍵修正也會把馬祖的十進位座標轉成 TWD97；說明文字更正：用 121 度中央經線時只有金門 X 是負數，馬祖是正常的 6 位數。',
+      '【調整】多筆轉換結果上方加提示「點座標格子可單獨複製；按 📋 可選格式、看地圖」；每一筆都沒有提醒時不顯示「提醒」欄（匯出 Excel 照樣有）。',
+      '【修正】手機寬度時，多筆小選單的「複製」按鈕超出自己的格子。',
+    ],
+  },
   {
     version: 'v4.64',
     date: '2026-11-11',

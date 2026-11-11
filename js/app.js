@@ -861,8 +861,8 @@ const AUTO_FIX_KINDS = [
   { kind: 'unit', label: '單位寫成文字（例如 mg/L） → 換成單位代碼', why: '單位欄要填代碼 1～161。只換代碼表裡寫法完全相同、而且只有一個代碼對得上的；對不上或有兩個以上可能的不動。' },
   { kind: 'agency', label: '機構代碼的分隔符號不對（36-12、36~12、36及12…） → 36;12', why: '兩個以上的機構代碼要用半形分號分隔，例如 1;2（辭典）。代碼之間夾的任何符號（半形、全形都算，例如 ；，、 / - ~ | _ * : # .）、「及」「和」「與」「跟」、空白、重複或多餘的分號都改成一個半形分號，小寫 aa 改 AA；改完每個代碼都在代碼表裡才改。夾了其他中文字的（例如「華光36」）不改，請手動確認。' },
   // ── v4.54 追加（修正清單 #89，使用者 11/4 裁示：合法的十進位也一起轉、中央經線一律 121 度）──
-  { kind: 'dms', label: '座標寫成度分或度分秒（24 30 08.6） → 轉成 TWD97 二度分帶，座標系統改 3', why: '官方規定座標不可填度分秒。換算方式和「🧭 座標轉換」相同（中央經線 121 度，和環境部座標轉換網頁一致），結果四捨五入成整數。金門、馬祖算出來 X 不是 6 位數的不轉。' },
-  { kind: 'dd', label: '經緯度十進位座標（座標系統 2） → 轉成 TWD97 二度分帶，座標系統改 3', why: '十進位經緯度本來就合法；依使用者裁示統一轉成 TWD97（不想轉可以取消這一類）。中央經線 121 度、四捨五入成整數；金門、馬祖算出來 X 不是 6 位數的不轉，保留原本座標。' },
+  { kind: 'dms', label: '座標寫成度分或度分秒（24 30 08.6） → 轉成 TWD97 二度分帶，座標系統改 3', why: '官方規定座標不可填度分秒。換算方式和「🧭 座標轉換」相同（中央經線 121 度，和環境部座標轉換網頁一致），結果四捨五入成整數。金門這類算出來 X 不是 6 位數的不轉。' },
+  { kind: 'dd', label: '經緯度十進位座標（座標系統 2） → 轉成 TWD97 二度分帶，座標系統改 3', why: '十進位經緯度本來就合法；依使用者裁示統一轉成 TWD97（不想轉可以取消這一類）。中央經線 121 度、四捨五入成整數；金門這類算出來 X 不是 6 位數的不轉，保留原本座標。' },
   { kind: 'sys', label: '座標系統寫成文字（WGS84／TWD97） → 2／3', why: '座標系統只能填代碼 2（WGS84）或 3（TWD97-TM2）。' },
   { kind: 'swap', label: '經度、緯度明顯寫反 → 對調', why: '代碼 2：經度 X 應在 116～125、緯度 Y 應在 20～26；代碼 3：經度 X 為 6 位、緯度 Y 為 7 位。只對調「兩格都剛好落在對方範圍」的；對調後若還有小數，會在下一次一鍵修正四捨五入。' },
   { kind: 'timesep', label: '時間寫法不對（08;30、10時30分、1030） → hh:mm', why: '時間為 24 小時制 hh:mm，勿用分號（辭典、說明會 p.15）。只改讀得懂是幾點的；看不懂的（例如「上午」）不改，會列在「時間看不懂」那一類。' },
@@ -997,7 +997,7 @@ function collectAutoFixes(rows, cat) {
       const pa = CoordUtil.parseAngle(row[X]), pb = CoordUtil.parseAngle(row[Y]);
       if (pa && pb) {
         let lon = pa.deg, lat = pb.deg;
-        if (lon >= 20 && lon <= 26 && lat >= 116 && lat <= 125) [lat, lon] = [lon, lat]; // 經緯度寫反
+        if (lon >= 20 && lon <= 27 && lat >= 116 && lat <= 125) [lat, lon] = [lon, lat]; // 經緯度寫反（27：含馬祖，v4.65 #114）
         if (CoordUtil.inTaiwan(lat, lon)) {
           const tm = CoordUtil.toTM2(lat, lon);
           const xi = String(Math.round(tm.x)), yi = String(Math.round(tm.y));
@@ -1023,7 +1023,7 @@ function collectAutoFixes(rows, cat) {
       let swap = false;
       if (sys === '2' && NUM.test(xs) && NUM.test(ys)) {
         const x = +xs, y = +ys;
-        swap = x >= 20 && x <= 26 && y >= 116 && y <= 125;
+        swap = x >= 20 && x <= 27 && y >= 116 && y <= 125;   // 27：馬祖寫反也能對調（v4.65 #114）
       } else if (sys === '3') {
         swap = /^\d{7}(\.\d+)?$/.test(xs) && /^\d{6}(\.\d+)?$/.test(ys);
       }
@@ -4077,8 +4077,8 @@ function wireCoordTool() {
     const X = source === 'tm2' ? +val('ctTmX') : tm.x, Y = source === 'tm2' ? +val('ctTmY') : tm.y;
     const xi = Math.round(X), yi = Math.round(Y);
     const warn = [];
-    if (!CoordUtil.inTaiwan(lat, lon)) warn.push('這個位置不在臺灣、澎湖、金門、馬祖的範圍內（經度 116～125、緯度 20～26），請確認座標有沒有寫錯或經緯度寫反。');
-    if (!/^\d{6}$/.test(String(xi)) || !/^\d{7}$/.test(String(yi))) warn.push(`TWD97 的經度 X 應為 6 位、緯度 Y 應為 7 位數字；這個點算出來是 ${xi}／${yi}。金門、馬祖用 121 度中央經線時 X 會是負數，這是環境部座標轉換網頁一樣的算法，申報前請和承辦確認。`);
+    if (!CoordUtil.inTaiwan(lat, lon)) warn.push('這個位置不在臺灣、澎湖、金門、馬祖的範圍內（經度 116～125、緯度 20～27），請確認座標有沒有寫錯或經緯度寫反。');
+    if (!/^\d{6}$/.test(String(xi)) || !/^\d{7}$/.test(String(yi))) warn.push(`TWD97 的經度 X 應為 6 位、緯度 Y 應為 7 位數字；這個點算出來是 ${xi}／${yi}。金門用 121 度中央經線時 X 會是負數（馬祖是正的 6 位數，不受影響），這是環境部座標轉換網頁一樣的算法，申報前請和承辦確認。`);
     if (warn.length) say(warn.join('\n'), 'ct-warn'); else msg.className = 'ct-msg hidden';
     const row = (k, v, main) => `<tr${main ? ' class="ct-main"' : ''}><td class="ct-k">${k}</td><td class="ct-v">${escapeHtml(v)}</td><td class="ct-c"><button class="btn btn-ghost btn-sm" data-ct-copy="${escapeAttr(v)}">複製</button></td></tr>`;
     result.innerHTML = `<div class="ct-title">轉換結果</div><table>
@@ -4189,7 +4189,9 @@ function wireCoordBatch() {
     const bad = recs.filter(r => !r.r).length;
     $('ctBatchSum').innerHTML = `${escapeHtml(from)}共 ${recs.length} 筆：成功 ${ok}`
       + (wn ? `、<span class="warn">需確認 ${wn}</span>` : '') + (bad ? `、<span class="bad">無法轉換 ${bad}</span>` : '');
-    const head = `<tr><th class="ct-rowmenu" title="點 📋 選擇要複製的格式">複製</th><th>#</th><th>${srcLabel}</th><th>名稱</th><th>輸入的座標</th><th>判讀為</th><th>TWD97 X</th><th>TWD97 Y</th><th>提醒</th>`
+    // 畫面上的每一筆都沒有提醒時，不顯示「提醒」欄（v4.65 #115）；匯出 Excel 照樣有
+    const showNote = recs.slice(0, CT_BATCH_SHOW).some(x => !x.r || x.r.warn.length);
+    const head = `<tr><th class="ct-rowmenu" title="點 📋 選擇要複製的格式">複製</th><th>#</th><th>${srcLabel}</th><th>名稱</th><th>輸入的座標</th><th>判讀為</th><th>TWD97 X</th><th>TWD97 Y</th>${showNote ? '<th>提醒</th>' : ''}`
       + `<th>緯度（十進位）</th><th>經度（十進位）</th><th>緯度（度分）</th><th>經度（度分）</th><th>緯度（度分秒）</th><th>經度（度分秒）</th></tr>`;
     const body = recs.slice(0, CT_BATCH_SHOW).map(x => {
       const r = x.r, cls = !r ? 'err' : (r.warn.length ? 'wn' : '');
@@ -4199,7 +4201,7 @@ function wireCoordBatch() {
         : `<td class="${c}">${escapeHtml(v)}</td>`;
       const menu = r ? `<td class="ct-rowmenu"><button type="button" class="btn btn-ghost btn-sm ct-rowbtn" data-ct-row="${x.no - 1}" title="選擇要複製的格式、在 Google 地圖上看" aria-label="第 ${x.no} 筆：複製或看地圖">📋</button></td>` : '<td class="ct-rowmenu"></td>';
       return `<tr class="${cls}">${menu}<td>${x.no}</td><td>${x.src}</td>${td(x.name, '')}${td(x.input, 'in')}${td(x.fmt ? CoordUtil.FMT_NAME[x.fmt] : '', '')}`
-        + (r ? `${td(String(r.xi), 'mono tw')}${td(String(r.yi), 'mono tw')}${td(r.warn.join('；'), 'note')}${td(r.latDD)}${td(r.lonDD)}${td(r.latDMM)}${td(r.lonDMM)}${td(r.latDMS)}${td(r.lonDMS)}`
+        + (r ? `${td(String(r.xi), 'mono tw')}${td(String(r.yi), 'mono tw')}${showNote ? td(r.warn.join('；'), 'note') : ''}${td(r.latDD)}${td(r.lonDD)}${td(r.latDMM)}${td(r.lonDMM)}${td(r.latDMS)}${td(r.lonDMS)}`
           : `<td colspan="2"></td>${td(x.err + '（請寫成「緯度, 經度」或「X, Y」）', 'note')}<td colspan="6"></td>`) + '</tr>';
     }).join('');
     $('ctBatchTable').innerHTML = `<thead>${head}</thead><tbody>${body}</tbody>`;
