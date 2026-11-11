@@ -3,9 +3,18 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.65';
+const APP_VERSION = 'v4.66';
 
 const CHANGELOG = [
+  {
+    version: 'v4.66',
+    date: '2026-11-11',
+    notes: [
+      '【新增】座標前面寫「經度」「緯度」「X」「Y」（例如 經度120.954111,緯度24.502389、X=175345 Y=2591215、緯度23度30分15秒，經度120度57分14.8秒）也看得懂，單筆、多筆都適用；字樣只用來分辨 X、Y，格式看數字本身。',
+      '【新增】連寫的度分秒（223037.94, 1202113.82 ＝ 22°30′37.94″, 120°21′13.82″）也看得懂；臺灣的 TWD97 不會被誤判。',
+      '【修正】多筆轉換第一行含「緯度」「經度」等字時被當成表頭略過；位數不對（例如 TWD97 多打一碼）時直接說明是幾位數；金門東邊 X 是 4 位數負數的 TWD97 讀不回來。',
+    ],
+  },
   {
     version: 'v4.65',
     date: '2026-11-11',

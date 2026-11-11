@@ -4100,7 +4100,7 @@ function wireCoordTool() {
         const raw = $('ctPaste').value;
         if (CoordUtil._clean(raw) === '') throw new Error('請先貼上或輸入一組座標。');
         const p = CoordUtil._tryPair(raw);   // v4.64 #110：和多筆同一套（只用一個空格隔開也可以）
-        if (!p) throw new Error(`看不懂「${raw}」。請寫成「緯度, 經度」或「X, Y」，例如 24.502389, 120.954111、24 30 08.6, 120 57 14.8、175345, 2591215。`);
+        if (!p) throw new Error(CoordUtil.failHint(raw) ? `看不懂「${raw}」：${CoordUtil.failHint(raw)}。` : `看不懂「${raw}」。請寫成「緯度, 經度」或「X, Y」，例如 24.502389, 120.954111、24 30 08.6, 120 57 14.8、175345, 2591215。`);
         if (p.fmt === 'TM2') {
           $('ctTmX').value = p.x; $('ctTmY').value = p.y;
           ({ lat, lon } = CoordUtil.fromTM2(p.x, p.y));
@@ -4202,7 +4202,7 @@ function wireCoordBatch() {
       const menu = r ? `<td class="ct-rowmenu"><button type="button" class="btn btn-ghost btn-sm ct-rowbtn" data-ct-row="${x.no - 1}" title="選擇要複製的格式、在 Google 地圖上看" aria-label="第 ${x.no} 筆：複製或看地圖">📋</button></td>` : '<td class="ct-rowmenu"></td>';
       return `<tr class="${cls}">${menu}<td>${x.no}</td><td>${x.src}</td>${td(x.name, '')}${td(x.input, 'in')}${td(x.fmt ? CoordUtil.FMT_NAME[x.fmt] : '', '')}`
         + (r ? `${td(String(r.xi), 'mono tw')}${td(String(r.yi), 'mono tw')}${showNote ? td(r.warn.join('；'), 'note') : ''}${td(r.latDD)}${td(r.lonDD)}${td(r.latDMM)}${td(r.lonDMM)}${td(r.latDMS)}${td(r.lonDMS)}`
-          : `<td colspan="2"></td>${td(x.err + '（請寫成「緯度, 經度」或「X, Y」）', 'note')}<td colspan="6"></td>`) + '</tr>';
+          : `<td colspan="2"></td>${td(x.err + (x.err === '看不懂這組座標' ? '（請寫成「緯度, 經度」或「X, Y」）' : ''), 'note')}<td colspan="6"></td>`) + '</tr>';
     }).join('');
     $('ctBatchTable').innerHTML = `<thead>${head}</thead><tbody>${body}</tbody>`;
     res.classList.remove('hidden');

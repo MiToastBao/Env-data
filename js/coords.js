@@ -131,14 +131,22 @@ const CoordUtil = {
     }
     if (parts.length !== 2) return null;
     const a = parts[0].trim(), b = parts[1].trim();
-    // TWD97：兩個都是 5 位以上的數字
-    if (/^-?\d{5,7}(\.\d+)?$/.test(a) && /^-?\d{5,7}(\.\d+)?$/.test(b)) {
+    // 連寫度分秒（v4.66 #119）：緯度 DDMMSS.ss（整數 6 位）＋經度 DDDMMSS.ss（整數 7 位），順序不拘。
+    // 只有 7 位數小於 1,800,000、分秒都小於 60 才算；臺灣的 TWD97 Y 都在 2,420,000 以上，不會被改判。
+    const cpt = this._compactPair(a, b);
+    if (cpt) return cpt;
+    // TWD97：兩個都是 5 位以上的數字；或一個是 7 位的 Y、另一個是 1～6 位（可為負）的 X——
+    // 金門東邊用 121 度中央經線算出的 X 可能只有 4 位數（例如 -6558），v4.66 #120
+    const tmY = (t) => /^\d{7}(\.\d+)?$/.test(t), tmX = (t) => /^-?\d{1,6}(\.\d+)?$/.test(t);
+    const degLike = (t) => /^\d{1,3}\.\d+$/.test(t) && +t <= 180;   // 0～180 帶小數：多半是經緯度度數，不當 X
+    if ((/^-?\d{5,7}(\.\d+)?$/.test(a) && /^-?\d{5,7}(\.\d+)?$/.test(b)) || (tmY(a) && tmX(b) && !degLike(b)) || (tmY(b) && tmX(a) && !degLike(a))) {
       let x = +a, y = +b;
       if (Math.abs(x) > 1000000 && Math.abs(y) < 1000000) [x, y] = [y, x];
       return { x, y, fmt: 'TM2' };
     }
     const pa = this.parseAngle(a), pb = this.parseAngle(b);
     if (!pa || !pb) return null;
+    if (Math.abs(pa.deg) >= 1000 || Math.abs(pb.deg) >= 1000) return null;   // 不可能是度數（例如 TWD97 多打一碼），交給「看不懂」說明位數
     let lat = pa.deg, lon = pb.deg;
     const upA = this._clean(a).toUpperCase(), upB = this._clean(b).toUpperCase();
     if (/[EW]/.test(upA) || /[NS]/.test(upB) || (Math.abs(lat) > 90 && Math.abs(lon) <= 90)) [lat, lon] = [lon, lat];
@@ -149,6 +157,46 @@ const CoordUtil = {
   /** 判讀結果的格式名稱。 */
   FMT_NAME: { DD: '十進位', DMM: '度分', DMS: '度分秒', TM2: 'TWD97' },
 
+  /** 連寫度分秒的一個數 → 十進位度；不合規則回傳 null。intDigits：緯度 6、經度 7。 */
+  _compactAngle(t, intDigits) {
+    const m = String(t).match(new RegExp(`^(\\d{${intDigits}})(\\.\\d+)?$`));
+    if (!m) return null;
+    const i = m[1], frac = m[2] || '';
+    const d = +i.slice(0, intDigits - 4), mm = +i.slice(-4, -2), ss = +(i.slice(-2) + frac);
+    if (mm >= 60 || ss >= 60) return null;
+    return d + mm / 60 + ss / 3600;
+  },
+  _compactPair(a, b) {
+    const isLat = (t) => /^\d{6}(\.\d+)?$/.test(t), isLon = (t) => /^\d{7}(\.\d+)?$/.test(t) && +t < 1800000;
+    let la, lo;
+    if (isLat(a) && isLon(b)) { la = a; lo = b; } else if (isLon(a) && isLat(b)) { la = b; lo = a; } else return null;
+    const lat = this._compactAngle(la, 6), lon = this._compactAngle(lo, 7);
+    if (lat === null || lon === null || lat > 90 || lon > 180) return null;
+    return { lat, lon, fmt: 'DMS' };
+  },
+
+  /**
+   * 前面帶字樣的寫法（v4.66 #117）：經度／緯度、X／Y、lon／lat… 後面可接 = : ： 或空格。
+   * 例：「經度120.954111,緯度24.502389」「X=175345 Y=2591215」「緯度24°30′08.6″ 經度120°57′14.8″」
+   * 字樣只用來排順序（緯度＝Y 放前面、經度＝X 放後面），格式一律看數字本身；
+   * 字樣寫錯（例如 TWD97 寫成「緯度223037,經度2591215」）時，後面照數字大小自動對調。
+   * 回傳「緯度那段, 經度那段」的文字，不是這種寫法就回傳 null。
+   */
+  _labeledText(text) {
+    const s = this._clean(text);
+    const re = /(?:^|[\s,;])\s*(經度|緯度|longitude|latitude|long|lng|lon|lat|[XY](?=\s*[=:：]|\s+[-\d]|[-\d]))\s*[=:：]?\s*/gi;
+    const hits = [];
+    let m;
+    while ((m = re.exec(s))) hits.push({ role: /^(緯度|lat|latitude|y)$/i.test(m[1]) ? 'lat' : 'lon', start: m.index, end: re.lastIndex });
+    if (hits.length !== 2 || hits[0].role === hits[1].role) return null;
+    // 字樣前面不能有別的東西（名稱另外處理）；只允許「TWD97」「WGS84」「TM2」這類座標系統名稱
+    if (s.slice(0, hits[0].start).replace(/TWD\s*97|WGS\s*84|TM\s*2|座標|[\s,;:：]/gi, '') !== '') return null;
+    const seg = (i) => s.slice(hits[i].end, i === 0 ? hits[1].start : s.length).replace(/^[\s,;]+|[\s,;]+$/g, '');
+    const v0 = seg(0), v1 = seg(1);
+    if (!/\d/.test(v0) || !/\d/.test(v1)) return null;
+    return hits[0].role === 'lat' ? `${v0}, ${v1}` : `${v1}, ${v0}`;
+  },
+
   /** 只有數字、空白隔開的一串（例如「24.5 120.9」「24 30 08.6 120 57 14.8」）→ 對半切成一組；不是就回傳 null。 */
   _pairBySpaces(text) {
     const t = this._clean(text).split(/\s+/).filter(Boolean);
@@ -158,6 +206,8 @@ const CoordUtil = {
   },
   _tryPair(text) {
     if (this._clean(text) === '') return null;
+    const lab = this._labeledText(text);
+    if (lab) return this.parsePair(lab) || this._pairBySpaces(lab.replace(',', ' '));
     return this.parsePair(text) || this._pairBySpaces(text);
   },
   /** 一組判讀結果 → { lat, lon }（TWD97 先換回經緯度），經緯度超出範圍回傳 null。 */
@@ -198,7 +248,10 @@ const CoordUtil = {
 
   /** 看起來像表頭（名稱、緯度、經度、X、Y、座標…）而且讀不出座標的一行。 */
   isHeaderLine(line) {
-    return !this.parseBatchLine(line) && /名稱|測站|地點|編號|緯度|經度|座標|lat|lon|^\s*x\s*[\t,]|[\t,]\s*y\s*$/i.test(String(line));
+    // v4.66 #118：只要還有數字（TWD97、WGS84 這類名稱裡的數字不算）就不是表頭，交給判讀、看不懂就照實說
+    const t = String(line ?? '');
+    if (/\d/.test(t.replace(/TWD\s*97|WGS\s*84|TM\s*2/gi, ''))) return false;
+    return !this.parseBatchLine(line) && /名稱|測站|地點|編號|緯度|經度|座標|lat|lon|^\s*x\s*[\t,]|[\t,]\s*y\s*$/i.test(t);
   },
 
   /**
@@ -224,6 +277,12 @@ const CoordUtil = {
     };
   },
 
+  /** 看不懂時的說明：有 8 位以上整數的數字，多半是 TWD97 多打一碼（v4.66）。 */
+  failHint(text) {
+    const big = (this._clean(text).match(/\d+(?:\.\d+)?/g) || []).filter((n) => n.split('.')[0].length >= 8);
+    return big.length ? `${big.join('、')} 有 ${big[0].split('.')[0].length} 位整數；TWD97 的 X 應為 6 位、Y 應為 7 位，請確認是不是多打了一碼` : '';
+  },
+
   /** 多行文字或 Excel 各列 → 轉換結果陣列 [{ no, name, input, fmt, r, err }]；空白行略過，第一行是表頭時略過。 */
   convertBatch(lines) {
     const out = [];
@@ -233,7 +292,7 @@ const CoordUtil = {
       const input = String(line).replace(/\t+/g, '　').trim();
       const b = this.parseBatchLine(line);
       const rec = { no: out.length + 1, src: i + 1, name: b ? b.name : '', input, fmt: b ? b.pair.fmt : '', r: null, err: '' };
-      if (!b) rec.err = '看不懂這組座標';
+      if (!b) rec.err = this.failHint(line) || '看不懂這組座標';
       else if (!(rec.r = this.describe(b.pair))) rec.err = '緯度要在 -90～90、經度要在 -180～180 之間';
       out.push(rec);
     });
