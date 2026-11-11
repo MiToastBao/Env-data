@@ -69,7 +69,7 @@ const CoordUtil = {
   _clean(s) {
     return String(s ?? '')
       .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-      .replace(/[．。]/g, '.').replace(/[－−]/g, '-').replace(/[，、]/g, ',')
+      .replace(/[．。]/g, '.').replace(/[－−]/g, '-').replace(/[，、﹐﹑]/g, ',').replace(/[；﹔]/g, ';')
       .replace(/[　]/g, ' ').trim();
   },
 
@@ -181,7 +181,7 @@ const CoordUtil = {
     } else {
       const one = cells[0] || '';
       push('', one);
-      const m = one.match(/^(.+?)\s*[,，;；:：]\s*(.+)$/);
+      const m = one.match(/^(.+?)\s*[,，、﹐﹑;；﹔:：]\s*(.+)$/);
       if (m) push(m[1], m[2]);
       const sp = one.match(/^(\S+)\s+(.+)$/);
       if (sp) push(sp[1], sp[2]);

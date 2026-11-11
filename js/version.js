@@ -3,9 +3,17 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.62';
+const APP_VERSION = 'v4.63';
 
 const CHANGELOG = [
+  {
+    version: 'v4.63',
+    date: '2026-11-11',
+    notes: [
+      '【調整】多筆轉換輸入框的範例加上用空格寫的度分（24 30.1433, 120 57.2467），不用打 ° ′ 符號也可以。',
+      '【修正】座標的分隔符號：名稱也用頓號隔開（S1、24.502389、120.954111）、全形分號「；」、小型逗號「﹐」原本看不懂，現在和半形逗號一樣判讀（單筆、多筆都適用）。',
+    ],
+  },
   {
     version: 'v4.62',
     date: '2026-11-11',
