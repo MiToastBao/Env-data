@@ -4024,7 +4024,13 @@ function openCoordToolModal() {
   setTimeout(() => document.getElementById('ctPaste').focus(), 30);
 }
 function coordToolCopy(text, btn) {
-  const done = () => { const old = btn.textContent; btn.textContent = '✔ 已複製'; setTimeout(() => { btn.textContent = old; }, 1200); };
+  // 1.2 秒內再按一次：照樣複製，但不要把「✔ 已複製」當成原本的字記下來（v4.64）
+  const done = () => {
+    if (btn.dataset.ctOld === undefined) btn.dataset.ctOld = btn.textContent;
+    btn.textContent = '✔ 已複製'; btn.classList.add('ct-copied');
+    clearTimeout(btn._ctTimer);
+    btn._ctTimer = setTimeout(() => { btn.textContent = btn.dataset.ctOld; delete btn.dataset.ctOld; btn.classList.remove('ct-copied'); }, 1200);
+  };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done, () => { fallback(); });
   } else fallback();
@@ -4093,7 +4099,7 @@ function wireCoordTool() {
       if (src === 'paste') {
         const raw = $('ctPaste').value;
         if (CoordUtil._clean(raw) === '') throw new Error('請先貼上或輸入一組座標。');
-        const p = CoordUtil.parsePair(raw);
+        const p = CoordUtil._tryPair(raw);   // v4.64 #110：和多筆同一套（只用一個空格隔開也可以）
         if (!p) throw new Error(`看不懂「${raw}」。請寫成「緯度, 經度」或「X, Y」，例如 24.502389, 120.954111、24 30 08.6, 120 57 14.8、175345, 2591215。`);
         if (p.fmt === 'TM2') {
           $('ctTmX').value = p.x; $('ctTmY').value = p.y;
@@ -4165,6 +4171,7 @@ function wireCoordBatch() {
   const say = (text, kind) => { msg.textContent = text; msg.className = text ? `ct-msg ${kind}` : 'ct-msg hidden'; };
 
   const showTab = (tab) => {
+    if (typeof closePop === 'function') closePop();
     modal.querySelectorAll('.ct-tab').forEach(b => b.classList.toggle('active', b.dataset.ctTab === tab));
     $('ctPaneOne').classList.toggle('hidden', tab !== 'one');
     $('ctPaneBatch').classList.toggle('hidden', tab !== 'batch');
@@ -4173,20 +4180,25 @@ function wireCoordBatch() {
   };
   modal.querySelectorAll('.ct-tab').forEach(b => b.addEventListener('click', () => showTab(b.dataset.ctTab)));
 
-  const clear = () => { $('ctBatchText').value = ''; recs = []; say(''); res.classList.add('hidden'); $('ctBatchTable').innerHTML = ''; };
+  const clear = () => { if (typeof closePop === 'function') closePop(); $('ctBatchText').value = ''; recs = []; say(''); res.classList.add('hidden'); $('ctBatchTable').innerHTML = ''; };
 
   const render = (from) => {
+    if (typeof closePop === 'function') closePop();
     const ok = recs.filter(r => r.r && !r.r.warn.length).length;
     const wn = recs.filter(r => r.r && r.r.warn.length).length;
     const bad = recs.filter(r => !r.r).length;
     $('ctBatchSum').innerHTML = `${escapeHtml(from)}共 ${recs.length} 筆：成功 ${ok}`
       + (wn ? `、<span class="warn">需確認 ${wn}</span>` : '') + (bad ? `、<span class="bad">無法轉換 ${bad}</span>` : '');
-    const head = `<tr><th>#</th><th>${srcLabel}</th><th>名稱</th><th>輸入的座標</th><th>判讀為</th><th>TWD97 X</th><th>TWD97 Y</th><th>提醒</th>`
+    const head = `<tr><th class="ct-rowmenu" title="點 📋 選擇要複製的格式">複製</th><th>#</th><th>${srcLabel}</th><th>名稱</th><th>輸入的座標</th><th>判讀為</th><th>TWD97 X</th><th>TWD97 Y</th><th>提醒</th>`
       + `<th>緯度（十進位）</th><th>經度（十進位）</th><th>緯度（度分）</th><th>經度（度分）</th><th>緯度（度分秒）</th><th>經度（度分秒）</th></tr>`;
     const body = recs.slice(0, CT_BATCH_SHOW).map(x => {
       const r = x.r, cls = !r ? 'err' : (r.warn.length ? 'wn' : '');
-      const td = (v, c = 'mono') => `<td class="${c}">${escapeHtml(v)}</td>`;
-      return `<tr class="${cls}"><td>${x.no}</td><td>${x.src}</td>${td(x.name, '')}${td(x.input, 'in')}${td(x.fmt ? CoordUtil.FMT_NAME[x.fmt] : '', '')}`
+      // 座標值的格子點一下就複製那一格（v4.64 #111）
+      const td = (v, c = 'mono') => (r && c.startsWith('mono'))
+        ? `<td class="${c} ct-cp" data-ct-cell="${escapeAttr(v)}" title="點一下複製">${escapeHtml(v)}</td>`
+        : `<td class="${c}">${escapeHtml(v)}</td>`;
+      const menu = r ? `<td class="ct-rowmenu"><button type="button" class="btn btn-ghost btn-sm ct-rowbtn" data-ct-row="${x.no - 1}" title="選擇要複製的格式、在 Google 地圖上看" aria-label="第 ${x.no} 筆：複製或看地圖">📋</button></td>` : '<td class="ct-rowmenu"></td>';
+      return `<tr class="${cls}">${menu}<td>${x.no}</td><td>${x.src}</td>${td(x.name, '')}${td(x.input, 'in')}${td(x.fmt ? CoordUtil.FMT_NAME[x.fmt] : '', '')}`
         + (r ? `${td(String(r.xi), 'mono tw')}${td(String(r.yi), 'mono tw')}${td(r.warn.join('；'), 'note')}${td(r.latDD)}${td(r.lonDD)}${td(r.latDMM)}${td(r.lonDMM)}${td(r.latDMS)}${td(r.lonDMS)}`
           : `<td colspan="2"></td>${td(x.err + '（請寫成「緯度, 經度」或「X, Y」）', 'note')}<td colspan="6"></td>`) + '</tr>';
     }).join('');
@@ -4292,6 +4304,58 @@ function wireCoordBatch() {
     const d = new Date(), z = (v) => String(v).padStart(2, '0');
     XLSX.writeFile(wb, `座標轉換結果_${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}_${z(d.getHours())}${z(d.getMinutes())}.xlsx`);
   });
+
+  // ── 單一格式複製：點格子、或點 📋 跳出和單筆轉換結果一樣的小選單（v4.64 #111） ──
+  let pop = null;
+  const closePop = () => { if (pop) { pop.remove(); pop = null; } };
+  const openPop = (btn, x) => {
+    closePop();
+    const r = x.r;
+    const row = (k, v, main) => `<tr${main ? ' class="ct-main"' : ''}><td class="ct-k">${k}</td><td class="ct-v">${escapeHtml(v)}</td><td class="ct-c"><button type="button" class="btn btn-ghost btn-sm" data-ct-copy="${escapeAttr(v)}">複製</button></td></tr>`;
+    pop = document.createElement('div');
+    pop.className = 'ct-pop ct-result';
+    pop.setAttribute('role', 'dialog');
+    pop.innerHTML = `<div class="ct-pop-head"><span class="ct-title">第 ${x.no} 筆${x.name ? '　' + escapeHtml(x.name) : ''}</span>`
+      + `<button type="button" class="ct-pop-x" aria-label="關閉">✕</button></div>`
+      + (r.warn.length ? `<div class="ct-msg ct-warn">${escapeHtml(r.warn.join('\n'))}</div>` : '')
+      + `<table>
+      ${row('TWD97（申報用，座標系統填 3）', `${r.xi}, ${r.yi}`, true)}
+      ${row('TWD97 經度 X', String(r.xi))}${row('TWD97 緯度 Y', String(r.yi))}
+      ${row('經緯度十進位（座標系統填 2）', `${r.latDD}, ${r.lonDD}`)}
+      ${row('度分', `${r.latDMM}, ${r.lonDMM}`)}
+      ${row('度分秒', `${r.latDMS}, ${r.lonDMS}`)}
+    </table>
+    <div class="ct-actions"><a class="btn btn-ghost btn-sm" href="https://www.google.com/maps?q=${r.latDD},${r.lonDD}" target="_blank" rel="noopener">🗺 在 Google 地圖上看</a></div>`;
+    box.appendChild(pop);
+    // 放在 📋 右邊；超出視窗下緣就往上移、超出右邊就往左移
+    const br = btn.getBoundingClientRect(), hr = box.getBoundingClientRect();
+    const pw = pop.offsetWidth, ph = pop.offsetHeight;
+    let left = br.right - hr.left + 6, top = br.top - hr.top + box.scrollTop;
+    left = Math.max(8, Math.min(left, box.clientWidth - pw - 8));
+    const visBottom = box.scrollTop + box.clientHeight - 8;
+    if (top + ph > visBottom) top = Math.max(box.scrollTop + 8, visBottom - ph);
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+    pop.querySelector('.ct-pop-x').focus();
+  };
+  $('ctBatchTable').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-ct-row]');
+    if (b) { e.stopPropagation(); const x = recs[+b.dataset.ctRow]; if (pop && pop._for === b) { closePop(); return; } openPop(b, x); pop._for = b; return; }
+    const c = e.target.closest('[data-ct-cell]');
+    if (c) coordToolCopy(c.dataset.ctCell, c);
+  });
+  box.addEventListener('click', (e) => {
+    if (!pop || e.target.closest('[data-ct-row]')) return;   // 📋 自己處理開關
+    if (e.target.closest('.ct-pop-x')) { closePop(); return; }
+    const cp = e.target.closest('.ct-pop [data-ct-copy]');
+    if (cp) { e.stopPropagation(); coordToolCopy(cp.dataset.ctCopy, cp); return; }
+    if (!e.target.closest('.ct-pop')) closePop();
+  }, true);
+  // Esc 先只關小選單（焦點在哪都一樣）；再按一次才是整個視窗的 Esc
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && pop) { e.stopPropagation(); closePop(); } }, true);
+  modal.addEventListener('click', (e) => { if (e.target === modal) closePop(); });   // 點視窗外面關掉整個視窗時，小選單一起收
+  $('btnCoordToolClose').addEventListener('click', closePop);
+  $('ctBatchTable').closest('.ct-batch-wrap').addEventListener('scroll', closePop);
+  box.addEventListener('scroll', (e) => { if (e.target === box) closePop(); });
 
   $('ctBatchText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); $('btnCtBatchConvert').click(); } });
   return { active: () => !$('ctPaneBatch').classList.contains('hidden'), clear };

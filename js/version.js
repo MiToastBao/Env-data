@@ -3,9 +3,18 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.63';
+const APP_VERSION = 'v4.64';
 
 const CHANGELOG = [
+  {
+    version: 'v4.64',
+    date: '2026-11-11',
+    notes: [
+      '【新增】多筆轉換可以只複製某一點的某一種格式：<strong>點座標格子</strong>就複製那一格；或按每列前面的 <strong>📋</strong>，跳出和單筆轉換結果一樣的小選單（TWD97、X、Y、十進位、度分、度分秒各自複製，也有「🗺 在 Google 地圖上看」）。',
+      '【調整】單筆「直接貼上」緯度、經度之間只用空格隔開也看得懂（例如 24.502389 120.954111、24 30 08.6 120 57 14.8），和多筆一致。',
+      '【修正】「複製」按鈕快速連點兩下時，按鈕會一直停在「✔ 已複製」。',
+    ],
+  },
   {
     version: 'v4.63',
     date: '2026-11-11',
