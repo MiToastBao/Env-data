@@ -3,9 +3,24 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.69';
+const APP_VERSION = 'v4.71';
 
 const CHANGELOG = [
+  {
+    version: 'v4.71',
+    date: '2026-11-13',
+    notes: [
+      '【調整】<strong>不再支援 PDF 匯入</strong>（各分類頁與批次匯入）：掃描的 PDF 讀不到文字，有文字的 PDF 也可能欄位錯位、把數值放到別的測項。請改用 Excel；只有 PDF 時可用「📋 用上一季建立本季」建立空白列再手動填。',
+      '【調整】批次匯入的說明改短：只說明會自動判斷檢測報告屬於哪一類，以及也可以丟已填好的生態 Excel 檢查格式。',
+    ],
+  },
+  {
+    version: 'v4.70',
+    date: '2026-11-13',
+    notes: [
+      '【修正】批次匯入時，同一類有不同季的完成版（例如空品 115Q1＋115Q2）被合併成一次匯入、只能填一個期別，另一季的資料預設不勾而沒有匯入；現在同一類不同季分開匯入，各自帶正確期別（同一季的多份照樣合併）。',
+    ],
+  },
   {
     version: 'v4.69',
     date: '2026-11-13',

@@ -1588,7 +1588,7 @@ function renderCategoryTab(project, catKey) {
     ${catKey === 'eco' ? `<div class="warning warning-strong" style="margin-bottom:10px">🌿 ${ECO_IMPORT_ONLY_NOTE}</div>` : ''}
     <div class="toolbar">
       <div class="toolbar-left">
-        <button class="btn btn-primary btn-sm" id="btnImport">📥 匯入資料（Excel/PDF）</button>
+        <button class="btn btn-primary btn-sm" id="btnImport">📥 匯入資料（Excel）</button>
         <button class="btn btn-ghost btn-sm" id="btnAddRow">＋ 新增一筆</button>
         <button class="btn btn-ghost btn-sm" id="btnAddCommonItems">☑️ 常用測項新增</button>
         ${PREV_PERIOD_CATS.includes(catKey) ? `<button class="btn btn-ghost btn-sm" id="btnPrevPeriod" title="這一季的報告程式讀不到（例如掃描 PDF）時，照上一季的資料建立本季，只要填日期時間和數值">📋 用上一季建立本季</button>` : ''}
@@ -5513,8 +5513,9 @@ async function handleBatchFiles(fileList) {
 
   for (const file of files) {
     const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
-    const isPdf = /\.pdf$/i.test(file.name);
-    if (!isSpreadsheet && !isPdf) { unrecognizedFiles.push(`${file.name}（不支援的格式）`); continue; }
+    const isPdf = false;   // v4.71（#130）：批次匯入不收 PDF（無法準確判讀；使用者 11/13 裁示）
+    if (/\.pdf$/i.test(file.name)) { unrecognizedFiles.push(`${file.name}（PDF 不支援，請改用 Excel）`); continue; }
+    if (!isSpreadsheet) { unrecognizedFiles.push(`${file.name}（不支援的格式）`); continue; }
     let grids;
     try {
       grids = isSpreadsheet ? await ImportEngine.readWorkbookGrids(file) : await ImportEngine.readPdfAsGrids(file);
@@ -5569,20 +5570,34 @@ async function handleBatchFiles(fileList) {
   const queue = AUTO_DETECT_CATEGORIES
     .filter(c => perCategory[c].rows.length > 0)
     .map(c => ({ catKey: c, result: perCategory[c] }));
-  // v4.69：完成版每一類一個項目（同一類多份合併），排在報告後面
+  // v4.69：完成版排在報告後面，同一類多份合併成一個項目。
+  // v4.70（#129）：同一類但不同季的完成版分開成不同項目——一次匯入只有一個期別，
+  // 混在一起時另一季會被當成「非本期」預設不勾而沒有匯入。每一份先各自看採樣日期是哪一季。
   for (const catKey of CATEGORY_ORDER) {
     if (!templateFiles[catKey]) continue;
-    const parsed = await readTemplateFilesMerged(templateFiles[catKey], CATEGORIES[catKey]);
-    if (!parsed || parsed.problems) {
-      (parsed && parsed.problems ? parsed.problems : templateFiles[catKey].map(f => `「${f.name}」讀取失敗`))
-        .forEach(t => unrecognizedFiles.push(t.replace(/^「(.*)」/, '$1')));
-      continue;
+    const cat = CATEGORIES[catKey];
+    const groups = new Map();   // 期別 → [File]
+    for (const f of templateFiles[catKey]) {
+      const one = await readTemplateFilesMerged([f], cat);
+      if (!one || one.problems) {
+        (one && one.problems ? one.problems : [`「${f.name}」讀取失敗`]).forEach(t => unrecognizedFiles.push(t.replace(/^「(.*)」/, '$1')));
+        continue;
+      }
+      const map = ImportEngine.suggestMapping(one.headers, cat.fields);
+      const period = guessPeriodFromRows(ImportEngine.applyMapping(one.rows, map, cat.fields));
+      if (!groups.has(period)) groups.set(period, []);
+      groups.get(period).push(f);
     }
-    queue.push({ catKey, mode: 'generic', parsed });
+    const periods = [...groups.keys()].sort();
+    for (const period of periods) {
+      const parsed = await readTemplateFilesMerged(groups.get(period), cat);
+      if (!parsed || parsed.problems) continue;
+      queue.push({ catKey, mode: 'generic', parsed, period: periods.length > 1 ? period : '' });
+    }
   }
 
   const summary = queue.map(q => q.mode === 'generic'
-    ? `${CATEGORIES[q.catKey].label}（已填好的官方格式檔 ${q.parsed.files.length} 份）：${q.parsed.rows.length} 筆`
+    ? `${CATEGORIES[q.catKey].label}（已填好的官方格式檔 ${q.parsed.files.length} 份${q.period ? `，${q.period}` : ''}）：${q.parsed.rows.length} 筆`
     : `${CATEGORIES[q.catKey].label}：${q.result.rows.length} 筆`).join('、');
   statusEl.textContent = queue.length
     ? `判讀完成：${summary}。${unrecognizedFiles.length ? `無法判斷類別的檔案／工作表：${unrecognizedFiles.join('、')}` : ''}`
@@ -5597,6 +5612,7 @@ async function handleBatchFiles(fileList) {
   state.importProjectId = state.currentProjectId;
   state.batchQueue = queue;
   state.batchQueueTotal = queue.length;
+  state.batchQueueCats = new Set(queue.map(q => q.catKey)).size;
   closeBatchImportModal();
   processNextBatchItem();
 }
@@ -5617,7 +5633,7 @@ function processNextBatchItem() {
   state.limitFixMode = null;
   state.rowDetailColumnFilters = {};
   document.getElementById('importModalTitle').textContent =
-    `批次匯入（${doneCount + 1}/${state.batchQueueTotal}）：${CATEGORIES[next.catKey].label}${next.mode === 'generic' ? '（已填好的官方格式檔）' : ''}`;
+    `批次匯入（${doneCount + 1}/${state.batchQueueTotal}）：${CATEGORIES[next.catKey].label}${next.mode === 'generic' ? `（已填好的官方格式檔${next.period ? `・${next.period}` : ''}）` : ''}`;
   if (next.mode === 'generic') {
     // v4.69（#126、#127）：完成版走欄位對應——和在分類頁按「匯入資料」選完成版相同
     state.importMode = 'generic';
@@ -5726,6 +5742,14 @@ async function handleImportFile(fileOrFiles) {
   state.currentImportSourceLabel = files.map(f => f.name).join('、');
 
   const cat = CATEGORIES[catKey];
+
+  // v4.71（#132，使用者 11/13 裁示）：不收 PDF——掃描檔讀不到，讀得到的也可能欄位錯位而把數值放錯測項
+  const pdfFiles = files.filter(f => /\.pdf$/i.test(f.name));
+  if (pdfFiles.length) {
+    alert(`不支援 PDF（程式無法準確判讀）：${pdfFiles.map(f => f.name).join('、')}\n\n請向檢測公司索取 Excel 版報告後再匯入。`
+      + (files.length > pdfFiles.length ? '\n\n其他 Excel 檔請重新選取後再按「開始判讀」。' : ''));
+    return;
+  }
 
   try {
     if (SMART_PARSE_CATEGORIES.includes(catKey)) {
@@ -7314,7 +7338,7 @@ function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assig
     } else {
       state.batchQueue = null;
       document.getElementById('importModal').classList.add('hidden');
-      alert(`批次匯入完成，共匯入 ${state.batchQueueTotal} 個類別的資料，請至各分類頁面核對內容。`);
+      alert(`批次匯入完成，共 ${state.batchQueueTotal} 次匯入${state.batchQueueCats ? `（${state.batchQueueCats} 個類別）` : ''}，請至各分類頁面核對內容。`);
     }
     return;
   }

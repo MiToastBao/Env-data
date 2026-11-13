@@ -3,6 +3,15 @@
 一個純前端（HTML/CSS/JavaScript）小工具，用來管理多個環評計畫、輸入/匯入各類監測資料，
 並匯出成符合「環境監測填寫範本」欄位格式的 Excel 檔。可直接發布在 GitHub Pages 上使用。
 
+## v4.71（2026-11-13）本版重點
+
+- 不收 PDF：分類頁 handleImportFile 一開始擋下 .pdf（accept 去掉 .pdf）；批次匯入 handleBatchFiles 把 PDF 列為不支援。按鈕改「匯入資料（Excel）」，說明文字同步。PDF 判讀程式碼（readPdfAsGrids 等）仍在但不再被呼叫。
+- 批次匯入說明照使用者定稿。
+
+## v4.70（2026-11-13）本版重點
+
+- 批次匯入的完成版依季別分組（逐份 guessPeriodFromRows），同類不同季分成不同佇列項目（item.period 顯示在標題）；完成提示寫次數與類別數（state.batchQueueCats）。
+
 ## v4.69（2026-11-13）本版重點
 
 - 批次匯入：detectTemplateCategory 先認出完成版（工作表名＝官方 XX檢測項目 優先，否則欄名最像且領先 0.15），同類多份 readTemplateFilesMerged 合併，佇列項目 mode:'generic' 走 renderMappingStep；生態因此可從批次匯入。修正空品完成版被水質判讀器認領。

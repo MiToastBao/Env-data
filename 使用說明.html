@@ -210,7 +210,7 @@
 <ol class="steps">
   <li><b>建立計畫</b>：左側按 <span class="ui">＋ 新增計畫</span>，輸入計畫代碼（例如 <code>E-0356</code>）和計畫名稱，儲存。</li>
   <li><b>填基本資料</b>：點進計畫，在 <span class="ui">監測點基本資料</span> 分頁把書件案號、執行現況等填一填。這頁一個計畫只要填一次。</li>
-  <li><b>匯入報告</b>：切到 <span class="ui">水質</span> 分頁 → 按 <span class="ui">📥 匯入資料（Excel/PDF）</span> → 選檔案 → 按 <span class="ui">✅ 開始判讀</span>。</li>
+  <li><b>匯入報告</b>：切到 <span class="ui">水質</span> 分頁 → 按 <span class="ui">📥 匯入資料（Excel）</span> → 選檔案 → 按 <span class="ui">✅ 開始判讀</span>。</li>
   <li><b>確認內容</b>：畫面會列出讀到的測項和測站，確認沒問題後按 <span class="ui">確認匯入 ○○ 筆資料</span>。</li>
   <li><b>核對表格</b>：資料進到下方表格，逐欄檢查。有 <span style="color:#c0392b">＊</span> 的是申報必填欄位。</li>
   <li><b>匯出</b>：按 <span class="ui">匯出此類別</span>，下載的 Excel 就可以拿去環境部系統上傳。</li>
@@ -312,7 +312,7 @@
 <h3>方法 A：在各分類頁面匯入（最常用）</h3>
 <ol class="steps">
   <li>切到要匯入的分頁，例如 <span class="ui">水質</span>。</li>
-  <li>按 <span class="ui">📥 匯入資料（Excel/PDF）</span>。</li>
+  <li>按 <span class="ui">📥 匯入資料（Excel）</span>。</li>
   <li>把檔案<strong>拖進虛線框</strong>，或按框裡的選擇檔案。<strong>可以一次選好幾個</strong>
       （例如同一季三個月份的放流水報告），也可以分好幾次拖進來慢慢累積。</li>
   <li>檔案會列在下方清單，確認無誤後按 <span class="ui">✅ 開始判讀</span>。清單裡每個檔案都能個別移除。</li>
@@ -320,8 +320,8 @@
 
 <h3>方法 B：批次匯入（一次丟一整包）</h3>
 <p>如果檢測公司一次給您好幾種報告，在計畫頁面上方按 <span class="ui">📦 批次匯入監測報告</span>，
-把所有檔案一起丟進去。系統會<strong>自動判斷每個檔案屬於哪個分類</strong>，然後一個分類一個分類帶您確認。</p>
-<p>目前可自動判斷分類的報告是<strong>噪音／水質／空氣品質／地質</strong>四類；<strong>已填好的官方格式檔（完成版，包括生態）</strong>也可以一起丟，會依工作表名稱與欄位歸到對應分類（v4.69）。</p>
+把所有檢測報告 Excel 一起丟進去。系統會<strong>自動判斷每個檔案屬於哪個分類</strong>，然後一個分類一個分類帶您確認。<strong>不支援 PDF</strong>（程式無法準確判讀，v4.71），請改用 Excel。</p>
+<p>目前可自動判斷分類的報告是<strong>噪音／水質／空氣品質／地質</strong>四類；<strong>已填好的官方格式檔（完成版，包括生態）</strong>也可以一起丟，會依工作表名稱與欄位歸到對應分類（v4.69）；同一類有不同季的完成版時，會依季別分開匯入（v4.70）。</p>
 
 <h3>生態分類的特別說明</h3>
 <div class="warn">
@@ -375,8 +375,7 @@
 <ul>
   <li><strong>Excel（.xlsx／.xls）</strong>：最準確，強烈建議優先使用。</li>
   <li><strong>CSV</strong>：可以。</li>
-  <li><strong>PDF</strong>：可以，但系統是把 PDF 的文字依位置重新排成表格，<strong>準確度明顯較低</strong>。
-      系統偵測到資料來自 PDF 會跳出提醒，請務必逐筆核對數值和座標。手上有 Excel 就別用 PDF。</li>
+  <li><strong>PDF</strong>：<strong>不支援</strong>（v4.71）。掃描的 PDF 讀不到文字，有文字的 PDF 也可能欄位錯位、把數值放到別的測項，所以不收。請向檢測公司索取 Excel；只有 PDF 的話，可用「📋 用上一季建立本季」建立空白列再手動填。</li>
   <li><strong>上一季的完成版</strong>：也可以直接匯入！系統會認出它已經是官方格式，直接照欄位讀進來。</li>
 </ul>
 </section>
@@ -976,9 +975,8 @@
 
 <div class="faq">
 <div class="q">Q：匯入後說「無法從此檔案讀取到任何資料列」</div>
-<p>A：檢查是不是選錯檔案（例如選到報告封面頁的 PDF）。若是生態分類，確認選的是<strong>填寫完成的</strong>
-「生態調查資料填寫.xlsx」，裡面應該有「生態檢測項目」工作表。若是掃描的 PDF（圖片），系統讀不到文字，
-請向檢測公司索取 Excel。</p>
+<p>A：檢查是不是選錯檔案。若是生態分類，確認選的是<strong>填寫完成的</strong>
+「生態調查資料填寫.xlsx」，裡面應該有「生態檢測項目」工作表。本程式不收 PDF，請向檢測公司索取 Excel。</p>
 </div>
 
 <div class="faq">

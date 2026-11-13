@@ -81,7 +81,7 @@
     <h3 id="importModalTitle">匯入監測資料</h3>
     <div id="importStep1">
       <div id="importCategoryNotice"></div>
-      <p class="hint">支援 Excel（.xlsx / .xls / .csv）；可一次選取多個檔案（例如本類別多個月份或多個測站的報告）。PDF 為輔助解析，建議上傳 Excel 以獲得最佳結果。</p>
+      <p class="hint">支援 Excel（.xlsx / .xls / .csv）；可一次選取多個檔案（例如本類別多個月份或多個測站的報告）。<strong>不支援 PDF</strong>（程式無法準確判讀），請改用 Excel。</p>
       <details style="margin-bottom:10px">
         <summary style="cursor:pointer;font-size:12.5px;color:var(--text-muted)">ℹ️ 系統如何跨季記住座標、方法、管制標準等欄位？（點此展開說明）</summary>
         <p class="hint" style="margin:6px 0 0 0">
@@ -90,7 +90,7 @@
         </p>
       </details>
       <div class="dropzone" id="importDropzone">
-        <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
+        <input type="file" id="importFileInput" accept=".xlsx,.xls,.csv" multiple>
         <div class="dropzone-icon">📂</div>
         <p class="dropzone-hint"><strong>把檔案拖曳到這個框框裡</strong>，或點一下框框選擇檔案<br>（可分次拖曳，累積多個檔案後再一次確認）</p>
       </div>
@@ -273,9 +273,9 @@
 <div id="batchImportModal" class="modal-overlay hidden">
   <div class="modal modal-wide">
     <h3>批次匯入監測報告</h3>
-    <p class="hint">可一次選取多個檔案（可跨類別，例如同時選空氣品質、河川水、放流水、營建噪音等報告，也支援單一 PDF 內含多類別內容，會逐頁嘗試判斷），系統會自動判斷每個檔案（或工作表／頁面）屬於哪個監測類別，並個別帶您確認後匯入對應分類。目前噪音／水質／空氣品質／地質四類支援自動判斷（地質目前支援底泥／土壤等實驗室檢測報告格式）；<b>已填好的官方格式檔（完成版）</b>也可以一起丟進來，依工作表名稱與欄位歸到對應的分類——<b>生態就是用這種方式匯入</b>（多家公司的生態完成版可以一起丟，會合併成一份）。<strong>PDF 判讀準確度低於 Excel，來自 PDF 的資料請務必逐項核對。</strong></p>
+    <p class="hint">一次丟入多份檢測報告 Excel（空氣品質、水質、地質、噪音的檢測報告），程式會<strong>自動判斷每一份屬於哪一類</strong>，再一類一類帶您確認後匯入。<strong>不支援 PDF</strong>（程式無法準確判讀），請改用 Excel。另外，也可丟入<strong>已填好上傳內容的生態 Excel</strong>，由本程式檢查格式是否正確。</p>
     <div class="dropzone" id="batchDropzone">
-      <input type="file" id="batchFileInput" accept=".xlsx,.xls,.csv,.pdf" multiple>
+      <input type="file" id="batchFileInput" accept=".xlsx,.xls" multiple>
       <div class="dropzone-icon">📂</div>
         <p class="dropzone-hint"><strong>把檔案拖曳到這個框框裡</strong>，或點一下框框選擇檔案<br>（可分次拖曳，累積多個檔案後再一次確認）</p>
     </div>
