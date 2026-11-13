@@ -3,6 +3,12 @@
 一個純前端（HTML/CSS/JavaScript）小工具，用來管理多個環評計畫、輸入/匯入各類監測資料，
 並匯出成符合「環境監測填寫範本」欄位格式的 Excel 檔。可直接發布在 GitHub Pages 上使用。
 
+## v4.69（2026-11-13）本版重點
+
+- 批次匯入：detectTemplateCategory 先認出完成版（工作表名＝官方 XX檢測項目 優先，否則欄名最像且領先 0.15），同類多份 readTemplateFilesMerged 合併，佇列項目 mode:'generic' 走 renderMappingStep；生態因此可從批次匯入。修正空品完成版被水質判讀器認領。
+- 報告多檔匯入的匯入紀錄寫各自檔名（state.batchSourceLabels）。
+- 批次判讀準確度實測：檢測報告 Excel 31 份全部正確、無重複認領；PDF 多為掃描影像讀不到。
+
 ## v4.68（2026-11-13）本版重點
 
 - 一鍵修正新類別 ecoitem（normalizeEcoSurveyItem：綱→類、兩生→兩棲）與 ecofreq（normalizeEcoFrequency：次前國字次數→阿拉伯數字）。

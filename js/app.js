@@ -5473,6 +5473,32 @@ function closeBatchImportModal() {
   document.getElementById('batchImportModal').classList.add('hidden');
 }
 
+/*
+ * 批次匯入：這份檔案是不是「已填好的官方格式檔（完成版）」、是哪一類（v4.69，#126、#127）
+ * ─────────────────────────────────────────────────────────────
+ * 完成版不是檢測報告，不能交給報告判讀器猜——v4.68 以前空品完成版（工作表「空品檢測項目」）
+ * 會被水質的判讀器認領，整份歸到水質。所以先看是不是官方格式：
+ *   ・某個工作表的欄名和某一類官方欄位有一半以上相同才算；
+ *   ・工作表名稱就是官方的「空品／水質／地質／噪音／生態檢測項目」時以名稱為準；
+ *   ・名稱不是的，取欄名最像的那一類，但要明顯比第二像的高（差 0.15 以上），分不出來就不猜。
+ * 生態只有完成版這一種，所以生態一定走這條路。
+ */
+function detectTemplateCategory(grids) {
+  const norm = (t) => String(t ?? '').replace(/\s+/g, '');
+  let best = null;
+  for (const [sheetName, grid] of Object.entries(grids)) {
+    const scores = CATEGORY_ORDER.map(k => ({ k, r: ImportEngine.gridSchemaMatchRatio(grid, CATEGORIES[k].fields) }))
+      .filter(x => x.r >= 0.5).sort((a, b) => b.r - a.r);
+    if (!scores.length) continue;
+    const byName = scores.find(x => norm(CATEGORIES[x.k].dataSheetName) === norm(sheetName));
+    let pick = null;
+    if (byName) pick = { ...byName, sure: true };
+    else if (scores.length === 1 || scores[0].r - scores[1].r >= 0.15) pick = { ...scores[0], sure: false };
+    if (pick && (!best || (pick.sure && !best.sure) || (pick.sure === best.sure && pick.r > best.r))) best = { ...pick, sheetName };
+  }
+  return best ? best.k : null;
+}
+
 async function handleBatchFiles(fileList) {
   const files = [...fileList];
   if (files.length === 0) return;
@@ -5483,6 +5509,7 @@ async function handleBatchFiles(fileList) {
   const perCategory = {};
   AUTO_DETECT_CATEGORIES.forEach(c => { perCategory[c] = { rows: [], matchedSheets: [], skippedSheets: [], sourceFiles: new Set() }; });
   const unrecognizedFiles = [];
+  const templateFiles = {};   // v4.69：{ catKey: [File] } 已填好的官方格式檔
 
   for (const file of files) {
     const isSpreadsheet = /\.(xlsx|xls)$/i.test(file.name);
@@ -5494,6 +5521,11 @@ async function handleBatchFiles(fileList) {
     } catch (err) {
       unrecognizedFiles.push(`${file.name}（讀取失敗：${err.message}）`);
       continue;
+    }
+    // v4.69（#126、#127）：已填好的官方格式檔（完成版）先認出來，交給欄位對應那條路徑
+    if (isSpreadsheet) {
+      const tplCat = detectTemplateCategory(grids);
+      if (tplCat) { (templateFiles[tplCat] = templateFiles[tplCat] || []).push(file); continue; }
     }
     let anyMatchInFile = false;
     for (const [sheetName, grid] of Object.entries(grids)) {
@@ -5537,8 +5569,21 @@ async function handleBatchFiles(fileList) {
   const queue = AUTO_DETECT_CATEGORIES
     .filter(c => perCategory[c].rows.length > 0)
     .map(c => ({ catKey: c, result: perCategory[c] }));
+  // v4.69：完成版每一類一個項目（同一類多份合併），排在報告後面
+  for (const catKey of CATEGORY_ORDER) {
+    if (!templateFiles[catKey]) continue;
+    const parsed = await readTemplateFilesMerged(templateFiles[catKey], CATEGORIES[catKey]);
+    if (!parsed || parsed.problems) {
+      (parsed && parsed.problems ? parsed.problems : templateFiles[catKey].map(f => `「${f.name}」讀取失敗`))
+        .forEach(t => unrecognizedFiles.push(t.replace(/^「(.*)」/, '$1')));
+      continue;
+    }
+    queue.push({ catKey, mode: 'generic', parsed });
+  }
 
-  const summary = queue.map(q => `${CATEGORIES[q.catKey].label}：${q.result.rows.length} 筆`).join('、');
+  const summary = queue.map(q => q.mode === 'generic'
+    ? `${CATEGORIES[q.catKey].label}（已填好的官方格式檔 ${q.parsed.files.length} 份）：${q.parsed.rows.length} 筆`
+    : `${CATEGORIES[q.catKey].label}：${q.result.rows.length} 筆`).join('、');
   statusEl.textContent = queue.length
     ? `判讀完成：${summary}。${unrecognizedFiles.length ? `無法判斷類別的檔案／工作表：${unrecognizedFiles.join('、')}` : ''}`
     : `無法從所選檔案中辨識出任何已支援的報告格式。${unrecognizedFiles.length ? `（${unrecognizedFiles.join('、')}）` : ''}`;
@@ -5571,11 +5616,24 @@ function processNextBatchItem() {
   state.importPeriod = '';
   state.limitFixMode = null;
   state.rowDetailColumnFilters = {};
+  document.getElementById('importModalTitle').textContent =
+    `批次匯入（${doneCount + 1}/${state.batchQueueTotal}）：${CATEGORIES[next.catKey].label}${next.mode === 'generic' ? '（已填好的官方格式檔）' : ''}`;
+  if (next.mode === 'generic') {
+    // v4.69（#126、#127）：完成版走欄位對應——和在分類頁按「匯入資料」選完成版相同
+    state.importMode = 'generic';
+    state.importParsed = next.parsed;
+    state.smartResult = null;
+    state.itemSelection = null;
+    state.statSelection = null;
+    state.currentImportSourceLabel = next.parsed.files.map(f => f.name).join('、');
+    document.getElementById('importPdfWarning').classList.add('hidden');
+    document.getElementById('importModal').classList.remove('hidden');
+    renderMappingStep();
+    return;
+  }
   state.importMode = 'smart';
   state.smartResult = next.result;
   state.currentImportSourceLabel = next.result.sourceFiles ? [...next.result.sourceFiles].join('、') : '批次匯入';
-  document.getElementById('importModalTitle').textContent =
-    `批次匯入（${doneCount + 1}/${state.batchQueueTotal}）：${CATEGORIES[next.catKey].label}`;
   document.getElementById('importModal').classList.remove('hidden');
   renderSmartImportPreview();
 }
@@ -5837,7 +5895,12 @@ async function handleImportFile(fileOrFiles) {
  * 只接受看起來是官方格式的檔案；有一份不是，就整批停下來並說是哪一份（多份不同格式無法共用一張欄位對應）。
  * 兩份內容一模一樣（同一份存成不同檔名）時，後面那份略過並說明。
  */
-async function readEcoFilesMerged(files, cat) {
+/** v4.69（#126、#127）：同一套也給批次匯入的完成版用——任何分類的官方格式檔都可以多份合併。 */
+async function readTemplateFilesMerged(files, cat, opts = {}) {
+  const r = await readEcoFilesMerged(files, cat, { quiet: true });
+  return r;
+}
+async function readEcoFilesMerged(files, cat, opts = {}) {
   const keys = cat.fields.map(f => f.key);
   const list = [];
   const problems = [];
@@ -5850,6 +5913,7 @@ async function readEcoFilesMerged(files, cat) {
     if (ratio < 0.4) { problems.push(`「${file.name}」不像填寫完成的生態調查資料填寫.xlsx（只比對到 ${Math.round(ratio * 100)}% 的欄位名稱）`); continue; }
     list.push({ name: file.name, parsed });
   }
+  if (problems.length && opts.quiet) return { problems };
   if (problems.length) {
     alert(`以下檔案無法一起匯入：\n・${problems.join('\n・')}\n\n${ECO_IMPORT_ONLY_TEXT}\n\n請重新選取檔案（不要包含上面這些）；不是官方格式的檔案請單獨匯入，自己對應欄位。`);
     return null;
@@ -5870,6 +5934,7 @@ async function readEcoFilesMerged(files, cat) {
   uniq.forEach(f => f.parsed.rows.forEach(r => { rows.push(r); rowSources.push(f.name); }));
   return {
     headers, rows, rowSources, skippedFiles: skipped,
+    usedSheet: uniq.length === 1 ? uniq[0].parsed.usedSheet : undefined,
     files: uniq.map(f => ({ name: f.name, count: f.parsed.rows.length, usedSheet: f.parsed.usedSheet, headers: f.parsed.headers })),
   };
 }
@@ -7380,9 +7445,13 @@ function confirmSmartImport() {
   // selected together) must not let the "same file, same site" sync logic treat all
   // three months as one sampling event just because they were imported in one go.
   const batchIdByFile = {};
+  state.batchSourceLabels = {};   // v4.69（#128）：匯入紀錄每一筆寫自己那一份的檔名
   const assignBatchId = (r) => {
     const key = r._sourceFile || '(單一檔案)';
-    if (!batchIdByFile[key]) batchIdByFile[key] = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    if (!batchIdByFile[key]) {
+      batchIdByFile[key] = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      if (r._sourceFile) state.batchSourceLabels[batchIdByFile[key]] = r._sourceFile;
+    }
     return batchIdByFile[key];
   };
 

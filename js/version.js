@@ -3,9 +3,18 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.68';
+const APP_VERSION = 'v4.69';
 
 const CHANGELOG = [
+  {
+    version: 'v4.69',
+    date: '2026-11-13',
+    notes: [
+      '【新增】<strong>📦 批次匯入監測報告</strong>也收已填好的官方格式檔（完成版），依工作表名稱與欄位歸到對應分類——<strong>生態完成版可以從這裡匯入</strong>，多份會合併成一份，之後和在生態頁匯入一樣可以一鍵修正。',
+      '【修正】批次匯入時，空品的完成版（工作表「空品檢測項目」）被當成水質報告；現在完成版先認出來、歸到正確分類。',
+      '【修正】一次匯入多份檢測報告時，匯入紀錄每一筆的來源檔案都寫全部檔名；現在寫各自那一份。',
+    ],
+  },
   {
     version: 'v4.68',
     date: '2026-11-13',
