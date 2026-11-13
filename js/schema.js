@@ -760,6 +760,12 @@ function ecoFormatViolations(row) {
     out.push({ key: '中文名', label: '中文名', value: cn,
       why: `官方規定「中文名」不可出現英文（目前是「${cn}」）。學名請填在「學名」欄` });
   }
+  // v4.67（#122）：「單位」填的是特有性（實例：別家交來的檔案整段把特有性填到單位欄、特有性欄空白）
+  const unit = String(row['單位'] ?? '').trim();
+  if (/^(臺灣|台灣)?(特有種|特有亞種|外來種|特有|特亞|外來)$/.test(unit)) {
+    out.push({ key: '單位', label: '單位', value: unit, group: '「單位」填的是特有性',
+      why: `「單位」填的是特有性（「${unit}」），應該填在「特有性」欄。單位是數量的單位，例如隻次、群、%` });
+  }
   // 辭典 22 數量：「請填寫數字或"-"　請勿填寫級別或奇怪的符號，例如：@、#...」
   const qty = String(row['數量'] ?? '').trim();
   if (qty !== '' && qty !== '-' && !/^\d+(\.\d+)?$/.test(qty)) {

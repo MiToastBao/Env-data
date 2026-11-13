@@ -869,6 +869,9 @@ const AUTO_FIX_KINDS = [
   { kind: 'date', label: '日期不是西元格式（例如民國 115/07/08） → 西元 2026/07/08', why: '日期一律填西元 yyyy/mm/dd，勿用民國年（辭典、說明會 p.15）。畫面上雖然已經顯示成西元，存的值還是原樣。' },
   { kind: 'cons', label: '保育分類寫法不一致（一級、Ⅱ、3、珍貴稀有…） → I／II／III', why: '保育分類只能填英文大寫 I 組成的 I、II、III（勿填數字、國字、羅馬數字符號）。第一級＝瀕臨絕種＝I、第二級＝珍貴稀有＝II、第三級＝其他應予保育＝III。EX、CR、LC 等 IUCN 等級對不上，不改。' },
   // v4.58（#97，使用者 11/4）
+  { kind: 'ecoitem', label: '調查項目寫成「XX綱」或「兩生類」 → 「XX類」／「兩棲類」', why: '官方「總分類」的寫法是 XX類（魚類、鳥類、爬蟲類、兩棲類、蝶類、哺乳類、昆蟲類…），紅皮書名錄也寫兩棲類（使用者 11/13 裁示：以總分類為主要寫法）。爬蟲綱 → 爬蟲類、鳥綱 → 鳥類、哺乳綱 → 哺乳類、昆蟲綱 → 昆蟲類；兩生綱、兩生類 → 兩棲類。其他寫法不改。' },
+  { kind: 'ecofreq', label: '調查頻率的次數寫成國字（每季一次） → 每季1次', why: '官方範例寫「每月1次、每季1次、每年2次」（使用者 11/13 裁示：和官方一致）。只改「次」前面的次數：一 → 1、二／兩 → 2…十 → 10，全形數字改半形；其他字不動。' },
+  { kind: 'unitend', label: '「單位」填的是特有性 → 搬到「特有性」欄', why: '「單位」是數量的單位（例如隻次、群、%），特有種、特有亞種、外來種要填在「特有性」欄。只改「特有性」欄空白（或已經是同一個值）的：把值搬過去、單位清空；特有性欄已經有不同的值的不改，會留在錯誤分類裡讓您自己判斷。' },
   { kind: 'endemic', label: '特有性寫成簡寫（特有、特亞、E、Es…） → 特有種／特有亞種', why: '特有性填特有種、特有亞種（辭典），v4.59 起也接受外來種（使用者裁示）。明顯指特有種或特有亞種的寫法都會改，例如特有、特有種(E)、臺灣特有、E → 特有種；特亞、特亞種、特有亞種(Es)、Es → 特有亞種。「特」一個字、同一格寫了兩種的不改。' },
   { kind: 'alien', label: '特有性寫成「外來」等寫法 → ', why: '特有性是選填，官方不會擋「外來」（使用者裁示）。可以統一改成「外來種」，或清空這一格，在標題的選單選一種。', choice: true },
   { kind: 'endclear', label: '特有性填了特有種、特有亞種、外來種以外的值 → 清空', why: '特有性是選填欄位，填其他寫法（例如「-」「原生」「非特有種」）申報時可能被退件；清空不影響申報。不想清空可以取消這一類，自己改。' },
@@ -924,6 +927,27 @@ function classifyEndemic(v) {
 function normalizeEndemic(v) {
   const k = classifyEndemic(v);
   return k === '特有種' || k === '特有亞種' ? k : '';
+}
+
+/** v4.68（#123）：調查項目 → 官方總分類寫法。XX綱 → XX類；兩生類／兩生綱／兩棲綱 → 兩棲類；其他照原樣。 */
+function normalizeEcoSurveyItem(v) {
+  let s = String(v ?? '').trim();
+  if (s === '') return s;
+  s = s.replace(/綱$/, '類');
+  if (/^兩(生|棲)類$/.test(s)) s = '兩棲類';
+  return s;
+}
+/** v4.68（#124）：調查頻率「次」前面的國字次數 → 阿拉伯數字（每季一次 → 每季1次）；全形數字 → 半形。 */
+function normalizeEcoFrequency(v) {
+  const raw = String(v ?? '');
+  const CN = { 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  let s = raw.replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0));
+  s = s.replace(/(十[一二三四五六七八九]?|[二三四五六七八九]?十|[一二兩三四五六七八九])(?=\s*次)/g, (m) => {
+    if (m.length === 1) return String(CN[m]);
+    if (m[0] === '十') return String(10 + (CN[m[1]] || 0));
+    return String(CN[m[0]] * 10 + (CN[m[1]] === 10 ? 0 : CN[m[1]] || 0));
+  });
+  return s;
 }
 
 /** 單位文字 → 代碼：只認代碼表裡寫法完全相同而且只有一個的。 */
@@ -1090,7 +1114,31 @@ function collectAutoFixes(rows, cat) {
       const to = normalizeConservation(raw);
       if (to && to !== raw) push('cons', [{ key: '保育分類', from: raw, to }]);
     }
-    if (has('特有性')) {
+    // v4.68（#123）：調查項目 XX綱 → XX類、兩生 → 兩棲（官方總分類寫法）
+    if (cat.key === 'eco' && has('調查項目')) {
+      const raw = String(row['調查項目'] ?? '');
+      const to = normalizeEcoSurveyItem(raw);
+      if (to !== raw.trim() && to !== '') push('ecoitem', [{ key: '調查項目', from: raw, to }]);
+    }
+    // v4.68（#124）：調查頻率 每季一次 → 每季1次
+    if (cat.key === 'eco' && has('調查頻率')) {
+      const raw = String(row['調查頻率'] ?? '');
+      const to = normalizeEcoFrequency(raw);
+      if (to !== raw) push('ecofreq', [{ key: '調查頻率', from: raw, to }]);
+    }
+    // v4.67（#122）：單位欄填的是特有性 → 搬到特有性欄（特有性空白或同值才搬）
+    if (has('單位') && has('特有性')) {
+      const u = String(row['單位'] ?? '').trim();
+      const ku = /^(臺灣|台灣)?(特有種|特有亞種|外來種|特有|特亞|外來)$/.test(u) ? classifyEndemic(u) : '';
+      if (ku === '特有種' || ku === '特有亞種' || ku === 'alien') {
+        const target = ku === 'alien' ? '外來種' : ku;
+        const endNow = String(row['特有性'] ?? '').trim();
+        const kEnd = classifyEndemic(endNow);
+        if (endNow === '') push('unitend', [{ key: '單位', from: row['單位'], to: '' }, { key: '特有性', from: row['特有性'] ?? '', to: target }]);
+        else if (kEnd === ku) push('unitend', [{ key: '單位', from: row['單位'], to: '' }]);
+      }
+    }
+    if (has('特有性') && !touched.has('特有性')) {
       const raw = String(row['特有性'] ?? '');
       const k = classifyEndemic(raw);
       if ((k === '特有種' || k === '特有亞種') && k !== raw) push('endemic', [{ key: '特有性', from: raw, to: k }]);
@@ -5561,7 +5609,9 @@ function openImportModal(catKey) {
     if (catKey === 'eco') {
       noticeEl.className = 'warning warning-strong';
       noticeEl.innerHTML = `🌿 ${ECO_IMPORT_ONLY_NOTE}<br>`
-        + `匯入完成版後，資料會照常進入下方表格、可編輯、可匯出成申報用的 Excel。`;
+        + `匯入完成版後，資料會照常進入下方表格、可編輯、可匯出成申報用的 Excel。`
+        + `<br>生態由多家公司分別填報時，<strong>可以一次選取（或拖曳）多份完成版</strong>，程式會合併成一份；`
+        + `之後用「一鍵修正」改格式錯誤，再匯出一份上傳。`;
     } else if (SMART_PARSE_CATEGORIES.includes(catKey)) {
       noticeEl.className = 'notice-info';
       noticeEl.innerHTML = `本類別可直接讀原始檢測報告。若是系統沒看過的報告格式，會改用自動偵測，`
@@ -5723,6 +5773,18 @@ async function handleImportFile(fileOrFiles) {
       // fall through to generic single-file import if nothing recognized
     }
 
+    // v4.67（#121）：生態可以一次匯入多份完成版（多家公司分別填報），合併成一份再一起對應欄位
+    if (files.length > 1 && catKey === 'eco') {
+      const merged = await readEcoFilesMerged(files, cat);
+      if (!merged) return;
+      state.importParsed = merged;
+      state.currentImportSourceLabel = merged.files.map(f => f.name).join('、');
+      state.importMode = 'generic';
+      document.getElementById('importPdfWarning').classList.add('hidden');
+      renderMappingStep();
+      return;
+    }
+
     if (files.length > 1) {
       alert('這個類別目前無法自動判讀多個檔案的原始報告格式，因此只能一次匯入一個檔案（一般欄位比對）。請改為逐一匯入，或確認檔案是否為可自動判讀的報告格式。');
       return;
@@ -5765,6 +5827,52 @@ async function handleImportFile(fileOrFiles) {
   }
 }
 
+
+/*
+ * 生態多份完成版合併讀取（v4.67，修正清單 #121；使用者 11/13）
+ * ─────────────────────────────────────────────────────────────
+ * 生態由多家公司分別填好官方格式的「生態調查資料填寫.xlsx」，這裡把每一份照欄名讀進來、
+ * 接成一份 { headers, rows }，之後的欄位對應、預覽、匯入都和單一檔案相同。
+ * 每一筆記住來自哪一份（rowSources），匯入時每份檔案各自一個批次，匯入紀錄可以分開復原。
+ * 只接受看起來是官方格式的檔案；有一份不是，就整批停下來並說是哪一份（多份不同格式無法共用一張欄位對應）。
+ * 兩份內容一模一樣（同一份存成不同檔名）時，後面那份略過並說明。
+ */
+async function readEcoFilesMerged(files, cat) {
+  const keys = cat.fields.map(f => f.key);
+  const list = [];
+  const problems = [];
+  for (const file of files) {
+    if (!/\.(xlsx|xls|csv)$/i.test(file.name)) { problems.push(`「${file.name}」不是 Excel 檔`); continue; }
+    let parsed;
+    try { parsed = await ImportEngine.readFile(file, keys); } catch (err) { problems.push(`「${file.name}」讀取失敗：${err.message}`); continue; }
+    if (!parsed.rows || parsed.rows.length === 0) { problems.push(`「${file.name}」讀不到任何資料列`); continue; }
+    const ratio = ImportEngine.schemaMatchRatio(parsed.headers, cat.fields);
+    if (ratio < 0.4) { problems.push(`「${file.name}」不像填寫完成的生態調查資料填寫.xlsx（只比對到 ${Math.round(ratio * 100)}% 的欄位名稱）`); continue; }
+    list.push({ name: file.name, parsed });
+  }
+  if (problems.length) {
+    alert(`以下檔案無法一起匯入：\n・${problems.join('\n・')}\n\n${ECO_IMPORT_ONLY_TEXT}\n\n請重新選取檔案（不要包含上面這些）；不是官方格式的檔案請單獨匯入，自己對應欄位。`);
+    return null;
+  }
+  // 同一份內容存成不同檔名：只留第一份
+  const sig = (p) => JSON.stringify(p.rows.map(r => p.headers.map(h => r[h] ?? '')));
+  const seen = new Map();
+  const skipped = [];
+  const uniq = list.filter(f => {
+    const k = sig(f.parsed);
+    if (seen.has(k)) { skipped.push(`「${f.name}」和「${seen.get(k)}」內容完全相同，已略過`); return false; }
+    seen.set(k, f.name);
+    return true;
+  });
+  const headers = [];
+  uniq.forEach(f => f.parsed.headers.forEach(h => { if (!headers.includes(h)) headers.push(h); }));
+  const rows = [], rowSources = [];
+  uniq.forEach(f => f.parsed.rows.forEach(r => { rows.push(r); rowSources.push(f.name); }));
+  return {
+    headers, rows, rowSources, skippedFiles: skipped,
+    files: uniq.map(f => ({ name: f.name, count: f.parsed.rows.length, usedSheet: f.parsed.usedSheet, headers: f.parsed.headers })),
+  };
+}
 
 /*
  * 官方格式檔的欄位結構檢查（v4.59，修正清單 #102）
@@ -5831,8 +5939,27 @@ function renderMappingStep() {
     </tr>`;
   }).join('');
 
-  document.getElementById('importRowCount').textContent = `檔案共讀取到 ${rows.length} 筆資料列${state.importParsed.usedSheet ? `（工作表：${state.importParsed.usedSheet}）` : ''}。`;
-  renderStructureWarning(document.getElementById('importStructureWarning'), state.importParsed.headers, cat);
+  const pFiles = state.importParsed.files;
+  if (pFiles && pFiles.length > 1) {
+    // v4.67（#121）：多份合併——每份讀到幾筆、合計幾筆；結構檢查逐份做（各自的欄位才準）
+    document.getElementById('importRowCount').innerHTML = `共 ${pFiles.length} 份檔案，合併後 ${rows.length} 筆資料列：`
+      + pFiles.map(f => `<br>・${escapeHtml(f.name)}：${f.count} 筆${f.usedSheet ? `（工作表：${escapeHtml(f.usedSheet)}）` : ''}`).join('')
+      + (state.importParsed.skippedFiles.length ? `<br>${state.importParsed.skippedFiles.map(t => `⚠️ ${escapeHtml(t)}`).join('<br>')}` : '');
+    const wEl = document.getElementById('importStructureWarning');
+    const parts = pFiles.map(f => {
+      const tmp = document.createElement('div');
+      renderStructureWarning(tmp, f.headers, cat);
+      return tmp.innerHTML ? { soft: tmp.classList.contains('import-structure-soft'), html: `<b>${escapeHtml(f.name)}</b>：${tmp.innerHTML.replace(/^⚠️\s*/, '')}` } : null;
+    }).filter(Boolean);
+    if (parts.length) {
+      wEl.innerHTML = '⚠️ ' + parts.map(x => x.html).join('<br><br>');
+      wEl.classList.toggle('import-structure-soft', parts.every(x => x.soft));
+      wEl.classList.remove('hidden');
+    } else { wEl.classList.add('hidden'); wEl.innerHTML = ''; }
+  } else {
+    document.getElementById('importRowCount').textContent = `檔案共讀取到 ${rows.length} 筆資料列${state.importParsed.usedSheet ? `（工作表：${state.importParsed.usedSheet}）` : ''}。`;
+    renderStructureWarning(document.getElementById('importStructureWarning'), state.importParsed.headers, cat);
+  }
   document.getElementById('importStep1').classList.add('hidden');
   document.getElementById('importStep2').classList.remove('hidden');
   document.getElementById('importStep3').classList.add('hidden');
@@ -7094,7 +7221,7 @@ function finalizeImportCommit(project, catKey, cat, brandNewRows, updates, assig
   const fileByBatchId = {};
   allTouchedRows.forEach(r => {
     rowCountByBatchId[r._batchId] = (rowCountByBatchId[r._batchId] || 0) + 1;
-    if (!fileByBatchId[r._batchId]) fileByBatchId[r._batchId] = state.currentImportSourceLabel || '（未知來源）';
+    if (!fileByBatchId[r._batchId]) fileByBatchId[r._batchId] = (state.batchSourceLabels && state.batchSourceLabels[r._batchId]) || state.currentImportSourceLabel || '（未知來源）';
   });
   Object.entries(rowCountByBatchId).forEach(([id, rowCount]) => {
     DataStore.addImportBatch(project.id, catKey, {
@@ -7310,6 +7437,8 @@ function confirmImport() {
   const newRows = ImportEngine.applyMapping(state.importParsed.rows, mapping, cat.fields);
   if (cat.methodField) newRows.forEach(r => { if (r[cat.methodField]) r[cat.methodField] = methodForPref(r[cat.methodField]); });
   newRows.forEach((r, i) => { r._rowUid = i; });
+  const rowSources = state.importParsed.rowSources;   // v4.67（#121）：多份合併時每筆來自哪一份
+  if (rowSources) newRows.forEach((r, i) => { r._sourceFile = rowSources[i]; });
   /*
    * v4.51（#66，使用者裁示）：檢測數值寫成 ND 的，匯入時就轉成「比較關係 ND、檢測數值空白」。
    * 比較關係原本是「<」「>」的，以檢測數值的 ND 為主，一起改成 ND。
@@ -7383,7 +7512,18 @@ function confirmImport() {
   if (!askEveningVibrationItem(selectedRows, cat)) return;
 
   const batchId = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-  const assignBatchId = () => batchId; // one file, one batch id — no per-file split needed here
+  // 一份檔案一個批次；v4.67（#121）多份合併時每份各自一個批次，匯入紀錄寫各自的檔名、可以分開復原
+  const batchIdByFile = {};
+  state.batchSourceLabels = {};
+  const assignBatchId = (r) => {
+    if (!rowSources) return batchId;
+    const key = r._sourceFile || '(單一檔案)';
+    if (!batchIdByFile[key]) {
+      batchIdByFile[key] = 'b_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      state.batchSourceLabels[batchIdByFile[key]] = key;
+    }
+    return batchIdByFile[key];
+  };
 
   const existing = DataStore.getData(project.id, catKey);
   const { brandNew, conflicts } = analyzeImportAgainstExisting(existing, selectedRows, cat);

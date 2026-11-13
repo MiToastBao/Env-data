@@ -3,9 +3,25 @@
 // Shown in the top bar and in the "版本紀錄" modal so it's easy to confirm
 // that a given update has actually taken effect after redeploying.
 
-const APP_VERSION = 'v4.66';
+const APP_VERSION = 'v4.68';
 
 const CHANGELOG = [
+  {
+    version: 'v4.68',
+    date: '2026-11-13',
+    notes: [
+      '【新增】一鍵修正：生態調查項目「XX綱」→「XX類」（爬蟲綱 → 爬蟲類、鳥綱 → 鳥類…），兩生綱、兩生類 → 兩棲類，以官方「總分類」寫法為主（紅皮書名錄也寫兩棲類）。',
+      '【新增】一鍵修正：生態調查頻率的次數寫成國字（每季一次、每年兩次）→ 每季1次、每年2次，和官方範例一致。',
+    ],
+  },
+  {
+    version: 'v4.67',
+    date: '2026-11-13',
+    notes: [
+      '【新增】<strong>生態可以一次匯入多份完成版</strong>（多家公司分別填報）：一次選取或拖曳多份「生態調查資料填寫.xlsx」，程式合併成一份；匯入畫面列出每一份讀到幾筆、逐份檢查欄位結構；匯入紀錄每一份各自一筆，可以只刪其中一份；內容完全相同的檔案只匯入一次。',
+      '【新增】一鍵修正：生態「單位」欄填的是特有性（特有種、特有亞種、外來種）而「特有性」欄空白時，搬到「特有性」欄、單位清空；特有性欄已有不同的值的不改，列在錯誤分類自己判斷。',
+    ],
+  },
   {
     version: 'v4.66',
     date: '2026-11-11',

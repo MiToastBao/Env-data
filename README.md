@@ -3,6 +3,15 @@
 一個純前端（HTML/CSS/JavaScript）小工具，用來管理多個環評計畫、輸入/匯入各類監測資料，
 並匯出成符合「環境監測填寫範本」欄位格式的 Excel 檔。可直接發布在 GitHub Pages 上使用。
 
+## v4.68（2026-11-13）本版重點
+
+- 一鍵修正新類別 ecoitem（normalizeEcoSurveyItem：綱→類、兩生→兩棲）與 ecofreq（normalizeEcoFrequency：次前國字次數→阿拉伯數字）。
+
+## v4.67（2026-11-13）本版重點
+
+- 生態多份完成版一次匯入（readEcoFilesMerged）：逐份 ImportEngine.readFile、欄名聯集、rowSources 記來源；renderMappingStep 列每份筆數與逐份結構檢查；confirmImport 每份一個批次（state.batchSourceLabels 給匯入紀錄寫各自檔名）。非官方格式的檔案混在裡面整批停下；內容相同的檔案略過。
+- 一鍵修正新類別 unitend：生態單位欄填特有性 → 搬到特有性；schema ecoFormatViolations 同步標紅框。
+
 ## v4.66（2026-11-11）本版重點
 
 - CoordUtil._labeledText（經度／緯度／X／Y 字樣）、_compactPair（連寫度分秒，7 位數 < 1,800,000 才算）、failHint（8 位以上整數的說明）；isHeaderLine 有數字就不是表頭；TWD97 接受 1～6 位（可負）的 X 配 7 位的 Y。
